@@ -1,0 +1,38 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools", "wheel"]
+
+[tool.black]
+line-length = 79
+target-version = ["py312"]
+
+# testpaths = [
+#     "tests"
+# ]
+
+[tool.pytest.ini_options]
+markers = [
+    "marker_name: marker_description",
+]
+
+[project]
+name = "thermodiff"
+version = "0.0.1"
+authors = [{name = "Brandolín, Salvador Eduardo", email = "salvadorebrandolin@unc.edu.ar"}]
+license = {text = "MIT License"}
+readme = "README.md"
+description = "project description"
+keywords = ["Thermodynamics", "Analytical differentiation", "Derivatives", "Equations of state"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering",
+]
+
+urls = {Homepage = "https://github.com/SalvadorBrandolin/thermodiff"}
+
+dependencies = [
+    'simpy>=4.1.1',
+]

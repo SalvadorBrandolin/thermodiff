@@ -1,0 +1,18 @@
+include LICENCE
+include README.md
+include CONTRIBUTING.md
+include requirements.txt
+include pyproject.toml
+
+recursive-include thermodiff *.py
+
+exclude tox.ini
+exclude requirements-dev.txt
+exclude *.svg *.png *.cff
+exclude binder.ipynb
+exclude reminder.md
+exclude _build
+
+recursive-exclude dist *
+recursive-exclude tests *
+recursive-exclude docs *
