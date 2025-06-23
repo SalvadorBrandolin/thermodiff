@@ -34,5 +34,5 @@ classifiers = [
 urls = {Homepage = "https://github.com/SalvadorBrandolin/thermodiff"}
 
 dependencies = [
-    'simpy>=4.1.1',
+    'sympy>=1.14.0',
 ]
