@@ -11,6 +11,8 @@ from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
 )
 
+from thermodiff.diffclass import DiffClass
+
 __all__ = [
     "R",
     "nc",
@@ -27,4 +29,5 @@ __all__ = [
     "SumCustom",
     "handle_sum_kronecker",
     "handle_free_kronecker",
+    "DiffClass",
 ]
