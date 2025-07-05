@@ -1,0 +1,28 @@
+# Style
+flake8-nb
+flake8-black
+flake8-builtins
+flake8-import-order
+pep8-naming
+pydocstyle
+
+# documentation (also pandoc must be installed)
+myst-parser
+nbsphinx
+sphinx
+sphinx_copybutton
+sphinx_rtd_theme
+sphinxcontrib.bibtex
+toml
+
+# Testing
+check-manifest
+pytest
+pytest-cov
+pytest-dependency
+tox
+
+# General purpose
+ipdb
+ipython
+jupyter

@@ -56,6 +56,43 @@ class DiffClass:
         Name of the DiffClass instance, by default "f". It could be for example
         the name of the thermodynamic function you are working with, like "G^E"
         or "A^r".
+
+    Attributes
+    ----------
+    name : str
+        Name of the Function to be differentiated instance.
+    expression : SymPy expression
+        The thermodynamic expression to differentiate.
+    internal_functions : list of SymPy functions
+        List of SymPy functions that are used in the expression.
+    indexes : list of SymPy Idx
+        List of SymPy Idx that are used in the expression. These are usually
+        the indexes for the number of moles, like [k, l, m].
+    dt : SymPy expression
+        First derivative of the expression with respect to temperature (T).
+    dt2 : SymPy expression
+        Second derivative of the expression with respect to temperature (T).
+    dv : SymPy expression
+        First derivative of the expression with respect to volume (V).
+    dv2 : SymPy expression
+        Second derivative of the expression with respect to volume (V).
+    dv3 : SymPy expression
+        Third derivative of the expression with respect to volume (V).
+    dni : SymPy expression
+        First derivative of the expression with respect to number of moles `i`
+        (n[i]).
+    dnidnj : SymPy expression
+        Second derivative of the expression with respect to number of moles
+        `i` (n[i]) and `j` (n[j]).
+    dtdv : SymPy expression
+        Cross derivative of the first derivative with respect to temperature
+        (T) and volume (V).
+    dtdni : SymPy expression
+        Cross derivative of the first derivative with respect to temperature
+        (T) and number of moles `i` (n[i]).
+    dvdni : SymPy expression
+        Cross derivative of the first derivative with respect to volume (V)
+        and number of moles `i` (n[i]).
     """
 
     def __init__(
@@ -73,16 +110,16 @@ class DiffClass:
         # Temperature derivatives
         self.dt = sp.diff(self.expression, T)
         self.dt2 = sp.diff(self.dt, T)
-        
+
         # Volume derivatives
         self.dv = sp.diff(self.expression, V)
         self.dv2 = sp.diff(self.dv, V)
         self.dv3 = sp.diff(self.dv2, V)
-        
+
         # Derivatives with respect to number of moles
         self.dni = self.diff_ni(self.expression, i)
         self.dnidnj = self.diff_dnidnj(self.dni, j)
-        
+
         # Cross second derivatives
         self.dtdv = sp.diff(self.dt, V)
         self.dtdni = self.diff_ni(self.dt, i)
@@ -103,41 +140,57 @@ class DiffClass:
         sympy expression
             The compositional derivative dn[index].
         """
+        # Directly use SymPy's diff function to obtain the derivative
+        raw_diff = sp.diff(expression, n[index])
 
-        if not expression.is_Piecewise:
-            raw_diff = sp.diff(expression, n[index])
-            diff_not_sumkron = handle_sum_kronecker(raw_diff, index)
-            
-            diff_final = diff_not_sumkron
-            
-            for kdx in self.indexes:
-                diff_final = handle_free_kronecker(diff_final, kdx, index)
-            
-            return diff_final
+        # Clean the kronecker delta that appears in summation expressions
+        diff_not_sumkron = handle_sum_kronecker(raw_diff, index)
+
+        # Handle the free kronecker deltas in the expression. If there is
+        # free kronecker delta in the expression you will obtain a piecewise
+        # expression.
+        diff_final = diff_not_sumkron
+        for kdx in self.indexes:
+            diff_final = handle_free_kronecker(diff_final, kdx, index)
+
+        return diff_final
 
     def diff_dnidnj(self, expression: sp.Expr, index: sp.Idx):
+        # If the expression is not a Piecewise, we can use the diff_ni method
         if not expression.is_Piecewise:
             return self.diff_ni(expression, index)
 
-        pieces = []
+        # If the expression is a Piecewise, we need to handle each case
+        # separately and combine the results.
+
+        pieces = []  # (list of tuples with (expression, condition))
+
         for case in expression.args:
             expr = case[0]
             cond = case[1]
-            
+
+            # Differentiate the expression and handle the kronecker deltas
+            # as in the diff_ni method.
             raw_diff = sp.diff(expr, n[index])
             diff_not_sumkron = handle_sum_kronecker(raw_diff, index)
-            
+
             diff_final_c = diff_not_sumkron
             for kdx in self.indexes:
                 diff_final_c = handle_free_kronecker(diff_final_c, kdx, index)
-                
+
+            # Here appears new kronecker deltas. delta(j, i)
             diff_final_c = handle_free_kronecker(diff_final_c, index, i)
 
+            # The derivative of an expression of the original piecewise,
+            # differentiated respect n[index] again could be a Piecewise
+            # expression.
             if diff_final_c.is_Piecewise:
                 for dcase in diff_final_c.args:
                     d_expr = dcase[0]
                     d_cond = dcase[1]
-                    
+
+                    # We concatenate the conditions of the original piecewise
+                    # with the conditions of the derivative piecewise.
                     if d_cond == True and cond != True:
                         pieces.append((d_expr, cond & sp.Ne(i, index)))
                     elif d_cond != True and cond == True:
