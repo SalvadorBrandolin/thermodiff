@@ -1,22 +1,39 @@
+"""Differentiate Please module.
+
+This module provides the `DiffPlz` class, which is used to obtain all the
+derivatives of a thermodynamic expression with respect to temperature (T),
+volume (V), and the number of moles of components (n[i], n[j]).
+It handles both direct and cross derivatives, including second derivatives
+and cross derivatives between temperature, volume, and number of moles.
+
+Use the class as.
+
+.. code-block:: python
+
+    import thermodiff as td
+    
+    sol = td.DiffPlz(expression, internal_functions, indexes, name="f")    
+"""
+
 from typing import List
 
 import sympy as sp
 
-from thermodiff.thermovars import i, j, k, l, m, n, T, V
+from thermodiff.thermovars import i, j, k, l, m, n, P, T, V
 from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
 
 
-class DiffClass:
+class DiffPlz:
     """Class to obtaine all the derivatives of a thermodynamic expression.
 
     The class will obtain the derivatives respect to:
-    - Temperature (T)
-    - Volume (V)
-    - Number of moles `i` (n[i])
-    - Number of moles `j` (n[j])
+        - Temperature (T)
+        - Volume (V)
+        - Number of moles `i` (n[i])
+        - Number of moles `j` (n[j])
 
     For that, your expression must be defined in terms of these variables.
     Import them from `thermodiff.thermovars`:
@@ -26,16 +43,16 @@ class DiffClass:
         from thermodiff import n, T, V
 
     On the other hand, if you expression contains index-based variables. You
-    can't use the indexes `i` and `j` directly since they are reserved for
-    the derivatives. Instead, please use `k`, `l`, `m`. You can import them
-    from `thermodiff.thermovars` as well:
+    can't use the indexes `i` and `j` directly since they are reserved for the
+    derivatives. Instead, please use `k`, `l`, `m`. You can import them from
+    `thermodiff.thermovars` as well:
 
     .. code-block:: python
 
         from thermodiff import k, l, m
 
-    Or, you can define new symbols with different names, but make sure
-    they are not `i` or `j`.
+    Or, you can define new symbols with different names, but make sure they are
+    not `i` or `j`.
 
     .. code-block:: python
 
@@ -82,17 +99,21 @@ class DiffClass:
         First derivative of the expression with respect to number of moles `i`
         (n[i]).
     dnidnj : SymPy expression
-        Second derivative of the expression with respect to number of moles
-        `i` (n[i]) and `j` (n[j]).
+        Second derivative of the expression with respect to number of moles `i`
+        (n[i]) and `j` (n[j]).
     dtdv : SymPy expression
-        Cross derivative of the first derivative with respect to temperature
-        (T) and volume (V).
+        Cross second derivative respect to temperature(T) and volume (V).
+    dtdp : SymPy expression
+        Cross second derivative respect to temperature(T) and pressure (P).
     dtdni : SymPy expression
-        Cross derivative of the first derivative with respect to temperature
-        (T) and number of moles `i` (n[i]).
+        Cross second derivative respect to temperature(T) and number of moles
+        `i` (n[i]).
     dvdni : SymPy expression
-        Cross derivative of the first derivative with respect to volume (V)
-        and number of moles `i` (n[i]).
+        Cross second derivative volume (V) and number of moles `i` (n[i]).
+    dvdp : SymPy expression
+        Cross second derivative volume (V) and pressure (P).
+    dpdni : SymPy expression
+        Cross second derivative pressure (P) and number of moles `i` (n[i]).
     """
 
     def __init__(
@@ -115,6 +136,10 @@ class DiffClass:
         self.dv = sp.diff(self.expression, V)
         self.dv2 = sp.diff(self.dv, V)
         self.dv3 = sp.diff(self.dv2, V)
+        
+        # Pressure derivatives
+        self.dp = sp.diff(self.expression, P)
+        self.dp2 = sp.diff(self.dp, P)
 
         # Derivatives with respect to number of moles
         self.dni = self.diff_ni(self.expression, i)
@@ -122,10 +147,15 @@ class DiffClass:
 
         # Cross second derivatives
         self.dtdv = sp.diff(self.dt, V)
+        self.dtdp = sp.diff(self.dt, P)
         self.dtdni = self.diff_ni(self.dt, i)
+        
         self.dvdni = self.diff_ni(self.dv, i)
+        self.dvdp = sp.diff(self.dv, P)
+        
+        self.dpdni = self.diff_ni(self.dp, i)
 
-    def diff_ni(self, expression: sp.Expr, index: sp.Idx):
+    def diff_ni(self, expression: sp.Expr, index: sp.Idx) -> sp.Expr:
         """Obtain the compositional derivative dn[index].
 
         Parameters
@@ -155,7 +185,21 @@ class DiffClass:
 
         return diff_final
 
-    def diff_dnidnj(self, expression: sp.Expr, index: sp.Idx):
+    def diff_dnidnj(self, expression: sp.Expr, index: sp.Idx) -> sp.Expr:
+        """Obtain the second compositional derivative.
+
+        Parameters
+        ----------
+        expression : sympy expression
+            The thermodynamic expression of first compositional derivative.
+        index : sp.Idx
+            The index of the number of moles to differentiate with respect to.
+
+        Returns
+        -------
+        sympy expression
+            The second compositional derivative.
+        """
         # If the expression is not a Piecewise, we can use the diff_ni method
         if not expression.is_Piecewise:
             return self.diff_ni(expression, index)

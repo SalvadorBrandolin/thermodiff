@@ -2,16 +2,6 @@
 
 This package provides simple SymPy shenanigans and shortcuts for thermodynamic
 expressions differentiation and manipulation.
-
-The project is designed for personal use and personal preferences. If some
-expression is not handled the way you like you could create your own
-expressions parsing functions inspired by the existing ones on the source code.
-
-By now, this package is kind of a toy/ simple tool. There is no guarantee that
-more features will be added in the future.
-
-If you find a bad differentiation or a bug, please report it in the repository
-issues section.
 """
 
 from thermodiff.core.easy_sums import SumComponents, SumCustom
@@ -20,8 +10,8 @@ from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
-from thermodiff.diffclass import DiffClass
-from thermodiff.thermovars import i, j, k, l, m, n, nc, R, T, V
+from thermodiff.diffplz import DiffPlz
+from thermodiff.thermovars import i, j, k, l, m, n, nc, P, R, T, V
 
 
 __all__ = [
@@ -33,8 +23,8 @@ __all__ = [
     # Kronecker handling functions:
     "handle_free_kronecker",
     "handle_sum_kronecker",
-    # DiffClass:
-    "DiffClass",
+    # DiffPlz class:
+    "DiffPlz",
     # Thermodynamic variables and indices:
     "i",
     "j",
@@ -43,6 +33,7 @@ __all__ = [
     "m",
     "n",
     "nc",
+    "P",
     "R",
     "T",
     "V",
