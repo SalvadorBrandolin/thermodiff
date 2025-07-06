@@ -4,7 +4,7 @@ include pyproject.toml
 
 recursive-include thermodiff *.py
 
-exclude tox.ini
+exclude tox.ini *.ipynb
 exclude requirements-dev.txt
 
 recursive-exclude dist *

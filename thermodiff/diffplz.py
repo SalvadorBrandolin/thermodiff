@@ -11,19 +11,19 @@ Use the class as.
 .. code-block:: python
 
     import thermodiff as td
-    
-    sol = td.DiffPlz(expression, internal_functions, indexes, name="f")    
+
+    sol = td.DiffPlz(expression, internal_functions, indexes, name="f")
 """
 
 from typing import List
 
 import sympy as sp
 
-from thermodiff.thermovars import i, j, k, l, m, n, P, T, V
 from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
+from thermodiff.thermovars import P, T, V, i, j, k, l, m, n
 
 
 class DiffPlz:
@@ -120,7 +120,7 @@ class DiffPlz:
         self,
         expression,
         internal_functions: List[sp.Function] = [],
-        indexes: List[sp.Idx] = [k, l, m],
+        indexes: List[sp.Idx] = [k, l, m],  # noqa E741)
         name: str = "f",
     ):
         self.name = name
@@ -136,7 +136,7 @@ class DiffPlz:
         self.dv = sp.diff(self.expression, V)
         self.dv2 = sp.diff(self.dv, V)
         self.dv3 = sp.diff(self.dv2, V)
-        
+
         # Pressure derivatives
         self.dp = sp.diff(self.expression, P)
         self.dp2 = sp.diff(self.dp, P)
@@ -149,10 +149,10 @@ class DiffPlz:
         self.dtdv = sp.diff(self.dt, V)
         self.dtdp = sp.diff(self.dt, P)
         self.dtdni = self.diff_ni(self.dt, i)
-        
+
         self.dvdni = self.diff_ni(self.dv, i)
         self.dvdp = sp.diff(self.dv, P)
-        
+
         self.dpdni = self.diff_ni(self.dp, i)
 
     def diff_ni(self, expression: sp.Expr, index: sp.Idx) -> sp.Expr:
@@ -235,9 +235,9 @@ class DiffPlz:
 
                     # We concatenate the conditions of the original piecewise
                     # with the conditions of the derivative piecewise.
-                    if d_cond == True and cond != True:
+                    if (d_cond is True) and not (cond is True):
                         pieces.append((d_expr, cond & sp.Ne(i, index)))
-                    elif d_cond != True and cond == True:
+                    elif not (d_cond is True) and (cond is True):
                         pieces.append((d_expr, d_cond & sp.Ne(i, index)))
                     else:
                         pieces.append((d_expr, cond & d_cond))

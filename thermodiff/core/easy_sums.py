@@ -10,11 +10,11 @@ Use the function as:
 
     import thermodiff as td
 
-    td.SumComponents(expr, idx)
+    td.sum_components(expr, idx)
 
     # or
 
-    td.SumCustom(expr, idx, start=1, end=None)
+    td.sum_custom(expr, idx, start=1, end=None)
 """
 
 import sympy as sp
@@ -22,8 +22,8 @@ import sympy as sp
 from thermodiff.thermovars import nc
 
 
-def SumComponents(expr: sp.Expr, idx: sp.Idx) -> sp.Sum:
-    """Sums over components of a system.
+def sum_components(expr: sp.Expr, idx: sp.Idx) -> sp.Sum:
+    """Sum over components of a system.
 
     The funciton will sum over the components of the system the expression
     given in the `expr` parameter. `idx` is the index of the component, so
@@ -47,8 +47,8 @@ def SumComponents(expr: sp.Expr, idx: sp.Idx) -> sp.Sum:
     return sp.Sum(expr, (idx, 1, nc))
 
 
-def SumCustom(expr, idx, start=1, end=None):
-    """Sums over a custom range.
+def sum_custom(expr, idx, start=1, end=None):
+    """Sum over a custom range.
 
     Sometimes you need to sum over a custom range, this function provides a
     simple way to do it.

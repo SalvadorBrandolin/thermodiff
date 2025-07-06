@@ -37,7 +37,7 @@ j = sp.symbols("j", cls=sp.Idx)
 
 # Index for variables and things
 k = sp.symbols("k", cls=sp.Idx)
-l = sp.symbols("l", cls=sp.Idx)
+l = sp.symbols("l", cls=sp.Idx)  # noqa: E741 (do not use `l` as index)
 m = sp.symbols("m", cls=sp.Idx)
 
 # Thermo variables

@@ -1,23 +1,33 @@
-"""thermodiff package
+"""thermodiff package.
 
 This package provides simple SymPy shenanigans and shortcuts for thermodynamic
 expressions differentiation and manipulation.
+
+The project is designed for personal use and personal preferences. If some
+expression is not handled the way you like you could create your own
+expressions parsing functions inspired by the existing ones on the source code.
+
+By now, this package is kind of a toy/ simple tool. There is no guarantee that
+more features will be added in the future.
+
+If you find a bad differentiation or a bug, please report it in the repository
+issues section.
 """
 
-from thermodiff.core.easy_sums import SumComponents, SumCustom
+from thermodiff.core.easy_sums import sum_components, sum_custom
 from thermodiff.core.idxfunction import idx_function
 from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
 from thermodiff.diffplz import DiffPlz
-from thermodiff.thermovars import i, j, k, l, m, n, nc, P, R, T, V
+from thermodiff.thermovars import P, R, T, V, i, j, k, l, m, n, nc
 
 
 __all__ = [
     # User-friendly sums:
-    "SumComponents",
-    "SumCustom",
+    "sum_components",
+    "sum_custom",
     # Index Base function:
     "idx_function",
     # Kronecker handling functions:

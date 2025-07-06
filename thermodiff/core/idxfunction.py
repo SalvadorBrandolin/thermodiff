@@ -22,7 +22,7 @@ def idx_function(name: str) -> sp.Function:
     sp.Function
         A symbolic function class with a lazy derivative.
     """
-    LazyFunctionClass = type(
+    lazy_function_class = type(
         name,
         (sp.Function,),
         {
@@ -31,7 +31,7 @@ def idx_function(name: str) -> sp.Function:
         },
     )
 
-    return LazyFunctionClass
+    return lazy_function_class
 
 
 def lazy_derivative(self: sp.Function, s: sp.Symbol) -> sp.Derivative:
@@ -40,7 +40,7 @@ def lazy_derivative(self: sp.Function, s: sp.Symbol) -> sp.Derivative:
     Parameters
     ----------
     self : sp.Function
-        LazyFunctionClass instance
+        lazy_function_class instance
     s : sp.Symbol
         Symbol with respect to which the derivative is taken.
 

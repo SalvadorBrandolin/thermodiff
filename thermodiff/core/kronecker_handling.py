@@ -5,9 +5,9 @@ This module provides functions to handle these deltas, either by simplifying
 them or replacing them with piecewise expressions.
 """
 
-from thermodiff.thermovars import nc
-
 import sympy as sp
+
+from thermodiff.thermovars import nc
 
 
 def handle_sum_kronecker(expr: sp.Expr, idx: sp.Idx) -> sp.Expr:
@@ -37,7 +37,7 @@ def handle_sum_kronecker(expr: sp.Expr, idx: sp.Idx) -> sp.Expr:
 def handle_free_kronecker(
     expr: sp.Expr, kdx: sp.Idx, idx: sp.Idx
 ) -> sp.Piecewise:
-    """Replaces expression cotanining Kronecker delta(i, k) with Pieacewise.
+    """Replace expression cotanining Kronecker delta(i, k) with Pieacewise.
 
     Parameters
     ----------
