@@ -15,7 +15,7 @@ issues section.
 """
 
 from thermodiff.core.easy_sums import SumComponents, SumCustom
-from thermodiff.core.idxfunction import IdxFunction
+from thermodiff.core.idxfunction import idx_function
 from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
@@ -29,7 +29,7 @@ __all__ = [
     "SumComponents",
     "SumCustom",
     # Index Base function:
-    "IdxFunction",
+    "idx_function",
     # Kronecker handling functions:
     "handle_free_kronecker",
     "handle_sum_kronecker",
