@@ -154,6 +154,9 @@ class DiffPlz:
         self.dvdp = sp.diff(self.dv, P)
 
         self.dpdni = self.diff_ni(self.dp, i)
+        
+        # Arguments
+        self.arguments = self._detect_arguments()
 
     def diff_ni(self, expression: sp.Expr, index: sp.Idx) -> sp.Expr:
         """Obtain the compositional derivative dn[index].
@@ -245,3 +248,69 @@ class DiffPlz:
                 pieces.append((diff_final_c, cond))
 
         return sp.Piecewise(*pieces)
+
+    def clean_plz(self):
+        """Clean the DiffPlz instance.
+
+        This method applies known simplifications patterns to the 
+        differentiated expressions in the DiffPlz instance.
+        """
+        sym = sp.Function(self.name)(*self.arguments)
+        
+        # =====================================================================
+        # First diffs has the expression?
+        # =====================================================================
+        # dT
+        dt = self.dt
+        if self.dt.has(self.expression):
+            self.dt = self.dt.subs(self.expression, sym)
+            
+        if self.dt.has(self.expression / T):
+            self.dt = self.dt.subs(self.expression / T, sym / T)
+
+        # dP
+        dp = self.dp
+        if self.dp.has(self.expression):
+            self.dp = self.dp.subs(self.expression, sym)
+        
+        # dV
+        dv = self.dv
+        if self.dv.has(self.expression):
+            self.dv = self.dv.subs(self.expression, sym)
+            
+    def latex_readable_plz(self) -> str:
+        expr = self.dt
+        
+        for function in self.internal_functions:
+            deriv = sp.Derivative(function, T)
+            if expr.has(deriv):
+                # Reemplazar derivadas por un símbolo dummy que se renderiza bien
+                pretty_deriv = sp.Symbol(fr"\frac{{\partial {sp.latex(function.func)}}}{{\partial T}}", commutative=True)
+                expr = expr.replace(deriv, pretty_deriv)
+                
+                # También reemplazar la función con su nombre limpio
+                expr = expr.replace(function, function.func)
+                
+        expr = sp.latex(expr).replace('\\\\', '\\').replace("()", "")
+        expr = expr.replace(r"\left( \right)", "")
+        
+        return expr
+        
+        
+    def _detect_arguments(self) -> List[sp.Symbol]:
+        """Check the thermodynamic variables used in the expression."""
+        arguments = []
+        
+        if self.expression.has(n):
+            arguments.append(n)
+            
+        if self.expression.has(V):
+            arguments.append(V)
+            
+        if self.expression.has(P):
+            arguments.append(P)
+        
+        if self.expression.has(T):
+            arguments.append(T)
+            
+        return arguments
