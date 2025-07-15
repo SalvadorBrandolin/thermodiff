@@ -25,6 +25,8 @@ from thermodiff.core.kronecker_handling import (
 )
 from thermodiff.thermovars import P, T, V, i, j, k, l, m, n
 
+import copy
+
 
 class DiffPlz:
     """Class to obtaine all the derivatives of a thermodynamic expression.
@@ -278,23 +280,31 @@ class DiffPlz:
         if self.dv.has(self.expression):
             self.dv = self.dv.subs(self.expression, sym)
             
-    def latex_readable_plz(self) -> str:
-        expr = self.dt
+    def latex_readable_plz(self) -> str:      
+        latex_finals = {}
         
-        for function in self.internal_functions:
-            deriv = sp.Derivative(function, T)
-            if expr.has(deriv):
-                # Reemplazar derivadas por un símbolo dummy que se renderiza bien
-                pretty_deriv = sp.Symbol(fr"\frac{{\partial {sp.latex(function.func)}}}{{\partial T}}", commutative=True)
-                expr = expr.replace(deriv, pretty_deriv)
-                
-                # También reemplazar la función con su nombre limpio
+        # =====================================================================
+        # Clean first derivatives
+        # =====================================================================
+        expresions = {
+            "T": copy.copy(self.dt),
+            "V": copy.copy(self.dv),
+            "P": copy.copy(self.dp),
+            "n_i": copy.copy(self.dni),
+        }
+        
+        for diff, expr in expresions.items():
+            for function in self.internal_functions:
+                expr = clean_first_deriv(expr, function, diff)
                 expr = expr.replace(function, function.func)
                 
-        expr = sp.latex(expr).replace('\\\\', '\\').replace("()", "")
-        expr = expr.replace(r"\left( \right)", "")
+            expr = sp.latex(expr).replace('\\\\', '\\').replace("()", "")
+            expr = expr.replace(r"\left( \right)", "")
+            
+            latex_finals["d" + diff] = expr
         
-        return expr
+        
+        return latex_finals
         
         
     def _detect_arguments(self) -> List[sp.Symbol]:
@@ -314,3 +324,25 @@ class DiffPlz:
             arguments.append(T)
             
         return arguments
+
+
+def clean_first_deriv(expresion: sp.Expr, function: sp.Function, diferential: str) -> sp.Expr:
+    derivs = {
+        "T": sp.Derivative(function, T),
+        "V": sp.Derivative(function, V),
+        "P": sp.Derivative(function, P),
+        "n_i": sp.Derivative(function, n[i]),
+    }
+    
+    deriv = derivs[diferential]
+    
+    if expresion.has(deriv):
+        pretty_deriv = sp.Symbol(
+            fr"\frac{{\partial {sp.latex(function.func)}}}{{\partial {diferential}}}",
+            commutative=True,
+        )
+        
+        expresion = expresion.replace(deriv, pretty_deriv)
+        
+    return expresion
+    
