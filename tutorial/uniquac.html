@@ -1,0 +1,550 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Getting started &mdash; thermodiff 0.0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+      <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+      <link rel="stylesheet" type="text/css" href="../_static/nbsphinx-code-cells.css?v=2aa19091" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=d45e8c67"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+      <script src="../_static/copybutton.js?v=f281be69"></script>
+      <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+      <script>window.MathJax = {"tex": {"inlineMath": [["$", "$"], ["\\(", "\\)"]], "processEscapes": true}, "options": {"ignoreHtmlClass": "tex2jax_ignore|mathjax_ignore|document", "processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+      <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Thermodynamic Variables" href="../thermovars.html" />
+    <link rel="prev" title="&lt;no title&gt;" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            thermodiff
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="#Tutorial:-Let's-get-the-derivatives-of-the-UNIQUAC-model">Tutorial: Let’s get the derivatives of the UNIQUAC model</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#UNIQUAC-Temperature-function">UNIQUAC Temperature function</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#UNIQUAC-\theta_k">UNIQUAC <span class="math notranslate nohighlight">\(\theta_k\)</span></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#UNIQUAC-G^E">UNIQUAC <span class="math notranslate nohighlight">\(G^E\)</span></a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../thermovars.html">Thermodynamic Variables</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../diffplz.html">DiffPlz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../core/idxfunction.html">IndexBase Function</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../core/kronecker_handling.html">Kronecker delta Handling</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../core/easy_sums.html">Easy Summations Functions</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">thermodiff</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">&lt;no title&gt;</a></li>
+      <li class="breadcrumb-item active">Getting started</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/tutorial/uniquac.ipynb.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="Getting-started">
+<h1>Getting started<a class="headerlink" href="#Getting-started" title="Link to this heading"></a></h1>
+<p>thermodiff is not uploaded to PyPI. To install it you can do:</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/SalvadorBrandolin/thermodiff
+</pre></div>
+</div>
+<p>Obtaining derivatives of thermodynamic expressions is an important but not trivial task. Derivatives of Residual Helmholtz free energy and Excess Gibbs free energy models are used to evaluate of the thermodynamic properties of mixtures, such as enthalpy, entropy, and pressure.</p>
+<p>Moreover, sometimes it’s required to obtain derivatives of expressions with thermodynamic-involved magnitudes/variables for the development of algorithms, for example, for phase envelope calculations.</p>
+</section>
+<section id="Tutorial:-Let's-get-the-derivatives-of-the-UNIQUAC-model">
+<h1>Tutorial: Let’s get the derivatives of the UNIQUAC model<a class="headerlink" href="#Tutorial:-Let's-get-the-derivatives-of-the-UNIQUAC-model" title="Link to this heading"></a></h1>
+<p>The UNIQUAC (<strong>uni</strong>versal <strong>qua</strong>si<strong>c</strong>hemical) Excess Gibbs free energy model is given by:</p>
+<div class="math notranslate nohighlight">
+\[\frac{G^E}{RT} = \sum_k n_k \ln\frac{\phi_k}{x_k}
++ \frac{z}{2}\sum_k q_k n_k \ln\frac{\theta_k}{\phi_k}
+- \sum_k q_k n_k \ln\left(\sum_l \theta_l \tau_{lk} \right)\]</div>
+<p>With:</p>
+<div class="math notranslate nohighlight">
+\[x_k = \frac{n_k}{\sum_l n_l}\]</div>
+<div class="math notranslate nohighlight">
+\[\phi_k = \frac{r_k n_k}{\sum_l r_l n_l}\]</div>
+<div class="math notranslate nohighlight">
+\[\theta_k = \frac{q_k n_k}{\sum_l q_l n_l}\]</div>
+<div class="math notranslate nohighlight">
+\[\tau_{lk} = \exp \left[\frac{-\Delta U_{lk}}{R T} \right]\]</div>
+<div class="math notranslate nohighlight">
+\[\frac{-\Delta U_{lk}}{R T} = a_{lk}+\frac{b_{lk}}{T}+c_{lk}\ln T + d_{lk}T +
+e_{lk}{T^2}\]</div>
+<p>A simplification could be made to avoid division by zero, replacing <span class="math notranslate nohighlight">\(\phi_k\)</span> and <span class="math notranslate nohighlight">\(x_k\)</span> on the Gibbs free energy. The result is:</p>
+<div class="math notranslate nohighlight">
+\[\frac{G^E}{RT} = \sum_k n_k \ln \left(\frac{n_T r_k}{\sum_l r_l n_l} \right)
++ \frac{z}{2}\sum_k q_k n_k \ln \left(\frac{q_k \sum_l r_l n_l}{r_k \sum_l q_l
+n_l} \right) - \sum_k q_k n_k \ln\left(\sum_l \theta_l \tau_{lk} \right)\]</div>
+<p>Or directly how we will use it in this tutorial:</p>
+<div class="math notranslate nohighlight">
+\[G^E = RT\left(\sum_k n_k \ln \left(\frac{n_T r_k}{\sum_l r_l n_l} \right)
++ \frac{z}{2}\sum_k q_k n_k \ln \left(\frac{q_k \sum_l r_l n_l}{r_k \sum_l q_l
+n_l} \right) - \sum_k q_k n_k \ln\left(\sum_l \theta_l \tau_{lk} \right)\right)\]</div>
+<p>First thing to note is that in the expression above, all the subscripts are <span class="math notranslate nohighlight">\(k\)</span> or <span class="math notranslate nohighlight">\(l\)</span>. This is for a personal preference. I like to differentiate the expression respect to <span class="math notranslate nohighlight">\(n_i\)</span> and <span class="math notranslate nohighlight">\(n_j\)</span>. If we built our expression to differentiate using <span class="math notranslate nohighlight">\(i\)</span> and <span class="math notranslate nohighlight">\(j\)</span> subscripts, we wouldn’t be able to differentiate correctly.</p>
+<div class="important docutils container">
+<p>If I was not clear. <strong>NEVER</strong> use <span class="math notranslate nohighlight">\(i\)</span> and <span class="math notranslate nohighlight">\(j\)</span> subscripts in the thermodynamic expressions you want to differentiate. Use <span class="math notranslate nohighlight">\(k\)</span>, <span class="math notranslate nohighlight">\(l\)</span>, <span class="math notranslate nohighlight">\(m\)</span>, etc.</p>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">thermodiff</span></code> already provide instantiated SymPy variables. Please use them since internally when the <span class="math notranslate nohighlight">\(\frac{\partial}{\partial T}\)</span> is performed, it will use those instances.</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[1]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="kn">import</span> <span class="n">n</span><span class="p">,</span> <span class="n">P</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">T</span>  <span class="c1"># mole number vector, pressure, volume, temperature</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="kn">import</span> <span class="n">k</span><span class="p">,</span> <span class="n">l</span><span class="p">,</span> <span class="n">m</span>     <span class="c1"># indexes</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="kn">import</span> <span class="n">R</span>           <span class="c1"># universal gas constant</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">td</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">sympy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sp</span>  <span class="c1"># we still could need sympy</span>
+</pre></div>
+</div>
+</div>
+<section id="UNIQUAC-Temperature-function">
+<h2>UNIQUAC Temperature function<a class="headerlink" href="#UNIQUAC-Temperature-function" title="Link to this heading"></a></h2>
+<p>When using <code class="docutils literal notranslate"><span class="pre">thermodiff</span></code>, you should imagine that later you will have to implement those equations by yourself. So, differentiate as you code, by functions. Moreover, a very recommended practice is to differentiate each term individually. This avoids that SymPy heavily simplifies the expression to more non-readable forms.</p>
+<p>Following that advice, let’s start by the easiest but instructive part, <span class="math notranslate nohighlight">\(\tau_{lk}\)</span>. This force us to define more SymPy parameters: <span class="math notranslate nohighlight">\(a_{lk}\)</span>, <span class="math notranslate nohighlight">\(b_{lk}\)</span>, <span class="math notranslate nohighlight">\(c_{lk}\)</span>, <span class="math notranslate nohighlight">\(d_{lk}\)</span> and <span class="math notranslate nohighlight">\(e_{lk}\)</span></p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[2]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="c1"># UNIQUAC interaction parameters</span>
+<span class="n">a_lk</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="s2">&quot;a_</span><span class="si">{lk}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">b_lk</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="s2">&quot;b_</span><span class="si">{lk}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">c_lk</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="s2">&quot;c_</span><span class="si">{lk}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">d_lk</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="s2">&quot;d_</span><span class="si">{lk}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">e_lk</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="s2">&quot;e_</span><span class="si">{lk}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># The SymPy expression</span>
+<span class="n">tau_lk_expr</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">a_lk</span> <span class="o">+</span> <span class="n">b_lk</span><span class="o">/</span><span class="n">T</span> <span class="o">+</span> <span class="n">c_lk</span><span class="o">*</span><span class="n">sp</span><span class="o">.</span><span class="n">ln</span><span class="p">(</span><span class="n">T</span><span class="p">)</span> <span class="o">+</span> <span class="n">d_lk</span><span class="o">*</span><span class="n">T</span> <span class="o">+</span> <span class="n">e_lk</span><span class="o">*</span><span class="n">T</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+
+<span class="n">tau_lk_expr</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[2]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \log{\left(T \right)} + \frac{b_{lk}}{T}}$</div></div>
+</div>
+<p>Now we use the <code class="docutils literal notranslate"><span class="pre">thermodiff</span></code> class: <code class="docutils literal notranslate"><span class="pre">DiffPlz</span></code></p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[3]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tau_lk_diffs</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">DiffPlz</span><span class="p">(</span>
+    <span class="n">expression</span><span class="o">=</span><span class="n">tau_lk_expr</span><span class="p">,</span>
+    <span class="n">internal_functions</span><span class="o">=</span><span class="p">[],</span>
+    <span class="n">indexes</span><span class="o">=</span><span class="p">[</span><span class="n">k</span><span class="p">,</span> <span class="n">l</span><span class="p">,</span> <span class="n">m</span><span class="p">],</span>
+    <span class="n">name</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;\tau_</span><span class="si">{lk}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>The arguments of the <code class="docutils literal notranslate"><span class="pre">DiffPlz</span></code> class are:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">expression</span></code>: The SymPy expression to differentiate.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">internal_functions</span></code>: A list of SymPy functions that are used internally in the expression. This is needed for cleaning the expression derivatives’ LaTeX. We will see this later. By default, is an empty list.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">indexes</span></code>: A list of SymPy variables that are used as indexes in the expression. By default, this list is [<code class="docutils literal notranslate"><span class="pre">k</span></code>, <code class="docutils literal notranslate"><span class="pre">l</span></code>, <code class="docutils literal notranslate"><span class="pre">m</span></code>]. It doesn’t matter if you put more variables than used in the expression, only you must not put less. Don’t forget that you can’t use <code class="docutils literal notranslate"><span class="pre">i</span></code> and <code class="docutils literal notranslate"><span class="pre">j</span></code> as indexes in the expression.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">name</span></code>: The name of the expression. This is used for the LaTeX representation of the expression. In this case, we will use <span class="math notranslate nohighlight">\(\tau_{lk}\)</span></p></li>
+</ul>
+<p>Inside the attributes of the <code class="docutils literal notranslate"><span class="pre">DiffPlz</span></code> instance we have the derivatives respect to <span class="math notranslate nohighlight">\(T\)</span>:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[4]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tau_lk_diffs</span><span class="o">.</span><span class="n">dt</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[4]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \left(2 T e_{lk} + d_{lk} + \frac{c_{lk}}{T} - \frac{b_{lk}}{T^{2}}\right) e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \log{\left(T \right)} + \frac{b_{lk}}{T}}$</div></div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[5]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tau_lk_diffs</span><span class="o">.</span><span class="n">dt2</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[5]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \left(2 e_{lk} - \frac{c_{lk}}{T^{2}} + \frac{2 b_{lk}}{T^{3}}\right) e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \log{\left(T \right)} + \frac{b_{lk}}{T}} + \left(2 T e_{lk} + d_{lk} + \frac{c_{lk}}{T} - \frac{b_{lk}}{T^{2}}\right)^{2} e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \log{\left(T \right)} + \frac{b_{lk}}{T}}$</div></div>
+</div>
+<p>Those are SymPy expressions, meaning that you can manipulate them as you wish with all the power of SymPy. You can use <code class="docutils literal notranslate"><span class="pre">sympy.simplify</span></code>, <code class="docutils literal notranslate"><span class="pre">sympy.expand</span></code>, etc.</p>
+<p>You will quickly notice that those temperature derivatives are horrible. They are derivatives of an exponential function, so they have the form of:</p>
+<div class="math notranslate nohighlight">
+\[\frac{d e^{u}}{d T} = \frac{d u}{d T} e^u\]</div>
+<p>We can call the <code class="docutils literal notranslate"><span class="pre">clean_plz</span></code> method so the <code class="docutils literal notranslate"><span class="pre">DiffPlz</span></code> instance will try to simplify those expressions. This will not always work, but in this case it does.</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[6]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tau_lk_diffs</span><span class="o">.</span><span class="n">clean_plz</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+<p>The attributes are now replaced by “cleaned” expressions. Now we check the derivatives of the <span class="math notranslate nohighlight">\(\tau_{lk}\)</span> function again:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[7]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tau_lk_diffs</span><span class="o">.</span><span class="n">dt</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[7]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \left(2 T e_{lk} + d_{lk} + \frac{c_{lk}}{T} - \frac{b_{lk}}{T^{2}}\right) \tau_{lk}{\left(T \right)}$</div></div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[8]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tau_lk_diffs</span><span class="o">.</span><span class="n">dt2</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[8]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \left(2 e_{lk} - \frac{c_{lk}}{T^{2}} + \frac{2 b_{lk}}{T^{3}}\right) \tau_{lk}{\left(T \right)} + \left(2 T e_{lk} + d_{lk} + \frac{c_{lk}}{T} - \frac{b_{lk}}{T^{2}}\right)^{2} \tau_{lk}{\left(T \right)}$</div></div>
+</div>
+<p>The last method we have you see is the <code class="docutils literal notranslate"><span class="pre">latex_readable_plz</span></code> method. This method returns a dictionary with the LaTeX representation of the attributes. It will clean all the arguments of the internal functions and will beautify the derivatives. The idea is to use this dictionary to build the LaTeX in a .tex/.md file and follow it to implement the equations in code.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[9]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">ldict</span> <span class="o">=</span> <span class="n">tau_lk_diffs</span><span class="o">.</span><span class="n">latex_readable_plz</span><span class="p">()</span>
+
+<span class="n">ldict</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[9]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+{&#39;dT&#39;: &#39;\\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right) \\tau_{lk}{\\left(T \\right)}&#39;,
+ &#39;dV&#39;: &#39;0&#39;,
+ &#39;dP&#39;: &#39;0&#39;,
+ &#39;dn_i&#39;: &#39;0&#39;,
+ &#39;dT2&#39;: &#39;\\left(2 e_{lk} - \\frac{c_{lk}}{T^{2}} + \\frac{2 b_{lk}}{T^{3}}\\right) \\tau_{lk}{\\left(T \\right)} + \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right)^{2} \\tau_{lk}{\\left(T \\right)}&#39;,
+ &#39;dV2&#39;: &#39;0&#39;,
+ &#39;dP2&#39;: &#39;0&#39;,
+ &#39;dn2&#39;: &#39;0&#39;,
+ &#39;dTn&#39;: &#39;0&#39;,
+ &#39;dVn&#39;: &#39;0&#39;,
+ &#39;dPn&#39;: &#39;0&#39;,
+ &#39;dTV&#39;: &#39;0&#39;,
+ &#39;dTP&#39;: &#39;0&#39;,
+ &#39;dVP&#39;: &#39;0&#39;}
+</pre></div></div>
+</div>
+<p>Of course all derivatives are zero except the temperature derivatives. You can print and copy those expressions to your LaTeX file. Here we are going to represent them with IPython</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[10]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">IPython.display</span><span class="w"> </span><span class="kn">import</span> <span class="n">display</span><span class="p">,</span> <span class="n">Math</span>
+
+<span class="n">display</span><span class="p">(</span><span class="n">Math</span><span class="p">(</span><span class="n">ldict</span><span class="p">[</span><span class="s2">&quot;dT&quot;</span><span class="p">]))</span>
+<span class="n">display</span><span class="p">(</span><span class="n">Math</span><span class="p">(</span><span class="n">ldict</span><span class="p">[</span><span class="s2">&quot;dT2&quot;</span><span class="p">]))</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \left(2 T e_{lk} + d_{lk} + \frac{c_{lk}}{T} - \frac{b_{lk}}{T^{2}}\right) \tau_{lk}{\left(T \right)}$</div></div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \left(2 e_{lk} - \frac{c_{lk}}{T^{2}} + \frac{2 b_{lk}}{T^{3}}\right) \tau_{lk}{\left(T \right)} + \left(2 T e_{lk} + d_{lk} + \frac{c_{lk}}{T} - \frac{b_{lk}}{T^{2}}\right)^{2} \tau_{lk}{\left(T \right)}$</div></div>
+</div>
+<p>In this case is the same, but we will appreciate the difference with the next examples.</p>
+</section>
+<section id="UNIQUAC-\theta_k">
+<h2>UNIQUAC <span class="math notranslate nohighlight">\(\theta_k\)</span><a class="headerlink" href="#UNIQUAC-\theta_k" title="Link to this heading"></a></h2>
+<p>The UNIQUAC <span class="math notranslate nohighlight">\(\theta_k\)</span> function is very similar to the <span class="math notranslate nohighlight">\(\tau_{lk}\)</span> function, but still has some instructive differences. First, we need that the parameter <code class="docutils literal notranslate"><span class="pre">q</span></code> to be index base. Second, we will see the function <code class="docutils literal notranslate"><span class="pre">sum_components</span></code>. This function only provide a shortcut to make summation along the components of the mixture.</p>
+<p>Let’s do it:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[11]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">q</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">IndexedBase</span><span class="p">(</span><span class="s2">&quot;q&quot;</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">n</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+
+<span class="n">tetha_k</span> <span class="o">=</span> <span class="n">n</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">q</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">/</span> <span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">n</span><span class="p">[</span><span class="n">l</span><span class="p">]</span> <span class="o">*</span> <span class="n">q</span><span class="p">[</span><span class="n">l</span><span class="p">],</span> <span class="n">l</span><span class="p">)</span>
+
+<span class="n">tetha_k</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[11]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \frac{{n}_{k} {q}_{k}}{\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}}$</div></div>
+</div>
+<p>As you can see, there is an internal variable <code class="docutils literal notranslate"><span class="pre">Nc</span></code> (number of components) that is used as the upper limit of the summation. You can import that variable if you want:</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[12]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="kn">import</span> <span class="n">nc</span>
+</pre></div>
+</div>
+</div>
+<p>Now let’s start differentiating:</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[13]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tetha_k_diff</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">DiffPlz</span><span class="p">(</span>
+    <span class="n">expression</span><span class="o">=</span><span class="n">tetha_k</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;\theta_</span><span class="si">{k}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[14]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tetha_k_diff</span><span class="o">.</span><span class="n">dni</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[14]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \begin{cases} - \frac{{n}_{i} {q}_{i}^{2}}{\left(\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\right)^{2}} + \frac{{q}_{i}}{\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}} &amp; \text{for}\: i = k \\- \frac{{n}_{k} {q}_{i} {q}_{k}}{\left(\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\right)^{2}} &amp; \text{otherwise} \end{cases}$</div></div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[15]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tetha_k_diff</span><span class="o">.</span><span class="n">dnidnj</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[15]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \begin{cases} \frac{2 {n}_{i} {q}_{i}^{3}}{\left(\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\right)^{3}} - \frac{2 {q}_{i}^{2}}{\left(\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\right)^{2}} &amp; \text{for}\: i = j \wedge i = k \\\frac{2 {n}_{i} {q}_{i}^{2} {q}_{j}}{\left(\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\right)^{3}} - \frac{{q}_{i} {q}_{j}}{\left(\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\right)^{2}} &amp; \text{for}\: i = k \\\frac{2 {n}_{j} {q}_{i} {q}_{j}^{2}}{\left(\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\right)^{3}} - \frac{{q}_{i} {q}_{j}}{\left(\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\right)^{2}} &amp; \text{for}\: j = k \\\frac{2 {n}_{k} {q}_{i} {q}_{j} {q}_{k}}{\left(\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\right)^{3}} &amp; \text{otherwise} \end{cases}$</div></div>
+</div>
+<p>As you can see, the compositional derivatives are piece wise expressions. This is obviously because the derivative depends on the subscripts. The first derivative is a matrix and the second derivative is a tensor.</p>
+<p>You could apply the <code class="docutils literal notranslate"><span class="pre">clean_plz</span></code> and <code class="docutils literal notranslate"><span class="pre">latex_readable_plz</span></code> methods to this instance as previously shown.</p>
+</section>
+<section id="UNIQUAC-G^E">
+<h2>UNIQUAC <span class="math notranslate nohighlight">\(G^E\)</span><a class="headerlink" href="#UNIQUAC-G^E" title="Link to this heading"></a></h2>
+<p>As told before, its recommended to differentiate each term by sepparate. This avoids that SymPy heavily simplifies the expression to more non-readable forms. I will not do it here.</p>
+<p>This is the first example of a expression that we need internal functions. Specifically we need de <span class="math notranslate nohighlight">\(\tau_{lk}(T)\)</span> and <span class="math notranslate nohighlight">\(\theta_l(n)\)</span> functions.</p>
+<p>First, the parameters:</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[16]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">r</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">IndexedBase</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">n</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+<span class="n">q</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">IndexedBase</span><span class="p">(</span><span class="s2">&quot;q&quot;</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">n</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">symbols</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>Now the functions. First we will go with the <span class="math notranslate nohighlight">\(\theta_l(n)\)</span>. This is the most complicated thing to understand, SymPy doesn’t directly support indexed functions, so we have to use a custom <code class="docutils literal notranslate"><span class="pre">thermodiff</span></code> class.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[17]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">theta_l</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">idx_function</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\theta&quot;</span><span class="p">)(</span><span class="n">n</span><span class="p">[</span><span class="n">l</span><span class="p">])</span>
+
+<span class="n">theta_l</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[17]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \theta{\left({n}_{l} \right)}$</div></div>
+</div>
+<p>Here we defined a function of <code class="docutils literal notranslate"><span class="pre">n[l]</span></code>. Since <span class="math notranslate nohighlight">\(\theta\)</span> is function of <span class="math notranslate nohighlight">\(n\)</span> we symbolize the subindex of <span class="math notranslate nohighlight">\(\theta\)</span> by the argument of the function. Don’t use the “l” in the function name because it will not be updated when the expression is differentiated. In the final LaTeX, the subindex will be replaced from the argument of the function to the subindex of the function.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[18]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">tau_lk</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">idx_function</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\tau&quot;</span><span class="p">)(</span><span class="n">l</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span>
+
+<span class="n">tau_lk</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[18]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle \tau{\left(l,k,T \right)}$</div></div>
+</div>
+<p>Check what we have done with the <span class="math notranslate nohighlight">\(\tau_{lk}\)</span> function. <span class="math notranslate nohighlight">\(\tau\)</span> is only function of temperature, so we don’t use <span class="math notranslate nohighlight">\(n[l]\)</span> or <span class="math notranslate nohighlight">\(n[k]\)</span> in the arguments, we use directly the indexes, so they can be updated when the expression is differentiated.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[19]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">Ge</span> <span class="o">=</span> <span class="n">R</span> <span class="o">*</span> <span class="n">T</span> <span class="o">*</span> <span class="p">(</span>
+    <span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">n</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">sp</span><span class="o">.</span><span class="n">ln</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">n</span><span class="p">[</span><span class="n">l</span><span class="p">],</span> <span class="n">l</span><span class="p">)</span> <span class="o">/</span> <span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="n">l</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span><span class="p">[</span><span class="n">l</span><span class="p">],</span> <span class="n">l</span><span class="p">)),</span> <span class="n">k</span><span class="p">)</span>
+    <span class="o">+</span> <span class="n">z</span> <span class="o">/</span> <span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">q</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">sp</span><span class="o">.</span><span class="n">ln</span><span class="p">(</span><span class="n">q</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="n">l</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span><span class="p">[</span><span class="n">l</span><span class="p">],</span> <span class="n">l</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">q</span><span class="p">[</span><span class="n">l</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span><span class="p">[</span><span class="n">l</span><span class="p">],</span> <span class="n">l</span><span class="p">))),</span> <span class="n">k</span><span class="p">))</span>
+    <span class="o">-</span> <span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">q</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">n</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">sp</span><span class="o">.</span><span class="n">ln</span><span class="p">(</span><span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">theta_l</span> <span class="o">*</span> <span class="n">tau_lk</span><span class="p">,</span> <span class="n">l</span><span class="p">)),</span> <span class="n">k</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="n">Ge</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[19]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="math notranslate nohighlight">
+$\displaystyle R T \left(\frac{z \sum_{k=1}^{N_{c}} \left(\log{\left(\frac{{q}_{k} \sum_{l=1}^{N_{c}} {n}_{l} {r}_{l}}{{r}_{k} \sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}} \right)}\right) {n}_{k} {q}_{k}}{2} + \sum_{k=1}^{N_{c}} \left(\log{\left(\frac{{r}_{k} \sum_{l=1}^{N_{c}} {n}_{l}}{\sum_{l=1}^{N_{c}} {n}_{l} {r}_{l}} \right)}\right) {n}_{k} - \sum_{k=1}^{N_{c}} \left(\log{\left(\sum_{l=1}^{N_{c}} \tau{\left(l,k,T \right)} \theta{\left({n}_{l} \right)} \right)}\right) {n}_{k} {q}_{k}\right)$</div></div>
+</div>
+<p>Nothing to help you here, you have to be brave and write the expression by yourself.</p>
+<p>Let’s differentiate the expression:</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[20]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">ge_diff</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">DiffPlz</span><span class="p">(</span>
+    <span class="n">expression</span><span class="o">=</span><span class="n">Ge</span><span class="p">,</span>
+    <span class="n">internal_functions</span><span class="o">=</span><span class="p">[</span><span class="n">theta_l</span><span class="p">,</span> <span class="n">tau_lk</span><span class="p">],</span>
+    <span class="n">indexes</span><span class="o">=</span><span class="p">[</span><span class="n">k</span><span class="p">,</span> <span class="n">l</span><span class="p">],</span>
+    <span class="n">name</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;G^E&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>Check that here we used the <code class="docutils literal notranslate"><span class="pre">internal_functions</span></code> argument to pass the <code class="docutils literal notranslate"><span class="pre">theta_l</span></code> and <code class="docutils literal notranslate"><span class="pre">tau_lk</span></code> functions we used in the expression.</p>
+<p>Let’s check the derivatives:</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="&lt;no title&gt;" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="../thermovars.html" class="btn btn-neutral float-right" title="Thermodynamic Variables" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Salvador Eduardo Brandolín.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

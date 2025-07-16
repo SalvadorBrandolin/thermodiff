@@ -1,0 +1,670 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>thermodiff.diffplz &mdash; thermodiff 0.0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+      <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=d45e8c67"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+      <script src="../../_static/copybutton.js?v=f281be69"></script>
+      <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            thermodiff
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../tutorial/uniquac.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../tutorial/uniquac.html#Tutorial:-Let's-get-the-derivatives-of-the-UNIQUAC-model">Tutorial: Let’s get the derivatives of the UNIQUAC model</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../thermovars.html">Thermodynamic Variables</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../diffplz.html">DiffPlz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../core/idxfunction.html">IndexBase Function</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../core/kronecker_handling.html">Kronecker delta Handling</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../core/easy_sums.html">Easy Summations Functions</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">thermodiff</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">thermodiff.diffplz</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for thermodiff.diffplz</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Differentiate Please module.</span>
+
+<span class="sd">This module provides the `DiffPlz` class, which is used to obtain all the</span>
+<span class="sd">derivatives of a thermodynamic expression with respect to temperature (T),</span>
+<span class="sd">volume (V), and the number of moles of components (n[i], n[j]).</span>
+<span class="sd">It handles both direct and cross derivatives, including second derivatives</span>
+<span class="sd">and cross derivatives between temperature, volume, and number of moles.</span>
+
+<span class="sd">Use the class as.</span>
+
+<span class="sd">.. code-block:: python</span>
+
+<span class="sd">    import thermodiff as td</span>
+
+<span class="sd">    sol = td.DiffPlz(expression, internal_functions, indexes, name=&quot;f&quot;)</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">sympy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sp</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff.core.kronecker_handling</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">handle_free_kronecker</span><span class="p">,</span>
+    <span class="n">handle_sum_kronecker</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff.thermovars</span><span class="w"> </span><span class="kn">import</span> <span class="n">P</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">l</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">n</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">copy</span>
+
+
+<div class="viewcode-block" id="DiffPlz">
+<a class="viewcode-back" href="../../diffplz.html#thermodiff.diffplz.DiffPlz">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">DiffPlz</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Class to obtaine all the derivatives of a thermodynamic expression.</span>
+
+<span class="sd">    The class will obtain the derivatives respect to:</span>
+<span class="sd">        - Temperature (T)</span>
+<span class="sd">        - Volume (V)</span>
+<span class="sd">        - Number of moles `i` (n[i])</span>
+<span class="sd">        - Number of moles `j` (n[j])</span>
+
+<span class="sd">    For that, your expression must be defined in terms of these variables.</span>
+<span class="sd">    Import them from `thermodiff.thermovars`:</span>
+
+<span class="sd">    .. code-block:: python</span>
+
+<span class="sd">        from thermodiff import n, T, V</span>
+
+<span class="sd">    On the other hand, if you expression contains index-based variables. You</span>
+<span class="sd">    can&#39;t use the indexes `i` and `j` directly since they are reserved for the</span>
+<span class="sd">    derivatives. Instead, please use `k`, `l`, `m`. You can import them from</span>
+<span class="sd">    `thermodiff.thermovars` as well:</span>
+
+<span class="sd">    .. code-block:: python</span>
+
+<span class="sd">        from thermodiff import k, l, m</span>
+
+<span class="sd">    Or, you can define new symbols with different names, but make sure they are</span>
+<span class="sd">    not `i` or `j`.</span>
+
+<span class="sd">    .. code-block:: python</span>
+
+<span class="sd">        from sympy import symbols</span>
+
+<span class="sd">        o, p, q = symbols(&quot;o p q&quot;, cls=sp.Idx)</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    expression : sympy expression</span>
+<span class="sd">        The thermodynamic expression to differentiate.</span>
+<span class="sd">    internal_functions : list of sympy functions</span>
+<span class="sd">        List of sympy functions that are used in the expression.</span>
+<span class="sd">    indexes : list of sympy Idx</span>
+<span class="sd">        List of sympy Idx that are used in the expression. These are usually</span>
+<span class="sd">        the indexes for the number of moles, like [k, l, m].</span>
+<span class="sd">    name : str, optional</span>
+<span class="sd">        Name of the DiffClass instance, by default &quot;f&quot;. It could be for example</span>
+<span class="sd">        the name of the thermodynamic function you are working with, like &quot;G^E&quot;</span>
+<span class="sd">        or &quot;A^r&quot;.</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    name : str</span>
+<span class="sd">        Name of the Function to be differentiated instance.</span>
+<span class="sd">    expression : SymPy expression</span>
+<span class="sd">        The thermodynamic expression to differentiate.</span>
+<span class="sd">    internal_functions : list of SymPy functions</span>
+<span class="sd">        List of SymPy functions that are used in the expression.</span>
+<span class="sd">    indexes : list of SymPy Idx</span>
+<span class="sd">        List of SymPy Idx that are used in the expression. These are usually</span>
+<span class="sd">        the indexes for the number of moles, like [k, l, m].</span>
+<span class="sd">    dt : SymPy expression</span>
+<span class="sd">        First derivative of the expression with respect to temperature (T).</span>
+<span class="sd">    dt2 : SymPy expression</span>
+<span class="sd">        Second derivative of the expression with respect to temperature (T).</span>
+<span class="sd">    dv : SymPy expression</span>
+<span class="sd">        First derivative of the expression with respect to volume (V).</span>
+<span class="sd">    dv2 : SymPy expression</span>
+<span class="sd">        Second derivative of the expression with respect to volume (V).</span>
+<span class="sd">    dni : SymPy expression</span>
+<span class="sd">        First derivative of the expression with respect to number of moles `i`</span>
+<span class="sd">        (n[i]).</span>
+<span class="sd">    dnidnj : SymPy expression</span>
+<span class="sd">        Second derivative of the expression with respect to number of moles `i`</span>
+<span class="sd">        (n[i]) and `j` (n[j]).</span>
+<span class="sd">    dtdv : SymPy expression</span>
+<span class="sd">        Cross second derivative respect to temperature(T) and volume (V).</span>
+<span class="sd">    dtdp : SymPy expression</span>
+<span class="sd">        Cross second derivative respect to temperature(T) and pressure (P).</span>
+<span class="sd">    dtdni : SymPy expression</span>
+<span class="sd">        Cross second derivative respect to temperature(T) and number of moles</span>
+<span class="sd">        `i` (n[i]).</span>
+<span class="sd">    dvdni : SymPy expression</span>
+<span class="sd">        Cross second derivative volume (V) and number of moles `i` (n[i]).</span>
+<span class="sd">    dvdp : SymPy expression</span>
+<span class="sd">        Cross second derivative volume (V) and pressure (P).</span>
+<span class="sd">    dpdni : SymPy expression</span>
+<span class="sd">        Cross second derivative pressure (P) and number of moles `i` (n[i]).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">expression</span><span class="p">,</span>
+        <span class="n">internal_functions</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">sp</span><span class="o">.</span><span class="n">Function</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
+        <span class="n">indexes</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">sp</span><span class="o">.</span><span class="n">Idx</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">k</span><span class="p">,</span> <span class="n">l</span><span class="p">,</span> <span class="n">m</span><span class="p">],</span>  <span class="c1"># noqa E741)</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;f&quot;</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">expression</span> <span class="o">=</span> <span class="n">expression</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">internal_functions</span> <span class="o">=</span> <span class="n">internal_functions</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">indexes</span> <span class="o">=</span> <span class="n">indexes</span>
+
+        <span class="c1"># Temperature derivatives</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="c1"># Volume derivatives</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dv</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dv2</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+
+        <span class="c1"># Pressure derivatives</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dp</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">P</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dp2</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dp</span><span class="p">,</span> <span class="n">P</span><span class="p">)</span>
+
+        <span class="c1"># Derivatives with respect to number of moles</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">diff_ni</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dnidnj</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">diff_dnidnj</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dni</span><span class="p">,</span> <span class="n">j</span><span class="p">)</span>
+
+        <span class="c1"># Cross second derivatives</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">,</span> <span class="n">P</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">diff_ni</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">diff_ni</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="p">,</span> <span class="n">P</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">dpdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">diff_ni</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dp</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
+
+        <span class="c1"># Arguments</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">arguments</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_detect_arguments</span><span class="p">()</span>
+
+<div class="viewcode-block" id="DiffPlz.diff_ni">
+<a class="viewcode-back" href="../../diffplz.html#thermodiff.diffplz.DiffPlz.diff_ni">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">diff_ni</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">expression</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Expr</span><span class="p">,</span> <span class="n">index</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Idx</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sp</span><span class="o">.</span><span class="n">Expr</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Obtain the compositional derivative dn[index].</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        expression : sympy expression</span>
+<span class="sd">            The thermodynamic expression to differentiate.</span>
+<span class="sd">        index : sp.Idx</span>
+<span class="sd">            The index of the number of moles to differentiate with respect to.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        sympy expression</span>
+<span class="sd">            The compositional derivative dn[index].</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Directly use SymPy&#39;s diff function to obtain the derivative</span>
+        <span class="n">raw_diff</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">expression</span><span class="p">,</span> <span class="n">n</span><span class="p">[</span><span class="n">index</span><span class="p">])</span>
+
+        <span class="c1"># Clean the kronecker delta that appears in summation expressions</span>
+        <span class="n">diff_not_sumkron</span> <span class="o">=</span> <span class="n">handle_sum_kronecker</span><span class="p">(</span><span class="n">raw_diff</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span>
+
+        <span class="c1"># Handle the free kronecker deltas in the expression. If there is</span>
+        <span class="c1"># free kronecker delta in the expression you will obtain a piecewise</span>
+        <span class="c1"># expression.</span>
+        <span class="n">diff_final</span> <span class="o">=</span> <span class="n">diff_not_sumkron</span>
+        <span class="k">for</span> <span class="n">kdx</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">indexes</span><span class="p">:</span>
+            <span class="n">diff_final</span> <span class="o">=</span> <span class="n">handle_free_kronecker</span><span class="p">(</span><span class="n">diff_final</span><span class="p">,</span> <span class="n">kdx</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">diff_final</span></div>
+
+
+<div class="viewcode-block" id="DiffPlz.diff_dnidnj">
+<a class="viewcode-back" href="../../diffplz.html#thermodiff.diffplz.DiffPlz.diff_dnidnj">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">diff_dnidnj</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">expression</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Expr</span><span class="p">,</span> <span class="n">index</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Idx</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sp</span><span class="o">.</span><span class="n">Expr</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Obtain the second compositional derivative.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        expression : sympy expression</span>
+<span class="sd">            The thermodynamic expression of first compositional derivative.</span>
+<span class="sd">        index : sp.Idx</span>
+<span class="sd">            The index of the number of moles to differentiate with respect to.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        sympy expression</span>
+<span class="sd">            The second compositional derivative.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># If the expression is not a Piecewise, we can use the diff_ni method</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">expression</span><span class="o">.</span><span class="n">is_Piecewise</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">diff_ni</span><span class="p">(</span><span class="n">expression</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span>
+
+        <span class="c1"># If the expression is a Piecewise, we need to handle each case</span>
+        <span class="c1"># separately and combine the results.</span>
+
+        <span class="n">pieces</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># (list of tuples with (expression, condition))</span>
+
+        <span class="k">for</span> <span class="n">case</span> <span class="ow">in</span> <span class="n">expression</span><span class="o">.</span><span class="n">args</span><span class="p">:</span>
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">case</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">cond</span> <span class="o">=</span> <span class="n">case</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+            <span class="c1"># Differentiate the expression and handle the kronecker deltas</span>
+            <span class="c1"># as in the diff_ni method.</span>
+            <span class="n">raw_diff</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">expr</span><span class="p">,</span> <span class="n">n</span><span class="p">[</span><span class="n">index</span><span class="p">])</span>
+            <span class="n">diff_not_sumkron</span> <span class="o">=</span> <span class="n">handle_sum_kronecker</span><span class="p">(</span><span class="n">raw_diff</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span>
+
+            <span class="n">diff_final_c</span> <span class="o">=</span> <span class="n">diff_not_sumkron</span>
+            <span class="k">for</span> <span class="n">kdx</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">indexes</span><span class="p">:</span>
+                <span class="n">diff_final_c</span> <span class="o">=</span> <span class="n">handle_free_kronecker</span><span class="p">(</span><span class="n">diff_final_c</span><span class="p">,</span> <span class="n">kdx</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span>
+
+            <span class="c1"># Here appears new kronecker deltas. delta(j, i)</span>
+            <span class="n">diff_final_c</span> <span class="o">=</span> <span class="n">handle_free_kronecker</span><span class="p">(</span><span class="n">diff_final_c</span><span class="p">,</span> <span class="n">index</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
+
+            <span class="c1"># The derivative of an expression of the original piecewise,</span>
+            <span class="c1"># differentiated respect n[index] again could be a Piecewise</span>
+            <span class="c1"># expression.</span>
+            <span class="k">if</span> <span class="n">diff_final_c</span><span class="o">.</span><span class="n">is_Piecewise</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">dcase</span> <span class="ow">in</span> <span class="n">diff_final_c</span><span class="o">.</span><span class="n">args</span><span class="p">:</span>
+                    <span class="n">d_expr</span> <span class="o">=</span> <span class="n">dcase</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                    <span class="n">d_cond</span> <span class="o">=</span> <span class="n">dcase</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+                    <span class="c1"># We concatenate the conditions of the original piecewise</span>
+                    <span class="c1"># with the conditions of the derivative piecewise.</span>
+                    <span class="k">if</span> <span class="p">(</span><span class="n">d_cond</span> <span class="ow">is</span> <span class="kc">True</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="p">(</span><span class="n">cond</span> <span class="ow">is</span> <span class="kc">True</span><span class="p">):</span>
+                        <span class="n">pieces</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">d_expr</span><span class="p">,</span> <span class="n">cond</span> <span class="o">&amp;</span> <span class="n">sp</span><span class="o">.</span><span class="n">Ne</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">index</span><span class="p">)))</span>
+                    <span class="k">elif</span> <span class="ow">not</span> <span class="p">(</span><span class="n">d_cond</span> <span class="ow">is</span> <span class="kc">True</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="n">cond</span> <span class="ow">is</span> <span class="kc">True</span><span class="p">):</span>
+                        <span class="n">pieces</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">d_expr</span><span class="p">,</span> <span class="n">d_cond</span> <span class="o">&amp;</span> <span class="n">sp</span><span class="o">.</span><span class="n">Ne</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">index</span><span class="p">)))</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">pieces</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">d_expr</span><span class="p">,</span> <span class="n">cond</span> <span class="o">&amp;</span> <span class="n">d_cond</span><span class="p">))</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">pieces</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">diff_final_c</span><span class="p">,</span> <span class="n">cond</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">sp</span><span class="o">.</span><span class="n">Piecewise</span><span class="p">(</span><span class="o">*</span><span class="n">pieces</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DiffPlz.clean_plz">
+<a class="viewcode-back" href="../../diffplz.html#thermodiff.diffplz.DiffPlz.clean_plz">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">clean_plz</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Clean the DiffPlz instance.</span>
+
+<span class="sd">        This method applies known simplifications patterns to the</span>
+<span class="sd">        differentiated expressions in the DiffPlz instance.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">sym</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Function</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">)(</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">arguments</span><span class="p">)</span>
+
+        <span class="c1"># =====================================================================</span>
+        <span class="c1"># First diffs has the expression?</span>
+        <span class="c1"># =====================================================================</span>
+        <span class="c1"># dT</span>
+        <span class="n">dt</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">)</span>
+        <span class="n">dtsym</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">sym</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span> <span class="o">/</span> <span class="n">T</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span> <span class="o">/</span> <span class="n">T</span><span class="p">,</span> <span class="n">sym</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="c1"># dP</span>
+        <span class="n">dp</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dp</span><span class="p">)</span>
+        <span class="n">dpsym</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">sym</span><span class="p">,</span> <span class="n">P</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="c1"># dV</span>
+        <span class="n">dv</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="p">)</span>
+        <span class="n">dvsym</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">sym</span><span class="p">,</span> <span class="n">V</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="c1"># dni</span>
+        <span class="n">dni</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dni</span><span class="p">)</span>
+        <span class="n">dnisym</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">sym</span><span class="p">,</span> <span class="n">n</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dni</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dni</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="c1"># =====================================================================</span>
+        <span class="c1"># Second diffs has the expression?</span>
+        <span class="c1"># =====================================================================</span>
+        <span class="c1"># dT2</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span> <span class="o">/</span> <span class="n">T</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span> <span class="o">/</span> <span class="n">T</span><span class="p">,</span> <span class="n">sym</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">,</span> <span class="n">dtsym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt2</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">/</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtsym</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="c1"># dV2</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv2</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dv2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv2</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv2</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dv</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dv2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv2</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="p">,</span> <span class="n">dvsym</span><span class="p">)</span>
+
+        <span class="c1"># dP2</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp2</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dp2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp2</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp2</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dp</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dp2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp2</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dp</span><span class="p">,</span> <span class="n">dpsym</span><span class="p">)</span>
+
+        <span class="c1"># dnidnj</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dnidnj</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dnidnj</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dnidnj</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dnidnj</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dni</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dni</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dnidnj</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dnidnj</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dni</span><span class="p">,</span> <span class="n">dnisym</span><span class="p">)</span>
+
+        <span class="c1"># dtdv</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dt</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">,</span> <span class="n">dtsym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dv</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="p">,</span> <span class="n">dvsym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dt</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">/</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtsym</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dv</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span> <span class="o">/</span> <span class="n">T</span><span class="p">,</span> <span class="n">dvsym</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="c1"># dtdp</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dt</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">,</span> <span class="n">dtsym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dp</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dp</span><span class="p">,</span> <span class="n">dpsym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dt</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">/</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtsym</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dp</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dp</span> <span class="o">/</span> <span class="n">T</span><span class="p">,</span> <span class="n">dpsym</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="c1"># dtdni</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dt</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">,</span> <span class="n">dtsym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dni</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dni</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dni</span><span class="p">,</span> <span class="n">dnisym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dt</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span> <span class="o">/</span> <span class="n">T</span><span class="p">,</span> <span class="n">dtsym</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dni</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dni</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dni</span> <span class="o">/</span> <span class="n">T</span><span class="p">,</span> <span class="n">dnisym</span> <span class="o">/</span> <span class="n">T</span><span class="p">)</span>
+
+        <span class="c1"># dvdni</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dv</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="p">,</span> <span class="n">dvsym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dni</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dni</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dni</span><span class="p">,</span> <span class="n">dnisym</span><span class="p">)</span>
+
+        <span class="c1"># dvdp</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="p">,</span> <span class="n">sym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dv</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dv</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="p">,</span> <span class="n">dvsym</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">dp</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">dp</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span><span class="o">.</span><span class="n">subs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dp</span><span class="p">,</span> <span class="n">dpsym</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DiffPlz.latex_readable_plz">
+<a class="viewcode-back" href="../../diffplz.html#thermodiff.diffplz.DiffPlz.latex_readable_plz">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">latex_readable_plz</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">latex_finals</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="c1"># =====================================================================</span>
+        <span class="c1"># Clean first derivatives</span>
+        <span class="c1"># =====================================================================</span>
+        <span class="n">expresions</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;T&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt</span><span class="p">),</span>
+            <span class="s2">&quot;V&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv</span><span class="p">),</span>
+            <span class="s2">&quot;P&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dp</span><span class="p">),</span>
+            <span class="s2">&quot;n_i&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dni</span><span class="p">),</span>
+        <span class="p">}</span>
+
+        <span class="k">for</span> <span class="n">diff</span><span class="p">,</span> <span class="n">expr</span> <span class="ow">in</span> <span class="n">expresions</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">for</span> <span class="n">function</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">internal_functions</span><span class="p">:</span>
+                <span class="n">expr</span> <span class="o">=</span> <span class="n">clean_first_deriv</span><span class="p">(</span><span class="n">expr</span><span class="p">,</span> <span class="n">function</span><span class="p">,</span> <span class="n">diff</span><span class="p">)</span>
+                <span class="n">expr</span> <span class="o">=</span> <span class="n">expr</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">function</span><span class="o">.</span><span class="n">func</span><span class="p">)</span>
+
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">latex</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\\\\</span><span class="s2">&quot;</span><span class="p">,</span> <span class="s2">&quot;</span><span class="se">\\</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;()&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">expr</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\left( \right)&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+            <span class="n">latex_finals</span><span class="p">[</span><span class="s2">&quot;d&quot;</span> <span class="o">+</span> <span class="n">diff</span><span class="p">]</span> <span class="o">=</span> <span class="n">expr</span>
+
+        <span class="c1"># =====================================================================</span>
+        <span class="c1"># Clean second derivatives</span>
+        <span class="c1"># =====================================================================</span>
+        <span class="n">expresions</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;T2&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dt2</span><span class="p">),</span>
+            <span class="s2">&quot;V2&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dv2</span><span class="p">),</span>
+            <span class="s2">&quot;P2&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dp2</span><span class="p">),</span>
+            <span class="s2">&quot;n2&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dnidnj</span><span class="p">),</span>
+            <span class="s2">&quot;Tn&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dtdni</span><span class="p">),</span>
+            <span class="s2">&quot;Vn&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dvdni</span><span class="p">),</span>
+            <span class="s2">&quot;Pn&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dpdni</span><span class="p">),</span>
+            <span class="s2">&quot;TV&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dtdv</span><span class="p">),</span>
+            <span class="s2">&quot;TP&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dtdp</span><span class="p">),</span>
+            <span class="s2">&quot;VP&quot;</span><span class="p">:</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dvdp</span><span class="p">),</span>
+        <span class="p">}</span>
+
+        <span class="k">for</span> <span class="n">diff</span><span class="p">,</span> <span class="n">expr</span> <span class="ow">in</span> <span class="n">expresions</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">for</span> <span class="n">function</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">internal_functions</span><span class="p">:</span>
+                <span class="n">expr</span> <span class="o">=</span> <span class="n">clean_second_deriv</span><span class="p">(</span><span class="n">expr</span><span class="p">,</span> <span class="n">function</span><span class="p">,</span> <span class="n">diff</span><span class="p">)</span>
+
+                <span class="k">for</span> <span class="n">d1</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;T&quot;</span><span class="p">,</span> <span class="s2">&quot;V&quot;</span><span class="p">,</span> <span class="s2">&quot;P&quot;</span><span class="p">,</span> <span class="s2">&quot;n_i&quot;</span><span class="p">,</span> <span class="s2">&quot;n_j&quot;</span><span class="p">]:</span>
+                    <span class="n">expr</span> <span class="o">=</span> <span class="n">clean_first_deriv</span><span class="p">(</span><span class="n">expr</span><span class="p">,</span> <span class="n">function</span><span class="p">,</span> <span class="n">d1</span><span class="p">)</span>
+
+                <span class="n">expr</span> <span class="o">=</span> <span class="n">expr</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">function</span><span class="o">.</span><span class="n">func</span><span class="p">)</span>
+
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">latex</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\\\\</span><span class="s2">&quot;</span><span class="p">,</span> <span class="s2">&quot;</span><span class="se">\\</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;()&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">expr</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\left( \right)&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+            <span class="n">latex_finals</span><span class="p">[</span><span class="s2">&quot;d&quot;</span> <span class="o">+</span> <span class="n">diff</span><span class="p">]</span> <span class="o">=</span> <span class="n">expr</span>
+
+        <span class="k">return</span> <span class="n">latex_finals</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_detect_arguments</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check the thermodynamic variables used in the expression.&quot;&quot;&quot;</span>
+        <span class="n">arguments</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+            <span class="n">arguments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">V</span><span class="p">):</span>
+            <span class="n">arguments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">V</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">P</span><span class="p">):</span>
+            <span class="n">arguments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">P</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">expression</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">T</span><span class="p">):</span>
+            <span class="n">arguments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">T</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">arguments</span></div>
+
+
+
+<div class="viewcode-block" id="clean_first_deriv">
+<a class="viewcode-back" href="../../diffplz.html#thermodiff.diffplz.clean_first_deriv">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">clean_first_deriv</span><span class="p">(</span>
+    <span class="n">expresion</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Expr</span><span class="p">,</span> <span class="n">function</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Function</span><span class="p">,</span> <span class="n">differential</span><span class="p">:</span> <span class="nb">str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sp</span><span class="o">.</span><span class="n">Expr</span><span class="p">:</span>
+    <span class="n">derivs</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;T&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">T</span><span class="p">),</span>
+        <span class="s2">&quot;V&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">V</span><span class="p">),</span>
+        <span class="s2">&quot;P&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">P</span><span class="p">),</span>
+        <span class="s2">&quot;n_i&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">n</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span>
+        <span class="s2">&quot;n_j&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">n</span><span class="p">[</span><span class="n">j</span><span class="p">]),</span>
+    <span class="p">}</span>
+
+    <span class="n">deriv</span> <span class="o">=</span> <span class="n">derivs</span><span class="p">[</span><span class="n">differential</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">expresion</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">deriv</span><span class="p">):</span>
+        <span class="n">pretty_deriv</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span>
+            <span class="sa">rf</span><span class="s2">&quot;\frac</span><span class="se">{{</span><span class="s2">\partial </span><span class="si">{</span><span class="n">sp</span><span class="o">.</span><span class="n">latex</span><span class="p">(</span><span class="n">function</span><span class="o">.</span><span class="n">func</span><span class="p">)</span><span class="si">}</span><span class="se">}}{{</span><span class="s2">\partial </span><span class="si">{</span><span class="n">differential</span><span class="si">}</span><span class="se">}}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">commutative</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="n">expresion</span> <span class="o">=</span> <span class="n">expresion</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">deriv</span><span class="p">,</span> <span class="n">pretty_deriv</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">expresion</span></div>
+
+
+
+<div class="viewcode-block" id="clean_second_deriv">
+<a class="viewcode-back" href="../../diffplz.html#thermodiff.diffplz.clean_second_deriv">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">clean_second_deriv</span><span class="p">(</span>
+    <span class="n">expresion</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Expr</span><span class="p">,</span> <span class="n">function</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Function</span><span class="p">,</span> <span class="n">differential</span><span class="p">:</span> <span class="nb">str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sp</span><span class="o">.</span><span class="n">Expr</span><span class="p">:</span>
+    <span class="n">derivs</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;T2&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">T</span><span class="p">),</span>
+        <span class="s2">&quot;V2&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">V</span><span class="p">),</span>
+        <span class="s2">&quot;P2&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">P</span><span class="p">,</span> <span class="n">P</span><span class="p">),</span>
+        <span class="s2">&quot;n2&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">n</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">n</span><span class="p">[</span><span class="n">j</span><span class="p">]),</span>
+        <span class="s2">&quot;Tn&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">n</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span>
+        <span class="s2">&quot;Vn&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">n</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span>
+        <span class="s2">&quot;Pn&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">P</span><span class="p">,</span> <span class="n">n</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span>
+        <span class="s2">&quot;TV&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span><span class="p">),</span>
+        <span class="s2">&quot;TP&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">P</span><span class="p">),</span>
+        <span class="s2">&quot;VP&quot;</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Derivative</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">P</span><span class="p">),</span>
+    <span class="p">}</span>
+
+    <span class="n">deriv</span> <span class="o">=</span> <span class="n">derivs</span><span class="p">[</span><span class="n">differential</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">expresion</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">deriv</span><span class="p">):</span>
+        <span class="k">if</span> <span class="s2">&quot;2&quot;</span> <span class="ow">in</span> <span class="n">differential</span><span class="p">:</span>
+            <span class="k">if</span> <span class="s2">&quot;n&quot;</span> <span class="ow">in</span> <span class="n">differential</span><span class="p">:</span>
+                <span class="n">pretty_deriv</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span>
+                    <span class="sa">rf</span><span class="s2">&quot;\frac</span><span class="se">{{</span><span class="s2">\partial^2 </span><span class="si">{</span><span class="n">sp</span><span class="o">.</span><span class="n">latex</span><span class="p">(</span><span class="n">function</span><span class="o">.</span><span class="n">func</span><span class="p">)</span><span class="si">}</span><span class="se">}}{{</span><span class="s2">\partial n_i \partial n_j</span><span class="se">}}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="c1"># noqa</span>
+                    <span class="n">commutative</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">pretty_deriv</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span>
+                    <span class="sa">rf</span><span class="s2">&quot;\frac</span><span class="se">{{</span><span class="s2">\partial^2 </span><span class="si">{</span><span class="n">sp</span><span class="o">.</span><span class="n">latex</span><span class="p">(</span><span class="n">function</span><span class="o">.</span><span class="n">func</span><span class="p">)</span><span class="si">}</span><span class="se">}}{{</span><span class="s2">\partial </span><span class="si">{</span><span class="n">differential</span><span class="si">}</span><span class="s2">^2</span><span class="se">}}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="c1"># noqa</span>
+                    <span class="n">commutative</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="s2">&quot;n&quot;</span> <span class="ow">in</span> <span class="n">differential</span><span class="p">:</span>
+                <span class="n">pretty_deriv</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span>
+                    <span class="sa">rf</span><span class="s2">&quot;\frac</span><span class="se">{{</span><span class="s2">\partial^2 </span><span class="si">{</span><span class="n">sp</span><span class="o">.</span><span class="n">latex</span><span class="p">(</span><span class="n">function</span><span class="o">.</span><span class="n">func</span><span class="p">)</span><span class="si">}</span><span class="se">}}{{</span><span class="s2">\partial </span><span class="si">{</span><span class="n">differential</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> \partial n_i</span><span class="se">}}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="c1"># noqa</span>
+                    <span class="n">commutative</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">pretty_deriv</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span>
+                    <span class="sa">rf</span><span class="s2">&quot;\frac</span><span class="se">{{</span><span class="s2">\partial^2 </span><span class="si">{</span><span class="n">sp</span><span class="o">.</span><span class="n">latex</span><span class="p">(</span><span class="n">function</span><span class="o">.</span><span class="n">func</span><span class="p">)</span><span class="si">}</span><span class="se">}}{{</span><span class="s2">\partial </span><span class="si">{</span><span class="n">differential</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> \partial </span><span class="si">{</span><span class="n">differential</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="se">}}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="c1"># noqa</span>
+                    <span class="n">commutative</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="p">)</span>
+
+        <span class="n">expresion</span> <span class="o">=</span> <span class="n">expresion</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">deriv</span><span class="p">,</span> <span class="n">pretty_deriv</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">expresion</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Salvador Eduardo Brandolín.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

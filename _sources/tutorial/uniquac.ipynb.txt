@@ -1,0 +1,782 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "dfef01d7",
+   "metadata": {},
+   "source": [
+    "## Getting started\n",
+    "\n",
+    "thermodiff is not uploaded to PyPI. To install it you can do:\n",
+    "\n",
+    "```shell\n",
+    "pip install git+https://github.com/SalvadorBrandolin/thermodiff\n",
+    "```\n",
+    "\n",
+    "Obtaining derivatives of thermodynamic expressions is an important but not\n",
+    "trivial task. Derivatives of Residual Helmholtz free energy and Excess Gibbs\n",
+    "free energy models are used to evaluate of the thermodynamic properties of\n",
+    "mixtures, such as enthalpy, entropy, and pressure.\n",
+    "\n",
+    "Moreover, sometimes it's required to obtain derivatives of expressions with \n",
+    "thermodynamic-involved magnitudes/variables for the development of algorithms,\n",
+    "for example, for phase envelope calculations.\n",
+    "\n",
+    "## Tutorial: Let's get the derivatives of the UNIQUAC model\n",
+    "\n",
+    "The UNIQUAC (**uni**versal **qua**si**c**hemical) Excess Gibbs free energy \n",
+    "model is given by:\n",
+    "\n",
+    "$$ \n",
+    "\\frac{G^E}{RT} = \\sum_k n_k \\ln\\frac{\\phi_k}{x_k}\n",
+    "+ \\frac{z}{2}\\sum_k q_k n_k \\ln\\frac{\\theta_k}{\\phi_k}\n",
+    "- \\sum_k q_k n_k \\ln\\left(\\sum_l \\theta_l \\tau_{lk} \\right)\n",
+    "$$\n",
+    "\n",
+    "With:\n",
+    "\n",
+    "$$x_k = \\frac{n_k}{\\sum_l n_l}$$\n",
+    "\n",
+    "$$ \\phi_k = \\frac{r_k n_k}{\\sum_l r_l n_l} $$\n",
+    "\n",
+    "$$ \\theta_k = \\frac{q_k n_k}{\\sum_l q_l n_l} $$\n",
+    "\n",
+    "$$ \\tau_{lk} = \\exp \\left[\\frac{-\\Delta U_{lk}}{R T} \\right] $$\n",
+    "\n",
+    "$$\n",
+    "\\frac{-\\Delta U_{lk}}{R T} = a_{lk}+\\frac{b_{lk}}{T}+c_{lk}\\ln T + d_{lk}T +\n",
+    "e_{lk}{T^2}\n",
+    "$$\n",
+    "\n",
+    "A simplification could be made to avoid division by zero, replacing $\\phi_k$\n",
+    "and $x_k$ on the Gibbs free energy. The result is:\n",
+    "\n",
+    "$$ \n",
+    "\\frac{G^E}{RT} = \\sum_k n_k \\ln \\left(\\frac{n_T r_k}{\\sum_l r_l n_l} \\right)\n",
+    "+ \\frac{z}{2}\\sum_k q_k n_k \\ln \\left(\\frac{q_k \\sum_l r_l n_l}{r_k \\sum_l q_l\n",
+    "n_l} \\right) - \\sum_k q_k n_k \\ln\\left(\\sum_l \\theta_l \\tau_{lk} \\right) \n",
+    "$$\n",
+    "\n",
+    "Or directly how we will use it in this tutorial:\n",
+    "\n",
+    "$$ \n",
+    "G^E = RT\\left(\\sum_k n_k \\ln \\left(\\frac{n_T r_k}{\\sum_l r_l n_l} \\right)\n",
+    "+ \\frac{z}{2}\\sum_k q_k n_k \\ln \\left(\\frac{q_k \\sum_l r_l n_l}{r_k \\sum_l q_l\n",
+    "n_l} \\right) - \\sum_k q_k n_k \\ln\\left(\\sum_l \\theta_l \\tau_{lk} \\right)\\right)\n",
+    "$$\n",
+    "\n",
+    "First thing to note is that in the expression above, all the subscripts are $k$\n",
+    "or $l$. This is for a personal preference. I like to differentiate the\n",
+    "expression respect to $n_i$ and $n_j$. If we built our expression to\n",
+    "differentiate using $i$ and $j$ subscripts, we wouldn't be able to\n",
+    "differentiate correctly.\n",
+    "\n",
+    ":::{important}\n",
+    "If I was not clear. **NEVER** use $i$ and $j$ subscripts in the thermodynamic expressions you want to differentiate. Use $k$, $l$, $m$, etc.\n",
+    ":::\n",
+    "\n",
+    "\n",
+    "`thermodiff` already provide instantiated SymPy variables. Please use them\n",
+    "since internally when the $\\frac{\\partial}{\\partial T}$ is performed, it will\n",
+    "use those instances.\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "6156f0ac",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from thermodiff import n, P, V, T  # mole number vector, pressure, volume, temperature\n",
+    "from thermodiff import k, l, m     # indexes\n",
+    "from thermodiff import R           # universal gas constant\n",
+    "\n",
+    "import thermodiff as td\n",
+    "\n",
+    "import sympy as sp  # we still could need sympy"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1c464234",
+   "metadata": {},
+   "source": [
+    "### UNIQUAC Temperature function"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "aa1f725c",
+   "metadata": {},
+   "source": [
+    "When using `thermodiff`, you should imagine that later you will have to implement\n",
+    "those equations by yourself. So, differentiate as you code, by functions.\n",
+    "Moreover, a very recommended practice is to differentiate each term individually.\n",
+    "This avoids that SymPy heavily simplifies the expression to more non-readable\n",
+    "forms.\n",
+    "\n",
+    "Following that advice, let's start by the easiest but instructive part,\n",
+    "$\\tau_{lk}$. This force us to define more SymPy parameters: $a_{lk}$, $b_{lk}$,\n",
+    "$c_{lk}$, $d_{lk}$ and $e_{lk}$"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "2e330e16",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \\log{\\left(T \\right)} + \\frac{b_{lk}}{T}}$"
+      ],
+      "text/plain": [
+       "exp(T**2*e_{lk} + T*d_{lk} + a_{lk} + c_{lk}*log(T) + b_{lk}/T)"
+      ]
+     },
+     "execution_count": 2,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# UNIQUAC interaction parameters\n",
+    "a_lk = sp.Symbol(\"a_{lk}\")\n",
+    "b_lk = sp.Symbol(\"b_{lk}\")\n",
+    "c_lk = sp.Symbol(\"c_{lk}\")\n",
+    "d_lk = sp.Symbol(\"d_{lk}\")\n",
+    "e_lk = sp.Symbol(\"e_{lk}\")\n",
+    "\n",
+    "# The SymPy expression\n",
+    "tau_lk_expr = sp.exp(a_lk + b_lk/T + c_lk*sp.ln(T) + d_lk*T + e_lk*T**2)\n",
+    "\n",
+    "tau_lk_expr"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "48c0f305",
+   "metadata": {},
+   "source": [
+    "Now we use the `thermodiff` class: `DiffPlz`"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "06c2bb63",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "tau_lk_diffs = td.DiffPlz(\n",
+    "    expression=tau_lk_expr,\n",
+    "    internal_functions=[],\n",
+    "    indexes=[k, l, m],\n",
+    "    name=r\"\\tau_{lk}\"\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "eea35da7",
+   "metadata": {},
+   "source": [
+    "The arguments of the `DiffPlz` class are:\n",
+    "\n",
+    "- `expression`: The SymPy expression to differentiate.\n",
+    "- `internal_functions`: A list of SymPy functions that are used internally in\n",
+    "  the expression. This is needed for cleaning the expression derivatives'\n",
+    "  LaTeX. We will see this later. By default, is an empty list.\n",
+    "- `indexes`: A list of SymPy variables that are used as indexes in the \n",
+    "expression. By default, this list is [`k`, `l`, `m`]. It doesn't matter if you\n",
+    "put more variables than used in the expression, only you must not put less.\n",
+    "Don't forget that you can't use `i` and `j` as indexes in the expression.\n",
+    "- `name`: The name of the expression. This is used for the LaTeX representation\n",
+    "  of the expression. In this case, we will use $\\tau_{lk}$\n",
+    "\n",
+    "\n",
+    "Inside the attributes of the `DiffPlz` instance we have the derivatives respect\n",
+    "to $T$:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "da4d4e71",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right) e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \\log{\\left(T \\right)} + \\frac{b_{lk}}{T}}$"
+      ],
+      "text/plain": [
+       "(2*T*e_{lk} + d_{lk} + c_{lk}/T - b_{lk}/T**2)*exp(T**2*e_{lk} + T*d_{lk} + a_{lk} + c_{lk}*log(T) + b_{lk}/T)"
+      ]
+     },
+     "execution_count": 4,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "tau_lk_diffs.dt"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "adfe802e",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 e_{lk} - \\frac{c_{lk}}{T^{2}} + \\frac{2 b_{lk}}{T^{3}}\\right) e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \\log{\\left(T \\right)} + \\frac{b_{lk}}{T}} + \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right)^{2} e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \\log{\\left(T \\right)} + \\frac{b_{lk}}{T}}$"
+      ],
+      "text/plain": [
+       "(2*e_{lk} - c_{lk}/T**2 + 2*b_{lk}/T**3)*exp(T**2*e_{lk} + T*d_{lk} + a_{lk} + c_{lk}*log(T) + b_{lk}/T) + (2*T*e_{lk} + d_{lk} + c_{lk}/T - b_{lk}/T**2)**2*exp(T**2*e_{lk} + T*d_{lk} + a_{lk} + c_{lk}*log(T) + b_{lk}/T)"
+      ]
+     },
+     "execution_count": 5,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "tau_lk_diffs.dt2"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a891b082",
+   "metadata": {},
+   "source": [
+    "Those are SymPy expressions, meaning that you can manipulate them as you wish\n",
+    "with all the power of SymPy. You can use `sympy.simplify`, `sympy.expand`, etc.\n",
+    "\n",
+    "You will quickly notice that those temperature derivatives are horrible. They\n",
+    "are derivatives of an exponential function, so they have the form of:\n",
+    "\n",
+    "$$\n",
+    "\\frac{d e^{u}}{d T} = \\frac{d u}{d T} e^u\n",
+    "$$\n",
+    "\n",
+    "We can call the `clean_plz` method so the `DiffPlz` instance will try to\n",
+    "simplify those expressions. This will not always work, but in this case it \n",
+    "does."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "6360c927",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "tau_lk_diffs.clean_plz()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8bff07c0",
+   "metadata": {},
+   "source": [
+    "The attributes are now replaced by \"cleaned\" expressions. Now we check the\n",
+    "derivatives of the $\\tau_{lk}$ function again:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "55d68c99",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right) \\tau_{lk}{\\left(T \\right)}$"
+      ],
+      "text/plain": [
+       "(2*T*e_{lk} + d_{lk} + c_{lk}/T - b_{lk}/T**2)*\\tau_{lk}(T)"
+      ]
+     },
+     "execution_count": 7,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "tau_lk_diffs.dt"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "f5825614",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 e_{lk} - \\frac{c_{lk}}{T^{2}} + \\frac{2 b_{lk}}{T^{3}}\\right) \\tau_{lk}{\\left(T \\right)} + \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right)^{2} \\tau_{lk}{\\left(T \\right)}$"
+      ],
+      "text/plain": [
+       "(2*e_{lk} - c_{lk}/T**2 + 2*b_{lk}/T**3)*\\tau_{lk}(T) + (2*T*e_{lk} + d_{lk} + c_{lk}/T - b_{lk}/T**2)**2*\\tau_{lk}(T)"
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "tau_lk_diffs.dt2"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "3ff7c015",
+   "metadata": {},
+   "source": [
+    "The last method we have you see is the `latex_readable_plz` method. This method\n",
+    "returns a dictionary with the LaTeX representation of the attributes. It will\n",
+    "clean all the arguments of the internal functions and will beautify the\n",
+    "derivatives. The idea is to use this dictionary to build the LaTeX in a\n",
+    ".tex/.md file and follow it to implement the equations in code."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "id": "69334676",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "{'dT': '\\\\left(2 T e_{lk} + d_{lk} + \\\\frac{c_{lk}}{T} - \\\\frac{b_{lk}}{T^{2}}\\\\right) \\\\tau_{lk}{\\\\left(T \\\\right)}',\n",
+       " 'dV': '0',\n",
+       " 'dP': '0',\n",
+       " 'dn_i': '0',\n",
+       " 'dT2': '\\\\left(2 e_{lk} - \\\\frac{c_{lk}}{T^{2}} + \\\\frac{2 b_{lk}}{T^{3}}\\\\right) \\\\tau_{lk}{\\\\left(T \\\\right)} + \\\\left(2 T e_{lk} + d_{lk} + \\\\frac{c_{lk}}{T} - \\\\frac{b_{lk}}{T^{2}}\\\\right)^{2} \\\\tau_{lk}{\\\\left(T \\\\right)}',\n",
+       " 'dV2': '0',\n",
+       " 'dP2': '0',\n",
+       " 'dn2': '0',\n",
+       " 'dTn': '0',\n",
+       " 'dVn': '0',\n",
+       " 'dPn': '0',\n",
+       " 'dTV': '0',\n",
+       " 'dTP': '0',\n",
+       " 'dVP': '0'}"
+      ]
+     },
+     "execution_count": 9,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "ldict = tau_lk_diffs.latex_readable_plz()\n",
+    "\n",
+    "ldict"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5efef990",
+   "metadata": {},
+   "source": [
+    "Of course all derivatives are zero except the temperature derivatives. You\n",
+    "can print and copy those expressions to your LaTeX file. Here we are going to\n",
+    "represent them with IPython"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "226c65e0",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right) \\tau_{lk}{\\left(T \\right)}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 e_{lk} - \\frac{c_{lk}}{T^{2}} + \\frac{2 b_{lk}}{T^{3}}\\right) \\tau_{lk}{\\left(T \\right)} + \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right)^{2} \\tau_{lk}{\\left(T \\right)}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "from IPython.display import display, Math\n",
+    "\n",
+    "display(Math(ldict[\"dT\"]))\n",
+    "display(Math(ldict[\"dT2\"]))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "16802c0e",
+   "metadata": {},
+   "source": [
+    "In this case is the same, but we will appreciate the difference with the next\n",
+    "examples.\n",
+    "\n",
+    "### UNIQUAC $\\theta_k$\n",
+    "\n",
+    "The UNIQUAC $\\theta_k$ function is very similar to the $\\tau_{lk}$ function,\n",
+    "but still has some instructive differences. First, we need that the parameter\n",
+    "`q` to be index base. Second, we will see the function `sum_components`. This\n",
+    "function only provide a shortcut to make summation along the components\n",
+    "of the mixture.\n",
+    "\n",
+    " Let's do it:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "id": "283480c6",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\frac{{n}_{k} {q}_{k}}{\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}}$"
+      ],
+      "text/plain": [
+       "n[k]*q[k]/Sum(n[l]*q[l], (l, 1, N_c))"
+      ]
+     },
+     "execution_count": 15,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "q = sp.IndexedBase(\"q\", shape=n.shape)\n",
+    "\n",
+    "tetha_k = n[k] * q[k] / td.sum_components(n[l] * q[l], l)\n",
+    "\n",
+    "tetha_k"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "35400270",
+   "metadata": {},
+   "source": [
+    "As you can see, there is an internal variable `Nc` (number of components) that \n",
+    "is used as the upper limit of the summation. You can import that variable if \n",
+    "you want:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "id": "84d14926",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from thermodiff import nc"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c6019740",
+   "metadata": {},
+   "source": [
+    "Now let's start differentiating:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "id": "b081c002",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "tetha_k_diff = td.DiffPlz(\n",
+    "    expression=tetha_k,\n",
+    "    name=r\"\\theta_{k}\"\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "id": "2cf2fe82",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\begin{cases} - \\frac{{n}_{i} {q}_{i}^{2}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\\right)^{2}} + \\frac{{q}_{i}}{\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}} & \\text{for}\\: i = k \\\\- \\frac{{n}_{k} {q}_{i} {q}_{k}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\\right)^{2}} & \\text{otherwise} \\end{cases}$"
+      ],
+      "text/plain": [
+       "Piecewise((-n[i]*q[i]**2/Sum(n[l]*q[l], (l, 1, N_c))**2 + q[i]/Sum(n[l]*q[l], (l, 1, N_c)), Eq(i, k)), (-n[k]*q[i]*q[k]/Sum(n[l]*q[l], (l, 1, N_c))**2, True))"
+      ]
+     },
+     "execution_count": 18,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "tetha_k_diff.dni"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "id": "ee2787f4",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\begin{cases} \\frac{2 {n}_{i} {q}_{i}^{3}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\\right)^{3}} - \\frac{2 {q}_{i}^{2}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\\right)^{2}} & \\text{for}\\: i = j \\wedge i = k \\\\\\frac{2 {n}_{i} {q}_{i}^{2} {q}_{j}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\\right)^{3}} - \\frac{{q}_{i} {q}_{j}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\\right)^{2}} & \\text{for}\\: i = k \\\\\\frac{2 {n}_{j} {q}_{i} {q}_{j}^{2}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\\right)^{3}} - \\frac{{q}_{i} {q}_{j}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\\right)^{2}} & \\text{for}\\: j = k \\\\\\frac{2 {n}_{k} {q}_{i} {q}_{j} {q}_{k}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}\\right)^{3}} & \\text{otherwise} \\end{cases}$"
+      ],
+      "text/plain": [
+       "Piecewise((2*n[i]*q[i]**3/Sum(n[l]*q[l], (l, 1, N_c))**3 - 2*q[i]**2/Sum(n[l]*q[l], (l, 1, N_c))**2, Eq(i, j) & Eq(i, k)), (2*n[i]*q[i]**2*q[j]/Sum(n[l]*q[l], (l, 1, N_c))**3 - q[i]*q[j]/Sum(n[l]*q[l], (l, 1, N_c))**2, Eq(i, k)), (2*n[j]*q[i]*q[j]**2/Sum(n[l]*q[l], (l, 1, N_c))**3 - q[i]*q[j]/Sum(n[l]*q[l], (l, 1, N_c))**2, Eq(j, k)), (2*n[k]*q[i]*q[j]*q[k]/Sum(n[l]*q[l], (l, 1, N_c))**3, True))"
+      ]
+     },
+     "execution_count": 19,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "tetha_k_diff.dnidnj"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cd19a93b",
+   "metadata": {},
+   "source": [
+    "As you can see, the compositional derivatives are piece wise expressions. This \n",
+    "is obviously because the derivative depends on the subscripts. The first\n",
+    "derivative is a matrix and the second derivative is a tensor.\n",
+    "\n",
+    "You could apply the `clean_plz` and `latex_readable_plz` methods to this\n",
+    "instance as previously shown.\n",
+    "\n",
+    "### UNIQUAC $G^E$\n",
+    "\n",
+    "As told before, its recommended to differentiate each term by sepparate. This\n",
+    "avoids that SymPy heavily simplifies the expression to more non-readable\n",
+    "forms. I will not do it here.\n",
+    "\n",
+    "This is the first example of a expression that we need internal functions.\n",
+    "Specifically we need de $\\tau_{lk}(T)$ and $\\theta_l(n)$ functions.\n",
+    "\n",
+    "First, the parameters:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 25,
+   "id": "e3acf99e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "r = sp.IndexedBase(\"r\", shape=n.shape)\n",
+    "q = sp.IndexedBase(\"q\", shape=n.shape)\n",
+    "z = sp.symbols(\"z\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "83bdd62c",
+   "metadata": {},
+   "source": [
+    "Now the functions. First we will go with the $\\theta_l(n)$. This is the most\n",
+    "complicated thing to understand, SymPy doesn't directly support indexed \n",
+    "functions, so we have to use a custom `thermodiff` class."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 27,
+   "id": "cad97820",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\theta{\\left({n}_{l} \\right)}$"
+      ],
+      "text/plain": [
+       "\\theta(n[l])"
+      ]
+     },
+     "execution_count": 27,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "theta_l = td.idx_function(r\"\\theta\")(n[l])\n",
+    "\n",
+    "theta_l"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "785c2903",
+   "metadata": {},
+   "source": [
+    "Here we defined a function of `n[l]`. Since $\\theta$ is function of $n$ we\n",
+    "symbolize the subindex of $\\theta$ by the argument of the function. Don't use\n",
+    "the \"l\" in the function name because it will not be updated when the expression\n",
+    "is differentiated. In the final LaTeX, the subindex will be replaced from the\n",
+    "argument of the function to the subindex of the function."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 28,
+   "id": "7b6f5426",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\tau{\\left(l,k,T \\right)}$"
+      ],
+      "text/plain": [
+       "\\tau(l, k, T)"
+      ]
+     },
+     "execution_count": 28,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "tau_lk = td.idx_function(r\"\\tau\")(l, k, T)\n",
+    "\n",
+    "tau_lk"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "27ecc0fa",
+   "metadata": {},
+   "source": [
+    "Check what we have done with the $\\tau_{lk}$ function. $\\tau$ is only function\n",
+    "of temperature, so we don't use $n[l]$ or $n[k]$ in the arguments, we use\n",
+    "directly the indexes, so they can be updated when the expression is\n",
+    "differentiated."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 31,
+   "id": "a7b9593f",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle R T \\left(\\frac{z \\sum_{k=1}^{N_{c}} \\left(\\log{\\left(\\frac{{q}_{k} \\sum_{l=1}^{N_{c}} {n}_{l} {r}_{l}}{{r}_{k} \\sum_{l=1}^{N_{c}} {n}_{l} {q}_{l}} \\right)}\\right) {n}_{k} {q}_{k}}{2} + \\sum_{k=1}^{N_{c}} \\left(\\log{\\left(\\frac{{r}_{k} \\sum_{l=1}^{N_{c}} {n}_{l}}{\\sum_{l=1}^{N_{c}} {n}_{l} {r}_{l}} \\right)}\\right) {n}_{k} - \\sum_{k=1}^{N_{c}} \\left(\\log{\\left(\\sum_{l=1}^{N_{c}} \\tau{\\left(l,k,T \\right)} \\theta{\\left({n}_{l} \\right)} \\right)}\\right) {n}_{k} {q}_{k}\\right)$"
+      ],
+      "text/plain": [
+       "R*T*(z*Sum(log(q[k]*Sum(n[l]*r[l], (l, 1, N_c))/(r[k]*Sum(n[l]*q[l], (l, 1, N_c))))*n[k]*q[k], (k, 1, N_c))/2 + Sum(log(r[k]*Sum(n[l], (l, 1, N_c))/Sum(n[l]*r[l], (l, 1, N_c)))*n[k], (k, 1, N_c)) - Sum(log(Sum(\\tau(l, k, T)*\\theta(n[l]), (l, 1, N_c)))*n[k]*q[k], (k, 1, N_c)))"
+      ]
+     },
+     "execution_count": 31,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "Ge = R * T * (\n",
+    "    td.sum_components(n[k] * sp.ln(r[k] * td.sum_components(n[l], l) / td.sum_components(r[l] * n[l], l)), k)\n",
+    "    + z / 2 * (td.sum_components(q[k] * n[k] * sp.ln(q[k] * td.sum_components(r[l] * n[l], l) / (r[k] * td.sum_components(q[l] * n[l], l))), k))\n",
+    "    - td.sum_components(q[k] * n[k] * sp.ln(td.sum_components(theta_l * tau_lk, l)), k)\n",
+    ")\n",
+    "\n",
+    "Ge"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5d501ece",
+   "metadata": {},
+   "source": [
+    "Nothing to help you here, you have to be brave and write the expression by\n",
+    "yourself.\n",
+    "\n",
+    "Let's differentiate the expression:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 32,
+   "id": "8b8bc898",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "ge_diff = td.DiffPlz(\n",
+    "    expression=Ge,\n",
+    "    internal_functions=[theta_l, tau_lk],\n",
+    "    indexes=[k, l],\n",
+    "    name=r\"G^E\"\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c7b67d77",
+   "metadata": {},
+   "source": [
+    "Check that here we used the `internal_functions` argument to pass the\n",
+    "`theta_l` and `tau_lk` functions we used in the expression.\n",
+    "\n",
+    "Let's check the derivatives:"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "thermodiff",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.12.10"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}

@@ -1,0 +1,168 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IndexBase Function &mdash; thermodiff 0.0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+      <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=d45e8c67"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+      <script src="../_static/copybutton.js?v=f281be69"></script>
+      <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Kronecker delta Handling" href="kronecker_handling.html" />
+    <link rel="prev" title="&lt;no title&gt;" href="init.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            thermodiff
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/uniquac.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/uniquac.html#Tutorial:-Let's-get-the-derivatives-of-the-UNIQUAC-model">Tutorial: Let’s get the derivatives of the UNIQUAC model</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../thermovars.html">Thermodynamic Variables</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../diffplz.html">DiffPlz</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">IndexBase Function</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#thermodiff.core.idxfunction.idx_function"><code class="docutils literal notranslate"><span class="pre">idx_function()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#thermodiff.core.idxfunction.lazy_derivative"><code class="docutils literal notranslate"><span class="pre">lazy_derivative()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="kronecker_handling.html">Kronecker delta Handling</a></li>
+<li class="toctree-l1"><a class="reference internal" href="easy_sums.html">Easy Summations Functions</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">thermodiff</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="init.html">&lt;no title&gt;</a></li>
+      <li class="breadcrumb-item active">IndexBase Function</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/core/idxfunction.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-thermodiff.core.idxfunction">
+<span id="indexbase-function"></span><h1>IndexBase Function<a class="headerlink" href="#module-thermodiff.core.idxfunction" title="Link to this heading"></a></h1>
+<p>IndexBase function module.</p>
+<p>SymPy doesn’t provide a direct way to create symbolic functions with lazy
+derivatives. This module provides a way to create such functions by extending
+the <cite>sp.Function</cite> class and overriding the <cite>_eval_derivative</cite> method to return
+a <cite>sp.Derivative</cite> object without evaluating it.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="thermodiff.core.idxfunction.idx_function">
+<span class="sig-name descname"><span class="pre">idx_function</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Function</span></span></span><a class="reference internal" href="../_modules/thermodiff/core/idxfunction.html#idx_function"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.core.idxfunction.idx_function" title="Link to this definition"></a></dt>
+<dd><p>Create a symbolic function with lazy derivative.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>name</strong> (<em>str</em>) – Name of the symbolic function to create.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A symbolic function class with a lazy derivative.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>sp.Function</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="thermodiff.core.idxfunction.lazy_derivative">
+<span class="sig-name descname"><span class="pre">lazy_derivative</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">self</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Function</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">s</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Symbol</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Derivative</span></span></span><a class="reference internal" href="../_modules/thermodiff/core/idxfunction.html#lazy_derivative"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.core.idxfunction.lazy_derivative" title="Link to this definition"></a></dt>
+<dd><p>Return a lazy derivative of the symbolic function (self).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>self</strong> (<em>sp.Function</em>) – lazy_function_class instance</p></li>
+<li><p><strong>s</strong> (<em>sp.Symbol</em>) – Symbol with respect to which the derivative is taken.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A simple SymPy derivative object without evaluation.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>sp.Derivative</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="init.html" class="btn btn-neutral float-left" title="&lt;no title&gt;" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="kronecker_handling.html" class="btn btn-neutral float-right" title="Kronecker delta Handling" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Salvador Eduardo Brandolín.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

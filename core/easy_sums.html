@@ -1,0 +1,187 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Easy Summations Functions &mdash; thermodiff 0.0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+      <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=d45e8c67"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+      <script src="../_static/copybutton.js?v=f281be69"></script>
+      <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="prev" title="Kronecker delta Handling" href="kronecker_handling.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            thermodiff
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/uniquac.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/uniquac.html#Tutorial:-Let's-get-the-derivatives-of-the-UNIQUAC-model">Tutorial: Let’s get the derivatives of the UNIQUAC model</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../thermovars.html">Thermodynamic Variables</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../diffplz.html">DiffPlz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="idxfunction.html">IndexBase Function</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kronecker_handling.html">Kronecker delta Handling</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Easy Summations Functions</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#thermodiff.core.easy_sums.sum_components"><code class="docutils literal notranslate"><span class="pre">sum_components()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#thermodiff.core.easy_sums.sum_custom"><code class="docutils literal notranslate"><span class="pre">sum_custom()</span></code></a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">thermodiff</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="init.html">&lt;no title&gt;</a></li>
+      <li class="breadcrumb-item active">Easy Summations Functions</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/core/easy_sums.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-thermodiff.core.easy_sums">
+<span id="easy-summations-functions"></span><h1>Easy Summations Functions<a class="headerlink" href="#module-thermodiff.core.easy_sums" title="Link to this heading"></a></h1>
+<p>Easy sums for thermodynamic variables.</p>
+<p>Normally in thermodynamics we sum over components of a system. this module
+provides to easy-to-use funciton to generate SymPy sumatories, cause always
+forget how to use the sp.Sum class (also it is too verbose).</p>
+<p>Use the function as:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">td</span>
+
+<span class="n">td</span><span class="o">.</span><span class="n">sum_components</span><span class="p">(</span><span class="n">expr</span><span class="p">,</span> <span class="n">idx</span><span class="p">)</span>
+
+<span class="c1"># or</span>
+
+<span class="n">td</span><span class="o">.</span><span class="n">sum_custom</span><span class="p">(</span><span class="n">expr</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</pre></div>
+</div>
+<dl class="py function">
+<dt class="sig sig-object py" id="thermodiff.core.easy_sums.sum_components">
+<span class="sig-name descname"><span class="pre">sum_components</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">expr</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Expr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Idx</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Sum</span></span></span><a class="reference internal" href="../_modules/thermodiff/core/easy_sums.html#sum_components"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.core.easy_sums.sum_components" title="Link to this definition"></a></dt>
+<dd><p>Sum over components of a system.</p>
+<p>The funciton will sum over the components of the system the expression
+given in the <cite>expr</cite> parameter. <cite>idx</cite> is the index of the component, so
+the index of the summation variable.</p>
+<p>the summation will go from 1 to <cite>nc</cite>. <cite>nc</cite> is the number of components
+variable defined in the <cite>thermodiff.thermovars</cite> module.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>expr</strong> (<em>SymPy expression</em>) – Expression to be summed over the components.</p></li>
+<li><p><strong>idx</strong> (<em>sp.Idx</em>) – Index of the component to be summed (index of summation variable).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Basically sp.Sum(expr, (idx, 1, nc))</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy Sum</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="thermodiff.core.easy_sums.sum_custom">
+<span class="sig-name descname"><span class="pre">sum_custom</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">expr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/thermodiff/core/easy_sums.html#sum_custom"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.core.easy_sums.sum_custom" title="Link to this definition"></a></dt>
+<dd><p>Sum over a custom range.</p>
+<p>Sometimes you need to sum over a custom range, this function provides a
+simple way to do it.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>expr</strong> (<em>Sympy expression</em>) – Expression to be summed.</p></li>
+<li><p><strong>idx</strong> (<em>sp.Idx</em>) – Index of the summation variable.</p></li>
+<li><p><strong>start</strong> (<em>int</em><em>, </em><em>optional</em>) – Start if the summation, by default 1</p></li>
+<li><p><strong>end</strong> (<em>SymPy Integer</em><em>, </em><em>optional</em>) – SymPy symbol to end the summation, by default None</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Bassically sp.Sum(expr, (idx, start, end))</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy Sum</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="kronecker_handling.html" class="btn btn-neutral float-left" title="Kronecker delta Handling" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Salvador Eduardo Brandolín.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

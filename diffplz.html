@@ -1,0 +1,451 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DiffPlz &mdash; thermodiff 0.0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
+      <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=d45e8c67"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+      <script src="_static/copybutton.js?v=f281be69"></script>
+      <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="&lt;no title&gt;" href="core/init.html" />
+    <link rel="prev" title="Thermodynamic Variables" href="thermovars.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            thermodiff
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/uniquac.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/uniquac.html#Tutorial:-Let's-get-the-derivatives-of-the-UNIQUAC-model">Tutorial: Let’s get the derivatives of the UNIQUAC model</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="thermovars.html">Thermodynamic Variables</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">DiffPlz</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz"><code class="docutils literal notranslate"><span class="pre">DiffPlz</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.name"><code class="docutils literal notranslate"><span class="pre">DiffPlz.name</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.expression"><code class="docutils literal notranslate"><span class="pre">DiffPlz.expression</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.internal_functions"><code class="docutils literal notranslate"><span class="pre">DiffPlz.internal_functions</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.indexes"><code class="docutils literal notranslate"><span class="pre">DiffPlz.indexes</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dt"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dt</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dt2"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dt2</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dv"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dv</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dv2"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dv2</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dni"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dni</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dnidnj"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dnidnj</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dtdv"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dtdv</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dtdp"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dtdp</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dtdni"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dtdni</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dvdni"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dvdni</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dvdp"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dvdp</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.dpdni"><code class="docutils literal notranslate"><span class="pre">DiffPlz.dpdni</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.diff_ni"><code class="docutils literal notranslate"><span class="pre">DiffPlz.diff_ni()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.diff_dnidnj"><code class="docutils literal notranslate"><span class="pre">DiffPlz.diff_dnidnj()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.clean_plz"><code class="docutils literal notranslate"><span class="pre">DiffPlz.clean_plz()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermodiff.diffplz.DiffPlz.latex_readable_plz"><code class="docutils literal notranslate"><span class="pre">DiffPlz.latex_readable_plz()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#thermodiff.diffplz.clean_first_deriv"><code class="docutils literal notranslate"><span class="pre">clean_first_deriv()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#thermodiff.diffplz.clean_second_deriv"><code class="docutils literal notranslate"><span class="pre">clean_second_deriv()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="core/idxfunction.html">IndexBase Function</a></li>
+<li class="toctree-l1"><a class="reference internal" href="core/kronecker_handling.html">Kronecker delta Handling</a></li>
+<li class="toctree-l1"><a class="reference internal" href="core/easy_sums.html">Easy Summations Functions</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">thermodiff</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">DiffPlz</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/diffplz.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-thermodiff.diffplz">
+<span id="diffplz"></span><h1>DiffPlz<a class="headerlink" href="#module-thermodiff.diffplz" title="Link to this heading"></a></h1>
+<p>Differentiate Please module.</p>
+<p>This module provides the <cite>DiffPlz</cite> class, which is used to obtain all the
+derivatives of a thermodynamic expression with respect to temperature (T),
+volume (V), and the number of moles of components (n[i], n[j]).
+It handles both direct and cross derivatives, including second derivatives
+and cross derivatives between temperature, volume, and number of moles.</p>
+<p>Use the class as.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">td</span>
+
+<span class="n">sol</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">DiffPlz</span><span class="p">(</span><span class="n">expression</span><span class="p">,</span> <span class="n">internal_functions</span><span class="p">,</span> <span class="n">indexes</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;f&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<dl class="py class">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DiffPlz</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">expression</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">internal_functions</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">Function</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">[]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">indexes</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">Idx</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">[k,</span> <span class="pre">l,</span> <span class="pre">m]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'f'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/thermodiff/diffplz.html#DiffPlz"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.diffplz.DiffPlz" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Class to obtaine all the derivatives of a thermodynamic expression.</p>
+<dl class="simple">
+<dt>The class will obtain the derivatives respect to:</dt><dd><ul class="simple">
+<li><p>Temperature (T)</p></li>
+<li><p>Volume (V)</p></li>
+<li><p>Number of moles <cite>i</cite> (n[i])</p></li>
+<li><p>Number of moles <cite>j</cite> (n[j])</p></li>
+</ul>
+</dd>
+</dl>
+<p>For that, your expression must be defined in terms of these variables.
+Import them from <cite>thermodiff.thermovars</cite>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="kn">import</span> <span class="n">n</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">V</span>
+</pre></div>
+</div>
+<p>On the other hand, if you expression contains index-based variables. You
+can’t use the indexes <cite>i</cite> and <cite>j</cite> directly since they are reserved for the
+derivatives. Instead, please use <cite>k</cite>, <cite>l</cite>, <cite>m</cite>. You can import them from
+<cite>thermodiff.thermovars</cite> as well:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="kn">import</span> <span class="n">k</span><span class="p">,</span> <span class="n">l</span><span class="p">,</span> <span class="n">m</span>
+</pre></div>
+</div>
+<p>Or, you can define new symbols with different names, but make sure they are
+not <cite>i</cite> or <cite>j</cite>.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">sympy</span><span class="w"> </span><span class="kn">import</span> <span class="n">symbols</span>
+
+<span class="n">o</span><span class="p">,</span> <span class="n">p</span><span class="p">,</span> <span class="n">q</span> <span class="o">=</span> <span class="n">symbols</span><span class="p">(</span><span class="s2">&quot;o p q&quot;</span><span class="p">,</span> <span class="bp">cls</span><span class="o">=</span><span class="n">sp</span><span class="o">.</span><span class="n">Idx</span><span class="p">)</span>
+</pre></div>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>expression</strong> (<em>sympy expression</em>) – The thermodynamic expression to differentiate.</p></li>
+<li><p><strong>internal_functions</strong> (<em>list</em><em> of </em><em>sympy functions</em>) – List of sympy functions that are used in the expression.</p></li>
+<li><p><strong>indexes</strong> (<em>list</em><em> of </em><em>sympy Idx</em>) – List of sympy Idx that are used in the expression. These are usually
+the indexes for the number of moles, like [k, l, m].</p></li>
+<li><p><strong>name</strong> (<em>str</em><em>, </em><em>optional</em>) – Name of the DiffClass instance, by default “f”. It could be for example
+the name of the thermodynamic function you are working with, like “G^E”
+or “A^r”.</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.name">
+<span class="sig-name descname"><span class="pre">name</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.name" title="Link to this definition"></a></dt>
+<dd><p>Name of the Function to be differentiated instance.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.expression">
+<span class="sig-name descname"><span class="pre">expression</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.expression" title="Link to this definition"></a></dt>
+<dd><p>The thermodynamic expression to differentiate.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.internal_functions">
+<span class="sig-name descname"><span class="pre">internal_functions</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.internal_functions" title="Link to this definition"></a></dt>
+<dd><p>List of SymPy functions that are used in the expression.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of SymPy functions</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.indexes">
+<span class="sig-name descname"><span class="pre">indexes</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.indexes" title="Link to this definition"></a></dt>
+<dd><p>List of SymPy Idx that are used in the expression. These are usually
+the indexes for the number of moles, like [k, l, m].</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of SymPy Idx</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dt">
+<span class="sig-name descname"><span class="pre">dt</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dt" title="Link to this definition"></a></dt>
+<dd><p>First derivative of the expression with respect to temperature (T).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dt2">
+<span class="sig-name descname"><span class="pre">dt2</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dt2" title="Link to this definition"></a></dt>
+<dd><p>Second derivative of the expression with respect to temperature (T).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dv">
+<span class="sig-name descname"><span class="pre">dv</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dv" title="Link to this definition"></a></dt>
+<dd><p>First derivative of the expression with respect to volume (V).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dv2">
+<span class="sig-name descname"><span class="pre">dv2</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dv2" title="Link to this definition"></a></dt>
+<dd><p>Second derivative of the expression with respect to volume (V).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dni">
+<span class="sig-name descname"><span class="pre">dni</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dni" title="Link to this definition"></a></dt>
+<dd><p>First derivative of the expression with respect to number of moles <cite>i</cite>
+(n[i]).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dnidnj">
+<span class="sig-name descname"><span class="pre">dnidnj</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dnidnj" title="Link to this definition"></a></dt>
+<dd><p>Second derivative of the expression with respect to number of moles <cite>i</cite>
+(n[i]) and <cite>j</cite> (n[j]).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dtdv">
+<span class="sig-name descname"><span class="pre">dtdv</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dtdv" title="Link to this definition"></a></dt>
+<dd><p>Cross second derivative respect to temperature(T) and volume (V).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dtdp">
+<span class="sig-name descname"><span class="pre">dtdp</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dtdp" title="Link to this definition"></a></dt>
+<dd><p>Cross second derivative respect to temperature(T) and pressure (P).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dtdni">
+<span class="sig-name descname"><span class="pre">dtdni</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dtdni" title="Link to this definition"></a></dt>
+<dd><p>Cross second derivative respect to temperature(T) and number of moles
+<cite>i</cite> (n[i]).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dvdni">
+<span class="sig-name descname"><span class="pre">dvdni</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dvdni" title="Link to this definition"></a></dt>
+<dd><p>Cross second derivative volume (V) and number of moles <cite>i</cite> (n[i]).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dvdp">
+<span class="sig-name descname"><span class="pre">dvdp</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dvdp" title="Link to this definition"></a></dt>
+<dd><p>Cross second derivative volume (V) and pressure (P).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.dpdni">
+<span class="sig-name descname"><span class="pre">dpdni</span></span><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.dpdni" title="Link to this definition"></a></dt>
+<dd><p>Cross second derivative pressure (P) and number of moles <cite>i</cite> (n[i]).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>SymPy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.diff_ni">
+<span class="sig-name descname"><span class="pre">diff_ni</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">expression</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Expr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">index</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Idx</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Expr</span></span></span><a class="reference internal" href="_modules/thermodiff/diffplz.html#DiffPlz.diff_ni"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.diff_ni" title="Link to this definition"></a></dt>
+<dd><p>Obtain the compositional derivative dn[index].</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>expression</strong> (<em>sympy expression</em>) – The thermodynamic expression to differentiate.</p></li>
+<li><p><strong>index</strong> (<em>sp.Idx</em>) – The index of the number of moles to differentiate with respect to.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The compositional derivative dn[index].</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>sympy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.diff_dnidnj">
+<span class="sig-name descname"><span class="pre">diff_dnidnj</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">expression</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Expr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">index</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Idx</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Expr</span></span></span><a class="reference internal" href="_modules/thermodiff/diffplz.html#DiffPlz.diff_dnidnj"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.diff_dnidnj" title="Link to this definition"></a></dt>
+<dd><p>Obtain the second compositional derivative.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>expression</strong> (<em>sympy expression</em>) – The thermodynamic expression of first compositional derivative.</p></li>
+<li><p><strong>index</strong> (<em>sp.Idx</em>) – The index of the number of moles to differentiate with respect to.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The second compositional derivative.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>sympy expression</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.clean_plz">
+<span class="sig-name descname"><span class="pre">clean_plz</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/thermodiff/diffplz.html#DiffPlz.clean_plz"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.clean_plz" title="Link to this definition"></a></dt>
+<dd><p>Clean the DiffPlz instance.</p>
+<p>This method applies known simplifications patterns to the
+differentiated expressions in the DiffPlz instance.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="thermodiff.diffplz.DiffPlz.latex_readable_plz">
+<span class="sig-name descname"><span class="pre">latex_readable_plz</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="_modules/thermodiff/diffplz.html#DiffPlz.latex_readable_plz"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.diffplz.DiffPlz.latex_readable_plz" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="thermodiff.diffplz.clean_first_deriv">
+<span class="sig-name descname"><span class="pre">clean_first_deriv</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">expresion</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Expr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">function</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Function</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">differential</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Expr</span></span></span><a class="reference internal" href="_modules/thermodiff/diffplz.html#clean_first_deriv"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.diffplz.clean_first_deriv" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="thermodiff.diffplz.clean_second_deriv">
+<span class="sig-name descname"><span class="pre">clean_second_deriv</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">expresion</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Expr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">function</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Function</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">differential</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Expr</span></span></span><a class="reference internal" href="_modules/thermodiff/diffplz.html#clean_second_deriv"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#thermodiff.diffplz.clean_second_deriv" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="thermovars.html" class="btn btn-neutral float-left" title="Thermodynamic Variables" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="core/init.html" class="btn btn-neutral float-right" title="&lt;no title&gt;" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Salvador Eduardo Brandolín.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
