@@ -1,5 +1,7 @@
 # thermodiff
 
+![logo](/media/logo.jpg)
+
 This package provides simple SymPy shenanigans and shortcuts for thermodynamic
 expressions differentiation and manipulation.
 
@@ -19,3 +21,4 @@ There I use the package to obtain the derivatives of the Excess Gibbs free
 energy model **UNIQUAC**. I think it is a good example of how to use the
 package. If you discover a situation that is not handled by the package or the
 tutorial, please open an issue in the repository.
+

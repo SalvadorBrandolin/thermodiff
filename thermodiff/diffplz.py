@@ -25,8 +25,6 @@ from thermodiff.core.kronecker_handling import (
 )
 from thermodiff.thermovars import P, T, V, i, j, k, l, m, n
 
-import copy
-
 
 class DiffPlz:
     """Class to obtaine all the derivatives of a thermodynamic expression.
@@ -119,14 +117,16 @@ class DiffPlz:
     def __init__(
         self,
         expression,
-        internal_functions: List[sp.Function] = [],
-        indexes: List[sp.Idx] = [k, l, m],  # noqa E741)
+        internal_functions: List[sp.Function] | None = None,
+        indexes: List[sp.Idx] | None = None,  # noqa E741)
         name: str = "f",
     ):
         self.name = name
         self.expression = expression
-        self.internal_functions = internal_functions
-        self.indexes = indexes
+        self.internal_functions = (
+            internal_functions if internal_functions is not None else []
+        )
+        self.indexes = indexes if indexes is not None else [k, l, m]
 
         # Temperature derivatives
         self.dt = sp.diff(self.expression, T)
@@ -256,140 +256,65 @@ class DiffPlz:
         """
         sym = sp.Function(self.name)(*self.arguments)
 
-        # =====================================================================
-        # First diffs has the expression?
-        # =====================================================================
-        # dT
-        dt = copy.copy(self.dt)
-        dtsym = sp.Derivative(sym, T)
-        if self.dt.has(self.expression):
-            self.dt = self.dt.subs(self.expression, sym)
+        def _safe_subs(expr, old, new):
+            return expr.subs(old, new) if expr.has(old) else expr
 
-        if self.dt.has(self.expression / T):
-            self.dt = self.dt.subs(self.expression / T, sym / T)
+        # ===============================
+        # First derivatives
+        # ===============================
+        first = {
+            "dt": (self.dt, sp.Derivative(sym, T)),
+            "dv": (self.dv, sp.Derivative(sym, V)),
+            "dp": (self.dp, sp.Derivative(sym, P)),
+            "dni": (self.dni, sp.Derivative(sym, n[i])),
+        }
 
-        # dP
-        dp = copy.copy(self.dp)
-        dpsym = sp.Derivative(sym, P)
-        if self.dp.has(self.expression):
-            self.dp = self.dp.subs(self.expression, sym)
+        for key, (expr, deriv_sym) in first.items():
+            expr = _safe_subs(expr, self.expression, sym)
+            expr = _safe_subs(expr, self.expression / T, sym / T)
+            setattr(self, key, expr)
 
-        # dV
-        dv = copy.copy(self.dv)
-        dvsym = sp.Derivative(sym, V)
-        if self.dv.has(self.expression):
-            self.dv = self.dv.subs(self.expression, sym)
+        # ===============================
+        # Second derivatives
+        # ===============================
+        second = {
+            "dt2": self.dt2,
+            "dv2": self.dv2,
+            "dp2": self.dp2,
+            "dnidnj": self.dnidnj,
+            "dtdv": self.dtdv,
+            "dtdp": self.dtdp,
+            "dtdni": self.dtdni,
+            "dvdni": self.dvdni,
+            "dvdp": self.dvdp,
+        }
 
-        # dni
-        dni = copy.copy(self.dni)
-        dnisym = sp.Derivative(sym, n[i])
-        if self.dni.has(self.expression):
-            self.dni = self.dni.subs(self.expression, sym)
+        # Original refs
+        base = {
+            "dt": self.dt,
+            "dv": self.dv,
+            "dp": self.dp,
+            "dni": self.dni,
+        }
 
-        # =====================================================================
-        # Second diffs has the expression?
-        # =====================================================================
-        # dT2
-        if self.dt2.has(self.expression):
-            self.dt2 = self.dt2.subs(self.expression, sym)
+        deriv_symbols = {
+            "dt": sp.Derivative(sym, T),
+            "dv": sp.Derivative(sym, V),
+            "dp": sp.Derivative(sym, P),
+            "dni": sp.Derivative(sym, n[i]),
+        }
 
-        if self.dt2.has(self.expression / T):
-            self.dt2 = self.dt2.subs(self.expression / T, sym / T)
+        for key, expr in second.items():
+            expr = _safe_subs(expr, self.expression, sym)
 
-        if self.dt2.has(self.dt) and self.dt != 0:
-            self.dt2 = self.dt2.subs(self.dt, dtsym)
+            for name, base_expr in base.items():
+                if base_expr != 0:
+                    expr = _safe_subs(expr, base_expr, deriv_symbols[name])
+                    expr = _safe_subs(
+                        expr, base_expr / T, deriv_symbols[name] / T
+                    )
 
-        if self.dt2.has(self.dt / T) and self.dt != 0:
-            self.dt2 = self.dt2.subs(self.dt / T, dtsym / T)
-
-        # dV2
-        if self.dv2.has(self.expression):
-            self.dv2 = self.dv2.subs(self.expression, sym)
-
-        if self.dv2.has(dv) and self.dv != 0:
-            self.dv2 = self.dv2.subs(self.dv, dvsym)
-
-        # dP2
-        if self.dp2.has(self.expression):
-            self.dp2 = self.dp2.subs(self.expression, sym)
-
-        if self.dp2.has(dp) and self.dp != 0:
-            self.dp2 = self.dp2.subs(self.dp, dpsym)
-
-        # dnidnj
-        if self.dnidnj.has(self.expression):
-            self.dnidnj = self.dnidnj.subs(self.expression, sym)
-
-        if self.dnidnj.has(dni) and self.dni != 0:
-            self.dnidnj = self.dnidnj.subs(self.dni, dnisym)
-
-        # dtdv
-        if self.dtdv.has(self.expression):
-            self.dtdv = self.dtdv.subs(self.expression, sym)
-
-        if self.dtdv.has(dt) and self.dt != 0:
-            self.dtdv = self.dtdv.subs(self.dt, dtsym)
-
-        if self.dtdv.has(dv) and self.dv != 0:
-            self.dtdv = self.dtdv.subs(self.dv, dvsym)
-
-        if self.dtdv.has(dt / T) and self.dt != 0:
-            self.dtdv = self.dtdv.subs(self.dt / T, dtsym / T)
-
-        if self.dtdv.has(dv / T) and self.dv != 0:
-            self.dtdv = self.dtdv.subs(self.dv / T, dvsym / T)
-
-        # dtdp
-        if self.dtdp.has(self.expression):
-            self.dtdp = self.dtdp.subs(self.expression, sym)
-
-        if self.dtdp.has(dt) and self.dt != 0:
-            self.dtdp = self.dtdp.subs(self.dt, dtsym)
-
-        if self.dtdp.has(dp) and self.dp != 0:
-            self.dtdp = self.dtdp.subs(self.dp, dpsym)
-
-        if self.dtdp.has(dt / T) and self.dt != 0:
-            self.dtdp = self.dtdp.subs(self.dt / T, dtsym / T)
-
-        if self.dtdp.has(dp / T) and self.dp != 0:
-            self.dtdp = self.dtdp.subs(self.dp / T, dpsym / T)
-
-        # dtdni
-        if self.dtdni.has(self.expression):
-            self.dtdni = self.dtdni.subs(self.expression, sym)
-
-        if self.dtdni.has(dt) and self.dt != 0:
-            self.dtdni = self.dtdni.subs(self.dt, dtsym)
-
-        if self.dtdni.has(dni) and self.dni != 0:
-            self.dtdni = self.dtdni.subs(self.dni, dnisym)
-
-        if self.dtdni.has(dt / T) and self.dt != 0:
-            self.dtdni = self.dtdni.subs(self.dt / T, dtsym / T)
-
-        if self.dtdni.has(dni / T) and self.dni != 0:
-            self.dtdni = self.dtdni.subs(self.dni / T, dnisym / T)
-
-        # dvdni
-        if self.dvdni.has(self.expression):
-            self.dvdni = self.dvdni.subs(self.expression, sym)
-
-        if self.dvdni.has(dv) and self.dv != 0:
-            self.dvdni = self.dvdni.subs(self.dv, dvsym)
-
-        if self.dvdni.has(dni) and self.dni != 0:
-            self.dvdni = self.dvdni.subs(self.dni, dnisym)
-
-        # dvdp
-        if self.dvdp.has(self.expression):
-            self.dvdp = self.dvdp.subs(self.expression, sym)
-
-        if self.dvdp.has(dv) and self.dv != 0:
-            self.dvdp = self.dvdp.subs(self.dv, dvsym)
-
-        if self.dvdp.has(dp) and self.dp != 0:
-            self.dvdp = self.dvdp.subs(self.dp, dpsym)
+            setattr(self, key, expr)
 
     def latex_readable_plz(self) -> str:
         latex_finals = {}
@@ -398,10 +323,10 @@ class DiffPlz:
         # Clean first derivatives
         # =====================================================================
         expresions = {
-            "T": copy.copy(self.dt),
-            "V": copy.copy(self.dv),
-            "P": copy.copy(self.dp),
-            "n_i": copy.copy(self.dni),
+            "T": self.dt,
+            "V": self.dv,
+            "P": self.dp,
+            "n_i": self.dni,
         }
 
         for diff, expr in expresions.items():
@@ -418,16 +343,16 @@ class DiffPlz:
         # Clean second derivatives
         # =====================================================================
         expresions = {
-            "T2": copy.copy(self.dt2),
-            "V2": copy.copy(self.dv2),
-            "P2": copy.copy(self.dp2),
-            "n2": copy.copy(self.dnidnj),
-            "Tn": copy.copy(self.dtdni),
-            "Vn": copy.copy(self.dvdni),
-            "Pn": copy.copy(self.dpdni),
-            "TV": copy.copy(self.dtdv),
-            "TP": copy.copy(self.dtdp),
-            "VP": copy.copy(self.dvdp),
+            "T2": self.dt2,
+            "V2": self.dv2,
+            "P2": self.dp2,
+            "n2": self.dnidnj,
+            "Tn": self.dtdni,
+            "Vn": self.dvdni,
+            "Pn": self.dpdni,
+            "TV": self.dtdv,
+            "TP": self.dtdp,
+            "VP": self.dvdp,
         }
 
         for diff, expr in expresions.items():
@@ -450,7 +375,10 @@ class DiffPlz:
         """Check the thermodynamic variables used in the expression."""
         arguments = []
 
-        if self.expression.has(n):
+        if any(
+            isinstance(a, sp.Indexed) and a.base == n
+            for a in self.expression.atoms(sp.Indexed)
+        ):
             arguments.append(n)
 
         if self.expression.has(V):
@@ -464,10 +392,29 @@ class DiffPlz:
 
         return arguments
 
+    def __repr__(self):
+        return f"DiffPlz(name={self.name}, args={self.arguments})"
+
 
 def clean_first_deriv(
     expresion: sp.Expr, function: sp.Function, differential: str
 ) -> sp.Expr:
+    """Clean symbol expression for first derivatives.
+
+    Parameters
+    ----------
+    expresion : sp.Expr
+        Sympy derivative expression to clean.
+    function : sp.Function
+        Sympy function.
+    differential : str
+        Differential variable. It can be "T", "V", "P", "n_i".
+
+    Returns
+    -------
+    sp.Expr
+        Cleaned symbol expression for first derivatives.
+    """
     derivs = {
         "T": sp.Derivative(function, T),
         "V": sp.Derivative(function, V),
@@ -480,7 +427,7 @@ def clean_first_deriv(
 
     if expresion.has(deriv):
         pretty_deriv = sp.Symbol(
-            rf"\frac{{\partial {sp.latex(function.func)}}}{{\partial {differential}}}",
+            rf"\frac{{\partial {sp.latex(function.func)}}}{{\partial {differential}}}",  # noqa
             commutative=True,
         )
 
@@ -492,6 +439,23 @@ def clean_first_deriv(
 def clean_second_deriv(
     expresion: sp.Expr, function: sp.Function, differential: str
 ) -> sp.Expr:
+    """Clean symbol expression for second derivatives.
+
+    Parameters
+    ----------
+    expresion : sp.Expr
+        Sympy derivative expression to clean.
+    function : sp.Function
+        Sympy function.
+    differential : str
+        Differential variable. It can be "T2", "V2", "P2", "n2", "Tn", "Vn",
+        "Pn", "TV", "TP", "VP".
+
+    Returns
+    -------
+    sp.Expr
+        Cleaned symbol expression for second derivatives.
+    """
     derivs = {
         "T2": sp.Derivative(function, T, T),
         "V2": sp.Derivative(function, V, V),
@@ -511,23 +475,23 @@ def clean_second_deriv(
         if "2" in differential:
             if "n" in differential:
                 pretty_deriv = sp.Symbol(
-                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial n_i \partial n_j}}", # noqa
+                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial n_i \partial n_j}}",  # noqa
                     commutative=True,
                 )
             else:
                 pretty_deriv = sp.Symbol(
-                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial {differential}^2}}", # noqa
+                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial {differential}^2}}",  # noqa
                     commutative=True,
                 )
         else:
             if "n" in differential:
                 pretty_deriv = sp.Symbol(
-                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial {differential[0]} \partial n_i}}", # noqa
+                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial {differential[0]} \partial n_i}}",  # noqa
                     commutative=True,
                 )
             else:
                 pretty_deriv = sp.Symbol(
-                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial {differential[0]} \partial {differential[1]}}}", # noqa
+                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial {differential[0]} \partial {differential[1]}}}",  # noqa
                     commutative=True,
                 )
 

@@ -1,8 +1,8 @@
 import os
 import pathlib
 import sys
-import toml
 
+import toml
 
 CURRENT_PATH = pathlib.Path(os.path.abspath(os.path.dirname(__file__)))
 LIB_PATH = CURRENT_PATH.parent.parent

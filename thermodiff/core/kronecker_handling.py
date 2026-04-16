@@ -56,10 +56,10 @@ def handle_free_kronecker(
     delta = sp.KroneckerDelta(idx, kdx)
 
     if expr.has(delta):
-        i, k = delta.args
+        d_i, d_k = delta.args
 
         return sp.Piecewise(
-            (expr.subs(kdx, idx), sp.Eq(i, k)), (expr.subs(delta, 0), True)
+            (expr.subs(kdx, idx), sp.Eq(d_i, d_k)), (expr.subs(delta, 0), True)
         )
 
     return expr

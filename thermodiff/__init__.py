@@ -23,7 +23,6 @@ from thermodiff.core.kronecker_handling import (
 from thermodiff.diffplz import DiffPlz
 from thermodiff.thermovars import P, R, T, V, i, j, k, l, m, n, nc
 
-
 __all__ = [
     # User-friendly sums:
     "sum_components",

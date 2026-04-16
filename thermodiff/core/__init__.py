@@ -7,7 +7,6 @@ from thermodiff.core.kronecker_handling import (
     handle_sum_kronecker,
 )
 
-
 __all__ = [
     "sum_components",
     "sum_custom",
