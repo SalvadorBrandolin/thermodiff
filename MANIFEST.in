@@ -10,3 +10,4 @@ exclude requirements-dev.txt
 recursive-exclude dist *
 recursive-exclude tests *
 recursive-exclude docs *
+recursive-exclude media *

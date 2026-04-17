@@ -1,8 +1,8 @@
 """Easy sums for thermodynamic variables.
 
-Normally in thermodynamics we sum over components of a system. this module
-provides to easy-to-use funciton to generate SymPy sumatories, cause always
-forget how to use the sp.Sum class (also it is too verbose).
+Normally in thermodynamics we sum over components of a system. This module
+provides easy-to-use functions to generate SymPy summations, cause I always
+forget how to use the sp.Sum class (too verbose).
 
 Use the function as:
 

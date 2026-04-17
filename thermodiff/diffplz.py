@@ -2,9 +2,10 @@
 
 This module provides the `DiffPlz` class, which is used to obtain all the
 derivatives of a thermodynamic expression with respect to temperature (T),
-volume (V), and the number of moles of components (n[i], n[j]).
-It handles both direct and cross derivatives, including second derivatives
-and cross derivatives between temperature, volume, and number of moles.
+volume (V) (could be pressure (P) too), and the number of moles of components
+(n[i], n[j]). It handles both direct and cross derivatives, including second
+derivatives and cross derivatives between temperature, volume, and number of
+moles.
 
 Use the class as.
 
@@ -31,7 +32,7 @@ class DiffPlz:
 
     The class will obtain the derivatives respect to:
         - Temperature (T)
-        - Volume (V)
+        - Volume (V) or pressure (P)
         - Number of moles `i` (n[i])
         - Number of moles `j` (n[j])
 
@@ -93,6 +94,10 @@ class DiffPlz:
         First derivative of the expression with respect to volume (V).
     dv2 : SymPy expression
         Second derivative of the expression with respect to volume (V).
+    dp : SymPy expression
+        First derivative of the expression with respect to pressure (P).
+    dp2 : SymPy expression
+        Second derivative of the expression with respect to pressure (P).
     dni : SymPy expression
         First derivative of the expression with respect to number of moles `i`
         (n[i]).
@@ -112,6 +117,8 @@ class DiffPlz:
         Cross second derivative volume (V) and pressure (P).
     dpdni : SymPy expression
         Cross second derivative pressure (P) and number of moles `i` (n[i]).
+    arguments : List[sp.Symbol]
+        List of symbols (variables) that appear in the expression.
     """
 
     def __init__(
@@ -317,6 +324,13 @@ class DiffPlz:
             setattr(self, key, expr)
 
     def latex_readable_plz(self) -> str:
+        """Return a clean latex representation of derivatives.
+
+        Returns
+        -------
+        str
+            Latex code of derivatives.
+        """
         latex_finals = {}
 
         # =====================================================================
@@ -393,6 +407,7 @@ class DiffPlz:
         return arguments
 
     def __repr__(self):
+        """Return a string representation of the DiffPlz object."""
         return f"DiffPlz(name={self.name}, args={self.arguments})"
 
 

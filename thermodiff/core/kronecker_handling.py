@@ -1,6 +1,6 @@
 """Module containing functions to handle Kronecker deltas in expressions.
 
-When differentiating thermodynamic expressions, Kronecker deltas can appear.
+When differentiating thermodynamic expressions, Kronecker deltas may appear.
 This module provides functions to handle these deltas, either by simplifying
 them or replacing them with piecewise expressions.
 """

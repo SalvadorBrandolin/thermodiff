@@ -2,19 +2,6 @@
 build-backend = "setuptools.build_meta"
 requires = ["setuptools", "wheel"]
 
-[tool.black]
-line-length = 79
-target-version = ["py312"]
-
-# testpaths = [
-#     "tests"
-# ]
-
-[tool.pytest.ini_options]
-markers = [
-    "marker_name: marker_description",
-]
-
 [project]
 name = "thermodiff"
 version = "0.0.1"
@@ -36,3 +23,15 @@ urls = {Homepage = "https://github.com/SalvadorBrandolin/thermodiff"}
 dependencies = [
     'sympy>=1.14.0',
 ]
+
+[tool.setuptools]
+packages = ["thermodiff"]
+
+[tool.pytest.ini_options]
+markers = [
+    "marker_name: marker_description",
+]
+
+[tool.black]
+line-length = 79
+target-version = ["py312"]

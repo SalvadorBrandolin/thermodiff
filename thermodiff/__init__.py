@@ -7,7 +7,7 @@ The project is designed for personal use and personal preferences. If some
 expression is not handled the way you like you could create your own
 expressions parsing functions inspired by the existing ones on the source code.
 
-By now, this package is kind of a toy/ simple tool. There is no guarantee that
+By now, this package is kind of a toy-simple tool. There is no guarantee that
 more features will be added in the future.
 
 If you find a bad differentiation or a bug, please report it in the repository
