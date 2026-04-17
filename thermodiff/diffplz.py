@@ -348,7 +348,7 @@ class DiffPlz:
                 expr = clean_first_deriv(expr, function, diff)
                 expr = expr.replace(function, function.func)
 
-            expr = sp.latex(expr).replace("\\\\", "\\").replace("()", "")
+            expr = sp.latex(expr).replace("()", "")
             expr = expr.replace(r"\left( \right)", "")
 
             latex_finals["d" + diff] = expr
@@ -378,7 +378,7 @@ class DiffPlz:
 
                 expr = expr.replace(function, function.func)
 
-            expr = sp.latex(expr).replace("\\\\", "\\").replace("()", "")
+            expr = sp.latex(expr).replace("()", "")
             expr = expr.replace(r"\left( \right)", "")
 
             latex_finals["d" + diff] = expr
