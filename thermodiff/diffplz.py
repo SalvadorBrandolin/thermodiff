@@ -26,8 +26,6 @@ from thermodiff.core.kronecker_handling import (
 )
 from thermodiff.thermovars import P, T, V, i, j, k, l, m, n
 
-import copy
-
 
 class DiffPlz:
     """Class to obtaine all the derivatives of a thermodynamic expression.
@@ -257,48 +255,65 @@ class DiffPlz:
 
         return sp.Piecewise(*pieces)
 
-    def clean_plz(self):
+    def clean_plz(self, derivs_to_clean: list[str] | None = None):
         """Clean the DiffPlz instance.
 
-        This method applies known simplifications patterns to the
-        differentiated expressions in the DiffPlz instance.
+        This method applies known simplification patterns to the differentiated
+        expressions in the DiffPlz instance.
+
+        Parameters
+        ----------
+        derivs_to_clean : list[str], optional
+            List of derivative keys to clean. If None, all derivatives will be
+            cleaned. The possible keys are: "dT", "dV", "dP", "dni", "dT2",
+            "dV2", "dP2", "dnidnj", "dTn", "dVn", "dPn", "dTV", "dTP", "dVP".
         """
         sym = sp.Function(self.name)(*self.arguments)
 
         def _safe_subs(expr, old, new):
             return expr.subs(old, new) if expr.has(old) else expr
 
-        # ===============================
+        # Normalize user input
+        if derivs_to_clean is not None:
+            derivs_to_clean = {k.lower() for k in derivs_to_clean}
+
+        # =====================================================================
         # First derivatives
-        # ===============================
+        # =====================================================================
         first = {
-            "dt": (self.dt, sp.Derivative(sym, T)),
-            "dv": (self.dv, sp.Derivative(sym, V)),
-            "dp": (self.dp, sp.Derivative(sym, P)),
-            "dni": (self.dni, sp.Derivative(sym, n[i])),
+            "dt": ("dt", self.dt, sp.Derivative(sym, T)),
+            "dv": ("dv", self.dv, sp.Derivative(sym, V)),
+            "dp": ("dp", self.dp, sp.Derivative(sym, P)),
+            "dni": ("dni", self.dni, sp.Derivative(sym, n[i])),
         }
 
-        for key, (expr, deriv_sym) in first.items():
+        if derivs_to_clean is not None:
+            first = {k: v for k, v in first.items() if k in derivs_to_clean}
+
+        for _, (attr_name, expr, deriv_sym) in first.items():
             expr = _safe_subs(expr, self.expression, sym)
             expr = _safe_subs(expr, self.expression / T, sym / T)
-            setattr(self, key, expr)
+            setattr(self, attr_name, expr)
 
-        # ===============================
+        # =====================================================================
         # Second derivatives
-        # ===============================
+        # =====================================================================
         second = {
-            "dt2": self.dt2,
-            "dv2": self.dv2,
-            "dp2": self.dp2,
-            "dnidnj": self.dnidnj,
-            "dtdv": self.dtdv,
-            "dtdp": self.dtdp,
-            "dtdni": self.dtdni,
-            "dvdni": self.dvdni,
-            "dvdp": self.dvdp,
+            "dt2": ("dt2", self.dt2),
+            "dv2": ("dv2", self.dv2),
+            "dp2": ("dp2", self.dp2),
+            "dnidnj": ("dnidnj", self.dnidnj),
+            "dtdv": ("dtdv", self.dtdv),
+            "dtdp": ("dtdp", self.dtdp),
+            "dtdni": ("dtdni", self.dtdni),
+            "dvdni": ("dvdni", self.dvdni),
+            "dvdp": ("dvdp", self.dvdp),
         }
 
-        # Original refs
+        if derivs_to_clean is not None:
+            second = {k: v for k, v in second.items() if k in derivs_to_clean}
+
+        # Updated base refs AFTER cleaning first derivatives
         base = {
             "dt": self.dt,
             "dv": self.dv,
@@ -313,7 +328,7 @@ class DiffPlz:
             "dni": sp.Derivative(sym, n[i]),
         }
 
-        for key, expr in second.items():
+        for _, (attr_name, expr) in second.items():
             expr = _safe_subs(expr, self.expression, sym)
 
             for name, base_expr in base.items():
@@ -323,10 +338,14 @@ class DiffPlz:
                         expr, base_expr / T, deriv_symbols[name] / T
                     )
 
-            setattr(self, key, expr)
+            setattr(self, attr_name, expr)
 
     def latex_readable_plz(self) -> dict:
-        """Return a clean latex representation of derivatives."""
+        """Return a clean latex representation of derivatives.
+
+        Heavily vibecoded method, could easily not work. Ad hocs at the end.
+
+        """
 
         def _extract_subscript(arg) -> str | None:
             """Extract the LaTeX subscript string from a function argument."""
@@ -365,11 +384,11 @@ class DiffPlz:
 
         def _make_partial2(func_name: str, wrt1: str, wrt2: str) -> sp.Symbol:
             """Build the symbol.
-            
+
             \\frac{\\partial^2 func_name}{\\partial wrt1 \\partial wrt2}
             """
             return sp.Symbol(
-                rf"\frac{{\partial^2 {func_name}}}{{\partial {wrt1} \partial {wrt2}}}", # noqa
+                rf"\frac{{\partial^2 {func_name}}}{{\partial {wrt1} \partial {wrt2}}}",  # noqa
                 commutative=True,
             )
 
@@ -467,10 +486,10 @@ class DiffPlz:
         latex_finals = {}
 
         first_exprs = {
-            "T": copy.copy(self.dt),
-            "V": copy.copy(self.dv),
-            "P": copy.copy(self.dp),
-            "n_i": copy.copy(self.dni),
+            "T": self.dt,
+            "V": self.dv,
+            "P": self.dp,
+            "n_i": self.dni,
         }
 
         for diff_key, expr in first_exprs.items():
@@ -481,16 +500,16 @@ class DiffPlz:
             latex_finals["d" + diff_key] = result
 
         second_exprs = {
-            "T2": copy.copy(self.dt2),
-            "V2": copy.copy(self.dv2),
-            "P2": copy.copy(self.dp2),
-            "n2": copy.copy(self.dnidnj),
-            "Tn": copy.copy(self.dtdni),
-            "Vn": copy.copy(self.dvdni),
-            "Pn": copy.copy(self.dpdni),
-            "TV": copy.copy(self.dtdv),
-            "TP": copy.copy(self.dtdp),
-            "VP": copy.copy(self.dvdp),
+            "T2": self.dt2,
+            "V2": self.dv2,
+            "P2": self.dp2,
+            "n2": self.dnidnj,
+            "Tn": self.dtdni,
+            "Vn": self.dvdni,
+            "Pn": self.dpdni,
+            "TV": self.dtdv,
+            "TP": self.dtdp,
+            "VP": self.dvdp,
         }
 
         for diff_key, expr in second_exprs.items():
@@ -499,6 +518,15 @@ class DiffPlz:
                 sp.latex(expr).replace("()", "").replace(r"\left( \right)", "")
             )
             latex_finals["d" + diff_key] = result
+
+        # =====================================================================
+        # Dumb adhoc things
+        # =====================================================================
+        latex_finals["dT2"] = latex_finals["dT2"].replace(
+            r"\partial T \partial T", r"\partial T^2"
+        )
+
+        latex_finals["dni"] = latex_finals.pop("dn_i")
 
         return latex_finals
 
