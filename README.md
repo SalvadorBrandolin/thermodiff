@@ -1,4 +1,4 @@
-# thermodiff
+# Thermodiff
 
 ![logo](https://github.com/SalvadorBrandolin/thermodiff/blob/4005fa272baec3df8315654a0357acc8e14ef5b6/media/logo.jpg?raw=true)
 
