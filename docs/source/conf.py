@@ -45,7 +45,7 @@ exclude_patterns = ["_build", "**.ipynb_checkpoints"]
 # EXTRA CONF
 # =============================================================================
 # nbsphinx
-nbsphinx_execute = "always"
+nbsphinx_execute = "never"
 
 autodoc_member_order = "bysource"
 

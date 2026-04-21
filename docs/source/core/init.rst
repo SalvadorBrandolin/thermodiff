@@ -1,5 +1,8 @@
+Core module
+===========
+
 .. toctree::
-   :maxdepth: 0
+   :maxdepth: 1
 
    idxfunction
    kronecker_handling
