@@ -83,3 +83,19 @@ html_theme = "furo"
 # so a file named "default.css" will overwrite the builtin "default.css".
 # html_static_path = ["_static"]
 # html_favicon = "_static/favicon.ico"
+
+# conf.py
+nbsphinx_prolog = r"""
+{% set docname = "docs/source/" + env.doc2path(env.docname, base=False)|string %}
+
+.. only:: html
+
+   .. raw:: html
+
+      <a href="https://colab.research.google.com/github/SalvadorBrandolin/thermodiff/blob/main/{{ docname }}"
+         target="_blank">
+        <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
+      </a>
+      <hr/>
+
+"""

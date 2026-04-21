@@ -20,6 +20,7 @@ from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
+from thermodiff.colab import install_in_colab
 from thermodiff.diffplz import DiffPlz
 from thermodiff.thermovars import P, R, T, V, i, j, k, l, m, n, nc
 
@@ -29,6 +30,8 @@ __all__ = [
     "sum_custom",
     # Index Base function:
     "idx_function",
+    # install in colab function
+    "install_in_colab",
     # Kronecker handling functions:
     "handle_free_kronecker",
     "handle_sum_kronecker",
