@@ -12,6 +12,10 @@ more features will be added in the future.
 
 If you find a bad differentiation or a bug, please report it in the repository
 issues section.
+
+The idea of the library is to obtain pretty latex equations of thermodynamic
+derivatives. Also, have automated tools to handle Kronecker delta functions
+of SymPy.
 """
 
 from thermodiff.core.easy_sums import sum_components, sum_custom
