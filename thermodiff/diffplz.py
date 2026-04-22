@@ -356,11 +356,11 @@ class DiffPlz:
             return None
 
         def _build_pretty_symbol(instance) -> sp.Symbol:
-            """Build a pretty LaTeX symbol for a function instance.
+            r"""Build a pretty LaTeX symbol for a function instance.
 
-            tau(l, i, T) -> \\tau_{li}
-            phi(n[i])    -> \\phi_i
-            f(T)         -> \\f  (no subscript)
+            tau(l, i, T) -> \tau_{li}
+            phi(n[i])    -> \phi_i
+            f(T)         -> \f  (no subscript)
             """
             base = sp.latex(instance.func)
             subscripts = [
@@ -376,16 +376,16 @@ class DiffPlz:
             return sp.Symbol(name, commutative=True)
 
         def _make_partial(func_name: str, wrt: str) -> sp.Symbol:
-            """Build \\frac{\\partial func_name}{\\partial wrt} symbol."""
+            r"""Build \frac{\partial func_name}{\partial wrt} symbol."""
             return sp.Symbol(
                 rf"\frac{{\partial {func_name}}}{{\partial {wrt}}}",
                 commutative=True,
             )
 
         def _make_partial2(func_name: str, wrt1: str, wrt2: str) -> sp.Symbol:
-            """Build the symbol.
+            r"""Build the symbol.
 
-            \\frac{\\partial^2 func_name}{\\partial wrt1 \\partial wrt2}
+            \frac{\partial^2 func_name}{\partial wrt1 \partial wrt2}
             """
             return sp.Symbol(
                 rf"\frac{{\partial^2 {func_name}}}{{\partial {wrt1} \partial {wrt2}}}",  # noqa
@@ -394,7 +394,6 @@ class DiffPlz:
 
         def _process_expr(expr: sp.Expr, order: int, diff_key: str) -> sp.Expr:
             """Apply all pretty replacements for a derivative expression."""
-
             wrt1_map = {
                 "T": (T, "T"),
                 "V": (V, "V"),
@@ -554,107 +553,3 @@ class DiffPlz:
     def __repr__(self):
         """Return a string representation of the DiffPlz object."""
         return f"DiffPlz(name={self.name}, args={self.arguments})"
-
-
-def clean_first_deriv(
-    expresion: sp.Expr, function: sp.Function, differential: str
-) -> sp.Expr:
-    """Clean symbol expression for first derivatives.
-
-    Parameters
-    ----------
-    expresion : sp.Expr
-        Sympy derivative expression to clean.
-    function : sp.Function
-        Sympy function.
-    differential : str
-        Differential variable. It can be "T", "V", "P", "n_i".
-
-    Returns
-    -------
-    sp.Expr
-        Cleaned symbol expression for first derivatives.
-    """
-    derivs = {
-        "T": sp.Derivative(function, T),
-        "V": sp.Derivative(function, V),
-        "P": sp.Derivative(function, P),
-        "n_i": sp.Derivative(function, n[i]),
-        "n_j": sp.Derivative(function, n[j]),
-    }
-
-    deriv = derivs[differential]
-
-    if expresion.has(deriv):
-        pretty_deriv = sp.Symbol(
-            rf"\frac{{\partial {sp.latex(function.func)}}}{{\partial {differential}}}",  # noqa
-            commutative=True,
-        )
-
-        expresion = expresion.replace(deriv, pretty_deriv)
-
-    return expresion
-
-
-def clean_second_deriv(
-    expresion: sp.Expr, function: sp.Function, differential: str
-) -> sp.Expr:
-    """Clean symbol expression for second derivatives.
-
-    Parameters
-    ----------
-    expresion : sp.Expr
-        Sympy derivative expression to clean.
-    function : sp.Function
-        Sympy function.
-    differential : str
-        Differential variable. It can be "T2", "V2", "P2", "n2", "Tn", "Vn",
-        "Pn", "TV", "TP", "VP".
-
-    Returns
-    -------
-    sp.Expr
-        Cleaned symbol expression for second derivatives.
-    """
-    derivs = {
-        "T2": sp.Derivative(function, T, T),
-        "V2": sp.Derivative(function, V, V),
-        "P2": sp.Derivative(function, P, P),
-        "n2": sp.Derivative(function, n[i], n[j]),
-        "Tn": sp.Derivative(function, T, n[i]),
-        "Vn": sp.Derivative(function, V, n[i]),
-        "Pn": sp.Derivative(function, P, n[i]),
-        "TV": sp.Derivative(function, T, V),
-        "TP": sp.Derivative(function, T, P),
-        "VP": sp.Derivative(function, V, P),
-    }
-
-    deriv = derivs[differential]
-
-    if expresion.has(deriv):
-        if "2" in differential:
-            if "n" in differential:
-                pretty_deriv = sp.Symbol(
-                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial n_i \partial n_j}}",  # noqa
-                    commutative=True,
-                )
-            else:
-                pretty_deriv = sp.Symbol(
-                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial {differential}^2}}",  # noqa
-                    commutative=True,
-                )
-        else:
-            if "n" in differential:
-                pretty_deriv = sp.Symbol(
-                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial {differential[0]} \partial n_i}}",  # noqa
-                    commutative=True,
-                )
-            else:
-                pretty_deriv = sp.Symbol(
-                    rf"\frac{{\partial^2 {sp.latex(function.func)}}}{{\partial {differential[0]} \partial {differential[1]}}}",  # noqa
-                    commutative=True,
-                )
-
-        expresion = expresion.replace(deriv, pretty_deriv)
-
-    return expresion
