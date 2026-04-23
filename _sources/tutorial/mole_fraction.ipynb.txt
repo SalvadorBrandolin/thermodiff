@@ -1,0 +1,1353 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "6674317a",
+   "metadata": {},
+   "source": [
+    "# Tutorial: the basics\n",
+    "\n",
+    "## First Example: Mole Fraction"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "f47f004f",
+   "metadata": {},
+   "source": [
+    "As a first example, we will compute all derivatives of a function that depends\n",
+    "only on composition.\n",
+    "\n",
+    "A natural choice for this purpose is the mole fraction."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "3631ec9a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Install if you are in Google Colab\n",
+    "import sys\n",
+    "\n",
+    "if \"google.colab\" in sys.modules:\n",
+    "    !pip install git+https://github.com/SalvadorBrandolin/thermodiff\n",
+    "\n",
+    "# You can also do: \"import thermodiff as td\", and access to all this things.\n",
+    "from thermodiff import idx_function    # Index based functions\n",
+    "from thermodiff import sum_components  # Sympy summation over component number\n",
+    "from thermodiff import sum_custom      # Sympy summation over custom limits\n",
+    "from thermodiff import n               # Mole number vector\n",
+    "from thermodiff import T               # Temperature\n",
+    "from thermodiff import P               # Pressure\n",
+    "from thermodiff import V               # Volume\n",
+    "from thermodiff import R               # Ideal gas constant\n",
+    "from thermodiff import nc              # Number of components in the mixture\n",
+    "from thermodiff import k, l, m         # indexes for summations\n",
+    "from thermodiff import DiffPlz         # Class that makes the derivatives\n",
+    "\n",
+    "# We may still need sympy for some things.\n",
+    "import sympy as sp\n",
+    "\n",
+    "# To display latext code in the notebook.\n",
+    "from IPython.display import display, Math"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c1513c4e",
+   "metadata": {},
+   "source": [
+    "The mole fraction is an index-based function of the mole number vector:\n",
+    "\n",
+    "$$\n",
+    "x_k = f(\\mathbf{n}) = \\frac{n_k}{\\sum_{l=1}^{N_c} n_l}\n",
+    "$$\n",
+    "\n",
+    "In all expressions, we use $k$, $l$, and $m$ as indices, while $i$ and\n",
+    "$j$ are reserved for differentiation.\n",
+    "\n",
+    "Thermodiff provides a convenient way to define an index-based function:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "48f83ec7",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle x{\\left({n}_{k} \\right)}$"
+      ],
+      "text/plain": [
+       "x(n[k])"
+      ]
+     },
+     "execution_count": 2,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# index based function with lazy derivatives function of mole numbers n\n",
+    "xk = idx_function(\"x\")(n[k])\n",
+    "\n",
+    "xk"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "89183445",
+   "metadata": {},
+   "source": [
+    "This is how we define an index-based function in Thermodiff that depends on mole composition. In this case:\n",
+    "\n",
+    "$$\n",
+    "x_k = x(n_k)\n",
+    "$$\n",
+    "\n",
+    "Yes, this is not exactly the same as the full definition above—but it is a\n",
+    "convenient way to keep track of the index and preserve the ¿derivability? of\n",
+    "the function.\n",
+    "\n",
+    "Now, let’s see what “lazy derivatives” actually mean:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "f4865f39",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "diff = DiffPlz(xk, [xk], [k], \"x\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "19dfbac8",
+   "metadata": {},
+   "source": [
+    "The arguments of the `DiffPlz` class are:\n",
+    "\n",
+    "- expression : sympy expression\n",
+    "      The thermodynamic expression to differentiate.\n",
+    "\n",
+    "- internal_functions : list of sympy functions\n",
+    "      List of sympy functions that are used in the expression.\n",
+    "\n",
+    "- indexes : list of sympy Idx\n",
+    "      List of sympy Idx that are used in the expression. These are usually\n",
+    "      the indexes for the number of moles, like [k, l, m].\n",
+    "\n",
+    "- name : str, optional\n",
+    "      Name of the DiffClass instance, by default \"f\". It could be for example\n",
+    "      the name of the thermodynamic function you are working with, like \"G^E\"\n",
+    "      or \"A^r\".\n",
+    "\n",
+    "We can check the derivatives results by the object attributes:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "03da3322",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\frac{\\partial}{\\partial {n}_{i}} x{\\left({n}_{k} \\right)}$"
+      ],
+      "text/plain": [
+       "Derivative(x(n[k]), n[i])"
+      ]
+     },
+     "execution_count": 4,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dni"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "e5443fbf",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\frac{\\partial^{2}}{\\partial {n}_{j}\\partial {n}_{i}} x{\\left({n}_{k} \\right)}$"
+      ],
+      "text/plain": [
+       "Derivative(x(n[k]), n[i], n[j])"
+      ]
+     },
+     "execution_count": 5,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dnidnj"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "f94060d2",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle 0$"
+      ],
+      "text/plain": [
+       "0"
+      ]
+     },
+     "execution_count": 6,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dt"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a7ff7a30",
+   "metadata": {},
+   "source": [
+    "As you can see, index-based functions with their \"lazy derivatives\" represent\n",
+    "derivatives symbolically, indicating how the function should be differentiated\n",
+    "rather than evaluating them immediately.\n",
+    "\n",
+    "\n",
+    "For example, in the case of $dt$ (the temperature derivative), the result is\n",
+    "$0$, as expected. You can verify this yourself for the volume and pressure\n",
+    "derivatives, $dv$ and $dp$.\n",
+    "\n",
+    "\n",
+    "This approach is useful when you want to include functions in your expressions\n",
+    "that do not have an explicit form. You can later compute the derivatives of\n",
+    "those functions separately.\n",
+    "\n",
+    "\n",
+    "Before trully differentiating any expression, let’s examine what the \n",
+    "`latex_readable_plz` method does:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "18eb0b70",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "{'dT': '0',\n",
+       " 'dV': '0',\n",
+       " 'dP': '0',\n",
+       " 'dT2': '0',\n",
+       " 'dV2': '0',\n",
+       " 'dP2': '0',\n",
+       " 'dn2': '\\\\frac{\\\\partial^2 x_{k}}{\\\\partial n_i \\\\partial n_j}',\n",
+       " 'dTn': '0',\n",
+       " 'dVn': '0',\n",
+       " 'dPn': '0',\n",
+       " 'dTV': '0',\n",
+       " 'dTP': '0',\n",
+       " 'dVP': '0',\n",
+       " 'dni': '\\\\frac{\\\\partial x_{k}}{\\\\partial n_i}'}"
+      ]
+     },
+     "execution_count": 7,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "latex = diff.latex_readable_plz()\n",
+    "\n",
+    "latex"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1e11ad38",
+   "metadata": {},
+   "source": [
+    "The method returns a dictionary containing the LaTeX representation of the\n",
+    "function derivatives.\n",
+    "\n",
+    "It attempts to simplify the expressions as much as possible, although results\n",
+    "may vary. Since this is mainly a personal-use tool, the method was heavily\n",
+    "vibe-coded, so don’t be surprised if some expressions refuse to simplify all\n",
+    "the way."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "33dc949e",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\frac{\\partial x_{k}}{\\partial n_i}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "display(Math(latex[\"dni\"]))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "2e400fc4",
+   "metadata": {},
+   "source": [
+    "As you can see, the method tries its best to return a more expected result,\n",
+    "ready to be displayed in a notebook or a report.\n",
+    "\n",
+    "After that, let’s compute the actual derivatives of the mole fraction. For\n",
+    "this, we can use a Thermodiff shortcut for summations:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "id": "441dfdcc",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\frac{{n}_{k}}{\\sum_{l=1}^{N_{c}} {n}_{l}}$"
+      ],
+      "text/plain": [
+       "n[k]/Sum(n[l], (l, 1, N_c))"
+      ]
+     },
+     "execution_count": 9,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "expr = n[k] / sum_components(n[l], l)\n",
+    "\n",
+    "expr"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "93fd6d78",
+   "metadata": {},
+   "source": [
+    "Now we plz differentiate:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "id": "e96ee679",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "diff_plz = DiffPlz(expr, internal_functions=None, indexes=[k, l], name=\"x_k\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "3c5ec73f",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\begin{cases} - \\frac{{n}_{i}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l}\\right)^{2}} + \\frac{1}{\\sum_{l=1}^{N_{c}} {n}_{l}} & \\text{for}\\: i = k \\\\- \\frac{{n}_{k}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l}\\right)^{2}} & \\text{otherwise} \\end{cases}$"
+      ],
+      "text/plain": [
+       "Piecewise((-n[i]/Sum(n[l], (l, 1, N_c))**2 + 1/Sum(n[l], (l, 1, N_c)), Eq(i, k)), (-n[k]/Sum(n[l], (l, 1, N_c))**2, True))"
+      ]
+     },
+     "execution_count": 11,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff_plz.dni"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "id": "eca01459",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\begin{cases} \\frac{2 {n}_{i}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l}\\right)^{3}} - \\frac{2}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l}\\right)^{2}} & \\text{for}\\: i = j \\wedge i = k \\\\\\frac{2 {n}_{i}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l}\\right)^{3}} - \\frac{1}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l}\\right)^{2}} & \\text{for}\\: i = k \\\\\\frac{2 {n}_{j}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l}\\right)^{3}} - \\frac{1}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l}\\right)^{2}} & \\text{for}\\: j = k \\\\\\frac{2 {n}_{k}}{\\left(\\sum_{l=1}^{N_{c}} {n}_{l}\\right)^{3}} & \\text{otherwise} \\end{cases}$"
+      ],
+      "text/plain": [
+       "Piecewise((2*n[i]/Sum(n[l], (l, 1, N_c))**3 - 2/Sum(n[l], (l, 1, N_c))**2, Eq(i, j) & Eq(i, k)), (2*n[i]/Sum(n[l], (l, 1, N_c))**3 - 1/Sum(n[l], (l, 1, N_c))**2, Eq(i, k)), (2*n[j]/Sum(n[l], (l, 1, N_c))**3 - 1/Sum(n[l], (l, 1, N_c))**2, Eq(j, k)), (2*n[k]/Sum(n[l], (l, 1, N_c))**3, True))"
+      ]
+     },
+     "execution_count": 12,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff_plz.dnidnj"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "84f531da",
+   "metadata": {},
+   "source": [
+    "As you can see, Thermodiff automatically handles the ugly Kronecker delta\n",
+    "functions. In this case, those Kronecker deltas turn into piecewise functions,\n",
+    "which are much readable."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a937d07f",
+   "metadata": {},
+   "source": [
+    "## Second Example: Summation of indexed functions"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "fb4bd24f",
+   "metadata": {},
+   "source": [
+    "Let’s analyze what happens when we have a summation involving index-based\n",
+    "functions. Consider a term like:\n",
+    "\n",
+    "$$\n",
+    "\\sum_{k=1}^{N_c} n_k \\, \\phi_k \\, \\tau_{lk}\n",
+    "$$\n",
+    "\n",
+    "where $\\phi_k$ and $\\tau_{lk}$ are index-based functions.\n",
+    "\n",
+    "For example, $\\phi_k$ could be a function of the mole number vector:\n",
+    "\n",
+    "$$\n",
+    "\\phi_k = f(\\mathbf{n})\n",
+    "$$\n",
+    "\n",
+    "Something similar to the UNIQUAC terms (where $r_k$ is a constant parameter):\n",
+    "\n",
+    "$$\n",
+    "\\phi_k = \\frac{r_k n_k}{\\sum_{l=1}^{N_c} n_l r_l}\n",
+    "$$\n",
+    "\n",
+    "On the other hand, $\\tau_{lk}$ could be defined as:\n",
+    "\n",
+    "$$\n",
+    "\\tau_{lk} = g(T)\n",
+    "$$\n",
+    "\n",
+    "Here, the indices $l$ and $k$ refer to binary interaction parameters between\n",
+    "components $l$ and $k$.\n",
+    "\n",
+    "The key difference between these functions is the following:\n",
+    "\n",
+    "- $\\phi_k$ depends on the mole number vector, and its index represents component $k$.\n",
+    "- $\\tau_{lk}$ depends only on temperature, but its indices represent a pair of components.\n",
+    "\n",
+    "Since $\\tau_{lk}$ is not a function of the mole number vector, its derivative\n",
+    "with respect to $\\mathbf{n}$ is zero. Because of this, we need to construct\n",
+    "these functions differently:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "id": "2d5a9c28",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\phi{\\left({n}_{k} \\right)}$"
+      ],
+      "text/plain": [
+       "\\phi(n[k])"
+      ]
+     },
+     "execution_count": 13,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "phi_k = idx_function(r\"\\phi\")(n[k])\n",
+    "\n",
+    "phi_k"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "710bec34",
+   "metadata": {},
+   "source": [
+    "Check how $\\phi_k$ is defined (just like we did before with the mole fraction).\n",
+    "The function symbol is simply $\\phi$, and it is defined as a function of the\n",
+    "mole number of component $k$.\n",
+    "\n",
+    "This way, the subscript of the function naturally follows the subscript of its\n",
+    "argument (or this is the way I want you to read it, at least).\n",
+    "\n",
+    "$$\n",
+    "\\phi_k = \\phi(n_k)\n",
+    "$$\n",
+    "\n",
+    "We will clean up this representation later, don’t worry."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "id": "5e0592e7",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\tau{\\left(l,k,T \\right)}$"
+      ],
+      "text/plain": [
+       "\\tau(l, k, T)"
+      ]
+     },
+     "execution_count": 14,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "tau_lk = idx_function(r\"\\tau\")(l, k, T)\n",
+    "\n",
+    "tau_lk"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "87d83d65",
+   "metadata": {},
+   "source": [
+    "Notice that for the function $\\tau_{lk}$, the symbol is simply $\\tau$. It is\n",
+    "defined as a function of temperature, while $l$ and $k$ are treated as indices.\n",
+    "\n",
+    "This way, the subscripts of the function are tracked through the arguments:\n",
+    "\n",
+    "$$\n",
+    "\\tau_{lk}(T) = \\tau(l, k, T)\n",
+    "$$\n",
+    "\n",
+    "However, unlike $\\phi_k$, this function does **not** depend on $\\mathbf{n}$\n",
+    "vector.\n",
+    "\n",
+    "Now, let’s build our expression:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "id": "22823d7e",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\sum_{k=1}^{N_{c}} \\phi{\\left({n}_{k} \\right)} \\tau{\\left(l,k,T \\right)} {n}_{k}$"
+      ],
+      "text/plain": [
+       "Sum(\\phi(n[k])*\\tau(l, k, T)*n[k], (k, 1, N_c))"
+      ]
+     },
+     "execution_count": 15,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "expr = sum_components(n[k] * phi_k * tau_lk, k)\n",
+    "\n",
+    "expr"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9effac90",
+   "metadata": {},
+   "source": [
+    "You can also use the `sum_custom` function for more custom summation scenarios.\n",
+    "In this case to recreate the same expression with that function:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "id": "cb415dc7",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\sum_{k=1}^{N_{c}} \\phi{\\left({n}_{k} \\right)} \\tau{\\left(l,k,T \\right)} {n}_{k}$"
+      ],
+      "text/plain": [
+       "Sum(\\phi(n[k])*\\tau(l, k, T)*n[k], (k, 1, N_c))"
+      ]
+     },
+     "execution_count": 16,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "sum_custom(\n",
+    "    n[k] * phi_k * tau_lk,\n",
+    "    idx=k,\n",
+    "    start=1,\n",
+    "    end=nc\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "509240ba",
+   "metadata": {},
+   "source": [
+    "I'm used to reading these expressions by mentally moving the subscripts from\n",
+    "the arguments back to the function symbols. Not perfect, but it gets the job\n",
+    "done.\n",
+    "\n",
+    "Now, let’s differentiate:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "id": "f7ee2243",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "diff = DiffPlz(expr, internal_functions=[phi_k, tau_lk], indexes=[k, l], name=\"f\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "id": "465ee786",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\phi{\\left({n}_{i} \\right)} \\tau{\\left(l,i,T \\right)} + \\sum_{k=1}^{N_{c}} \\tau{\\left(l,k,T \\right)} \\frac{\\partial}{\\partial {n}_{i}} \\phi{\\left({n}_{k} \\right)} {n}_{k}$"
+      ],
+      "text/plain": [
+       "\\phi(n[i])*\\tau(l, i, T) + Sum(\\tau(l, k, T)*Derivative(\\phi(n[k]), n[i])*n[k], (k, 1, N_c))"
+      ]
+     },
+     "execution_count": 18,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dni"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d972f7cc",
+   "metadata": {},
+   "source": [
+    "Pay attention to how the subscripts take the values $i$ and $j$ when\n",
+    "differentiating with respect to $n_i$ and $n_j$."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "id": "74f2d6bf",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\tau{\\left(l,i,T \\right)} \\frac{\\partial}{\\partial {n}_{j}} \\phi{\\left({n}_{i} \\right)} + \\tau{\\left(l,j,T \\right)} \\frac{\\partial}{\\partial {n}_{i}} \\phi{\\left({n}_{j} \\right)} + \\sum_{k=1}^{N_{c}} \\tau{\\left(l,k,T \\right)} \\frac{\\partial^{2}}{\\partial {n}_{j}\\partial {n}_{i}} \\phi{\\left({n}_{k} \\right)} {n}_{k}$"
+      ],
+      "text/plain": [
+       "\\tau(l, i, T)*Derivative(\\phi(n[i]), n[j]) + \\tau(l, j, T)*Derivative(\\phi(n[j]), n[i]) + Sum(\\tau(l, k, T)*Derivative(\\phi(n[k]), n[i], n[j])*n[k], (k, 1, N_c))"
+      ]
+     },
+     "execution_count": 19,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dnidnj"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 20,
+   "id": "164aa7fd",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\sum_{k=1}^{N_{c}} \\phi{\\left({n}_{k} \\right)} \\frac{d}{d T} \\tau{\\left(l,k,T \\right)} {n}_{k}$"
+      ],
+      "text/plain": [
+       "Sum(\\phi(n[k])*Derivative(\\tau(l, k, T), T)*n[k], (k, 1, N_c))"
+      ]
+     },
+     "execution_count": 20,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# Temperature derivative:\n",
+    "diff.dt"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 21,
+   "id": "bdcc7121",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\sum_{k=1}^{N_{c}} \\phi{\\left({n}_{k} \\right)} \\frac{d^{2}}{d T^{2}} \\tau{\\left(l,k,T \\right)} {n}_{k}$"
+      ],
+      "text/plain": [
+       "Sum(\\phi(n[k])*Derivative(\\tau(l, k, T), (T, 2))*n[k], (k, 1, N_c))"
+      ]
+     },
+     "execution_count": 21,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dt2"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 22,
+   "id": "41dfb7c5",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\phi{\\left({n}_{i} \\right)} \\frac{d}{d T} \\tau{\\left(l,i,T \\right)} + \\sum_{k=1}^{N_{c}} \\frac{\\partial}{\\partial {n}_{i}} \\phi{\\left({n}_{k} \\right)} \\frac{d}{d T} \\tau{\\left(l,k,T \\right)} {n}_{k}$"
+      ],
+      "text/plain": [
+       "\\phi(n[i])*Derivative(\\tau(l, i, T), T) + Sum(Derivative(\\phi(n[k]), n[i])*Derivative(\\tau(l, k, T), T)*n[k], (k, 1, N_c))"
+      ]
+     },
+     "execution_count": 22,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dtdni"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "fd89a7e0",
+   "metadata": {},
+   "source": [
+    "Now let's use `latex_readable_plz` to obtain a more readable version of the\n",
+    "derivatives:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 23,
+   "id": "b98bf676",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "{'dT': '\\\\sum_{k=1}^{N_{c}} \\\\frac{\\\\partial \\\\tau_{lk}}{\\\\partial T} \\\\phi_{k} {n}_{k}',\n",
+       " 'dV': '0',\n",
+       " 'dP': '0',\n",
+       " 'dT2': '\\\\sum_{k=1}^{N_{c}} \\\\frac{\\\\partial^2 \\\\tau_{lk}}{\\\\partial T^2} \\\\phi_{k} {n}_{k}',\n",
+       " 'dV2': '0',\n",
+       " 'dP2': '0',\n",
+       " 'dn2': '\\\\frac{\\\\partial \\\\phi_{i}}{\\\\partial n_j} \\\\tau_{li} + \\\\frac{\\\\partial \\\\phi_{j}}{\\\\partial n_i} \\\\tau_{lj} + \\\\sum_{k=1}^{N_{c}} \\\\frac{\\\\partial^2 \\\\phi_{k}}{\\\\partial n_i \\\\partial n_j} \\\\tau_{lk} {n}_{k}',\n",
+       " 'dTn': '\\\\frac{\\\\partial \\\\tau_{li}}{\\\\partial T} \\\\phi_{i} + \\\\sum_{k=1}^{N_{c}} \\\\frac{\\\\partial \\\\phi_{k}}{\\\\partial n_i} \\\\frac{\\\\partial \\\\tau_{lk}}{\\\\partial T} {n}_{k}',\n",
+       " 'dVn': '0',\n",
+       " 'dPn': '0',\n",
+       " 'dTV': '0',\n",
+       " 'dTP': '0',\n",
+       " 'dVP': '0',\n",
+       " 'dni': '\\\\phi_{i} \\\\tau_{li} + \\\\sum_{k=1}^{N_{c}} \\\\frac{\\\\partial \\\\phi_{k}}{\\\\partial n_i} \\\\tau_{lk} {n}_{k}'}"
+      ]
+     },
+     "execution_count": 23,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "latex = diff.latex_readable_plz()\n",
+    "\n",
+    "latex"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 24,
+   "id": "a79c2ed0",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Derivative dT:\n"
+     ]
+    },
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\sum_{k=1}^{N_{c}} \\frac{\\partial \\tau_{lk}}{\\partial T} \\phi_{k} {n}_{k}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Derivative dT2:\n"
+     ]
+    },
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\sum_{k=1}^{N_{c}} \\frac{\\partial^2 \\tau_{lk}}{\\partial T^2} \\phi_{k} {n}_{k}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Derivative dni:\n"
+     ]
+    },
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\phi_{i} \\tau_{li} + \\sum_{k=1}^{N_{c}} \\frac{\\partial \\phi_{k}}{\\partial n_i} \\tau_{lk} {n}_{k}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Derivative dn2:\n"
+     ]
+    },
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\frac{\\partial \\phi_{i}}{\\partial n_j} \\tau_{li} + \\frac{\\partial \\phi_{j}}{\\partial n_i} \\tau_{lj} + \\sum_{k=1}^{N_{c}} \\frac{\\partial^2 \\phi_{k}}{\\partial n_i \\partial n_j} \\tau_{lk} {n}_{k}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Derivative dTn:\n"
+     ]
+    },
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\frac{\\partial \\tau_{li}}{\\partial T} \\phi_{i} + \\sum_{k=1}^{N_{c}} \\frac{\\partial \\phi_{k}}{\\partial n_i} \\frac{\\partial \\tau_{lk}}{\\partial T} {n}_{k}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "derivs = [\"dT\", \"dT2\", \"dni\", \"dn2\", \"dTn\"]\n",
+    "\n",
+    "for d in derivs:\n",
+    "    print(f\"Derivative {d}:\")\n",
+    "    display(Math(latex[d]))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "74247f5d",
+   "metadata": {},
+   "source": [
+    "## Third Example: Specific simplification case"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d081b071",
+   "metadata": {},
+   "source": [
+    "Check the following expression (from UNIQUAC model):\n",
+    "\n",
+    "$$ \\tau_{lk} = \\exp \\left(\\frac{-\\Delta U_{lk}}{R T} \\right) $$\n",
+    "\n",
+    "$$\n",
+    "\\frac{-\\Delta U_{lk}}{R T} = a_{lk}+\\frac{b_{lk}}{T}+c_{lk}\\ln T + d_{lk}T +\n",
+    "e_{lk}{T^2}\n",
+    "$$\n",
+    "\n",
+    "In this case I want the derivatives of $\\tau_{lk}$ (of course $a_{lk}$,\n",
+    "$b_{lk}$, etc. are just binary interaction parameters). In this case, we don't\n",
+    "care about compositional derivatives, so i'm going to define the parameters\n",
+    "as normal variables (not SimPy index-based variables):"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 25,
+   "id": "805506f3",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \\log{\\left(T \\right)} + \\frac{b_{lk}}{T}}$"
+      ],
+      "text/plain": [
+       "exp(T**2*e_{lk} + T*d_{lk} + a_{lk} + c_{lk}*log(T) + b_{lk}/T)"
+      ]
+     },
+     "execution_count": 25,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "a_lk = sp.Symbol(\"a_{lk}\")\n",
+    "b_lk = sp.Symbol(\"b_{lk}\")\n",
+    "c_lk = sp.Symbol(\"c_{lk}\")\n",
+    "d_lk = sp.Symbol(\"d_{lk}\")\n",
+    "e_lk = sp.Symbol(\"e_{lk}\")\n",
+    "\n",
+    "tau_lk_expr = sp.exp(\n",
+    "    a_lk + b_lk / T + c_lk * sp.ln(T) + d_lk * T + e_lk * T**2\n",
+    ")\n",
+    "\n",
+    "tau_lk_expr"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ce7f9e52",
+   "metadata": {},
+   "source": [
+    "Now, let's differentiate:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 26,
+   "id": "c669ce32",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "diff = DiffPlz(tau_lk_expr, internal_functions=None, indexes=[l, k], name=r\"\\tau_{lk}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 27,
+   "id": "4a851300",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right) e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \\log{\\left(T \\right)} + \\frac{b_{lk}}{T}}$"
+      ],
+      "text/plain": [
+       "(2*T*e_{lk} + d_{lk} + c_{lk}/T - b_{lk}/T**2)*exp(T**2*e_{lk} + T*d_{lk} + a_{lk} + c_{lk}*log(T) + b_{lk}/T)"
+      ]
+     },
+     "execution_count": 27,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dt"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 28,
+   "id": "68c9fca6",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 e_{lk} - \\frac{c_{lk}}{T^{2}} + \\frac{2 b_{lk}}{T^{3}}\\right) e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \\log{\\left(T \\right)} + \\frac{b_{lk}}{T}} + \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right)^{2} e^{T^{2} e_{lk} + T d_{lk} + a_{lk} + c_{lk} \\log{\\left(T \\right)} + \\frac{b_{lk}}{T}}$"
+      ],
+      "text/plain": [
+       "(2*e_{lk} - c_{lk}/T**2 + 2*b_{lk}/T**3)*exp(T**2*e_{lk} + T*d_{lk} + a_{lk} + c_{lk}*log(T) + b_{lk}/T) + (2*T*e_{lk} + d_{lk} + c_{lk}/T - b_{lk}/T**2)**2*exp(T**2*e_{lk} + T*d_{lk} + a_{lk} + c_{lk}*log(T) + b_{lk}/T)"
+      ]
+     },
+     "execution_count": 28,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dt2"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a73cc917",
+   "metadata": {},
+   "source": [
+    "You will quickly notice that these temperature derivatives are quite messy.\n",
+    "Since they come from derivatives of an exponential function, they typically\n",
+    "have the form:\n",
+    "\n",
+    "$$\n",
+    "\\frac{d e^{u}}{d T} = \\frac{d u}{d T} e^u\n",
+    "$$\n",
+    "\n",
+    "We can use the `clean_plz` method so that the `DiffPlz` instance attempts to\n",
+    "simplify these expressions. This will not always succeed, but in this case,\n",
+    "it works well."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 29,
+   "id": "7dfbb350",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Help on method clean_plz in module thermodiff.diffplz:\n",
+      "\n",
+      "clean_plz(derivs_to_clean: list[str] | None = None) method of thermodiff.diffplz.DiffPlz instance\n",
+      "    Clean the DiffPlz instance.\n",
+      "\n",
+      "    This method applies known simplification patterns to the differentiated\n",
+      "    expressions in the DiffPlz instance.\n",
+      "\n",
+      "    Parameters\n",
+      "    ----------\n",
+      "    derivs_to_clean : list[str], optional\n",
+      "        List of derivative keys to clean. If None, all derivatives will be\n",
+      "        cleaned. The possible keys are: \"dT\", \"dV\", \"dP\", \"dni\", \"dT2\",\n",
+      "        \"dV2\", \"dP2\", \"dnidnj\", \"dTn\", \"dVn\", \"dPn\", \"dTV\", \"dTP\", \"dVP\".\n",
+      "\n"
+     ]
+    }
+   ],
+   "source": [
+    "help(diff.clean_plz)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "6ff7ea61",
+   "metadata": {},
+   "source": [
+    "By reading the documentation of the method, we have to provide the derivatives\n",
+    "that we want to \"clean\". In this case we are only interested in the temperature\n",
+    "derivatives, so we will provide the keys: `dT` and `dT2`. The method will then\n",
+    "attempt to simplify the expressions for only these derivatives and then the\n",
+    "attributes `dt` and `dt2` will be updated with the simplified expressions. The\n",
+    "other derivatives will remain unchanged. If you do not provide any keys, the\n",
+    "method will attempt to simplify all derivatives (not recommended)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 30,
+   "id": "b6423a93",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "diff.clean_plz([\"dT\", \"dT2\"])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 31,
+   "id": "29da0ed3",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right) \\tau_{lk}{\\left(T \\right)}$"
+      ],
+      "text/plain": [
+       "(2*T*e_{lk} + d_{lk} + c_{lk}/T - b_{lk}/T**2)*\\tau_{lk}(T)"
+      ]
+     },
+     "execution_count": 31,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dt"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 32,
+   "id": "4754c589",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 e_{lk} - \\frac{c_{lk}}{T^{2}} + \\frac{2 b_{lk}}{T^{3}}\\right) \\tau_{lk}{\\left(T \\right)} + \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right)^{2} \\tau_{lk}{\\left(T \\right)}$"
+      ],
+      "text/plain": [
+       "(2*e_{lk} - c_{lk}/T**2 + 2*b_{lk}/T**3)*\\tau_{lk}(T) + (2*T*e_{lk} + d_{lk} + c_{lk}/T - b_{lk}/T**2)**2*\\tau_{lk}(T)"
+      ]
+     },
+     "execution_count": 32,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "diff.dt2"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9e7eea1b",
+   "metadata": {},
+   "source": [
+    "As you can see, a basic “cleaning” pattern is to detect whether the original\n",
+    "function (in this case $\\tau_{lk}$) appears in the “dirty” derivatives. The\n",
+    "method then replaces those occurrences with the function’s symbolic name.\n",
+    "\n",
+    "Now, lets make our readable LaTeX version of the derivatives as before:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 33,
+   "id": "5d2cef59",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right) \\tau_{lk}{\\left(T \\right)}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right) \\tau_{lk}{\\left(T \\right)}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "latex = diff.latex_readable_plz()\n",
+    "\n",
+    "display(Math(latex[\"dT\"]))\n",
+    "\n",
+    "display(Math(latex[\"dT\"]))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e8acccba",
+   "metadata": {},
+   "source": [
+    "OH NO! Why didn’t it simplify the $(T)$ in $\\tau_{lk}(T)$?\n",
+    "\n",
+    "That’s because `latex_readable_plz` doesn’t know that $\\tau_{lk}(T)$ is an\n",
+    "internal function of the expression (we passed `None` to the `DiffPlz`\n",
+    "instance).\n",
+    "\n",
+    "Yeah… kind of a dumb thing. The previous expressions are fine, but if you\n",
+    "really want `latex_readable_plz` to behave properly, you need to explicitly\n",
+    "include $\\tau_{lk}(T)$ as an internal function in the `DiffPlz` instance.\n",
+    "\n",
+    "This ends up being a bit of an iterative process: you notice that `clean_plz`\n",
+    "produces something like this, then you go back and improve your instance\n",
+    "definition."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ed89c2ea",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\tau_{lk} \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right)$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "data": {
+      "text/latex": [
+       "$\\displaystyle \\tau_{lk} \\left(2 e_{lk} - \\frac{c_{lk}}{T^{2}} + \\frac{2 b_{lk}}{T^{3}}\\right) + \\tau_{lk} \\left(2 T e_{lk} + d_{lk} + \\frac{c_{lk}}{T} - \\frac{b_{lk}}{T^{2}}\\right)^{2}$"
+      ],
+      "text/plain": [
+       "<IPython.core.display.Math object>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "# We add the symbol for the function that will appear in the derivatives after\n",
+    "# cleaning\n",
+    "tau_symbol = sp.Function(r\"\\tau_{lk}\")(T)\n",
+    "\n",
+    "diff = DiffPlz(tau_lk_expr, internal_functions=[tau_symbol], indexes=[l, k], name=r\"\\tau_{lk}\")\n",
+    "\n",
+    "diff.clean_plz([\"dT\", \"dT2\"])\n",
+    "\n",
+    "latex = diff.latex_readable_plz()\n",
+    "\n",
+    "display(Math(latex[\"dT\"]))\n",
+    "display(Math(latex[\"dT2\"]))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "26783fc3",
+   "metadata": {},
+   "source": [
+    "That’s pretty much all the tricks you need to keep in mind when working with\n",
+    "`DiffPlz` instances. The rest is just practice… and a bit of messing around.\n",
+    "\n",
+    "For a more complete and realistic example, check the MHV differentiation\n",
+    "notebook, where `DiffPlz` is used in a more complex setting."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "thermodiff",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.12.13"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
