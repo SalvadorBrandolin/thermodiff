@@ -1,6 +1,7 @@
 """LaTeX formatting utilities for DiffPlz.
 
-Extracted from DiffPlz.latex_readable_plz to improve readability and testability.
+Extracted from DiffPlz.latex_readable_plz to improve readability
+and testability.
 """
 
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -71,7 +72,7 @@ def make_partial(func_name: str, wrt: str) -> Symbol:
 
 
 def make_partial2(func_name: str, wrt1: str, wrt2: str) -> Symbol:
-    r"""Build \frac{\partial^2 func_name}{\partial wrt1 \partial wrt2} symbol."""
+    r"""Build \frac{\partial^2 func_name}{\partial wrt1 \partial wrt2} symbol."""  # noqa: E501
     return Symbol(
         rf"\frac{{\partial^2 {func_name}}}{{\partial {wrt1} \partial {wrt2}}}",
         commutative=True,
@@ -86,8 +87,8 @@ def make_partial2(func_name: str, wrt1: str, wrt2: str) -> Symbol:
 class DerivativeReplacer:
     """Handles replacement of sympy Derivative nodes with pretty LaTeX symbols.
 
-    This encapsulates the complex matching/replacement logic that was previously
-    nested inside latex_readable_plz.
+    This encapsulates the complex matching/replacement logic that was
+    previously nested inside latex_readable_plz.
     """
 
     def __init__(self, internal_functions: List[Function]):
@@ -99,9 +100,8 @@ class DerivativeReplacer:
     def make_first_order_matcher(
         self, wrt_var: sp.Symbol, func_type: type
     ) -> Callable:
-        """Create a predicate matching Derivative(expr, wrt) for a specific func type."""
-
-        def match(e: sp.Expr) -> bool:
+        """Create a predicate matching Derivative(expr, wrt) for a specific func type."""  # noqa: E501
+        def match(e: sp.Expr) -> bool:  # noqa: BLK100
             return (
                 isinstance(e, Derivative)
                 and isinstance(e.expr, func_type)

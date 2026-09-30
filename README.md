@@ -2,6 +2,8 @@
 
 ![logo](https://github.com/SalvadorBrandolin/thermodiff/blob/4005fa272baec3df8315654a0357acc8e14ef5b6/media/logo.jpg?raw=true)
 
+[![DOI](https://zenodo.org/badge/1006736196.svg)](https://doi.org/10.5281/zenodo.23065622)
+
 thermodiff is a lightweight Python package designed to simplify the symbolic differentiation and manipulation of thermodynamic expressions using SymPy.
 
 It was created to streamline everyday thermodynamic derivations with a clean and straightforward syntax tailored to practical research workflows.

@@ -24,6 +24,11 @@ from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
+from thermodiff.latex_utils import (
+    clean_latex_string,
+    finalize_latex_dict,
+    process_derivative_expression,
+)
 from thermodiff.thermovars import P, T, V, i, j, k, l, m, n
 
 
@@ -341,149 +346,14 @@ class DiffPlz:
             setattr(self, attr_name, expr)
 
     def latex_readable_plz(self) -> dict:
-        """Return a clean latex representation of derivatives.
+        """Return a clean LaTeX representation of all derivatives.
 
-        Heavily vibecoded method, could easily not work. Ad hocs at the end.
-
+        Uses latex_utils module for the heavy lifting. This method is now
+        a thin orchestration layer.
         """
-
-        def _extract_subscript(arg) -> str | None:
-            """Extract the LaTeX subscript string from a function argument."""
-            if isinstance(arg, sp.Idx):
-                return sp.latex(arg)
-            if isinstance(arg, sp.Indexed):
-                return sp.latex(arg.indices[0])
-            return None
-
-        def _build_pretty_symbol(instance) -> sp.Symbol:
-            r"""Build a pretty LaTeX symbol for a function instance.
-
-            tau(l, i, T) -> \tau_{li}
-            phi(n[i])    -> \phi_i
-            f(T)         -> \f  (no subscript)
-            """
-            base = sp.latex(instance.func)
-            subscripts = [
-                sub
-                for arg in instance.args
-                if (sub := _extract_subscript(arg)) is not None
-            ]
-            if subscripts:
-                subscript_str = "".join(subscripts)
-                name = base + "_{" + subscript_str + "}"
-            else:
-                name = base
-            return sp.Symbol(name, commutative=True)
-
-        def _make_partial(func_name: str, wrt: str) -> sp.Symbol:
-            r"""Build \frac{\partial func_name}{\partial wrt} symbol."""
-            return sp.Symbol(
-                rf"\frac{{\partial {func_name}}}{{\partial {wrt}}}",
-                commutative=True,
-            )
-
-        def _make_partial2(func_name: str, wrt1: str, wrt2: str) -> sp.Symbol:
-            r"""Build the symbol.
-
-            \frac{\partial^2 func_name}{\partial wrt1 \partial wrt2}
-            """
-            return sp.Symbol(
-                rf"\frac{{\partial^2 {func_name}}}{{\partial {wrt1} \partial {wrt2}}}",  # noqa
-                commutative=True,
-            )
-
-        def _process_expr(expr: sp.Expr, order: int, diff_key: str) -> sp.Expr:
-            """Apply all pretty replacements for a derivative expression."""
-            wrt1_map = {
-                "T": (T, "T"),
-                "V": (V, "V"),
-                "P": (P, "P"),
-                "n_i": (n[i], "n_i"),
-                "n_j": (n[j], "n_j"),
-            }
-
-            wrt2_map = {
-                "T2": (T, T, "T", "T"),
-                "V2": (V, V, "V", "V"),
-                "P2": (P, P, "P", "P"),
-                "n2": (n[i], n[j], "n_i", "n_j"),
-                "Tn": (T, n[i], "T", "n_i"),
-                "Vn": (V, n[i], "V", "n_i"),
-                "Pn": (P, n[i], "P", "n_i"),
-                "TV": (T, V, "T", "V"),
-                "TP": (T, P, "T", "P"),
-                "VP": (V, P, "V", "P"),
-            }
-
-            for function in self.internal_functions:
-                func_type = type(function)
-
-                if order == 1:
-                    w, lbl = wrt1_map[diff_key]
-
-                    # Replace Derivative(instance, w) nodes using
-                    # replace+predicate
-                    def match_deriv1(e, _w=w, _ft=func_type):
-                        return (
-                            isinstance(e, sp.Derivative)
-                            and isinstance(e.expr, _ft)
-                            and e.variables == (_w,)
-                        )
-
-                    def sub_deriv1(e, _lbl=lbl):
-                        fname = _build_pretty_symbol(e.expr).name
-                        return _make_partial(fname, _lbl)
-
-                    expr = expr.replace(match_deriv1, sub_deriv1)
-
-                else:  # order == 2
-                    w1, w2, l1, l2 = wrt2_map[diff_key]
-
-                    # Replace second-order Derivative nodes
-                    def match_deriv2(e, _w1=w1, _w2=w2, _ft=func_type):
-                        return (
-                            isinstance(e, sp.Derivative)
-                            and isinstance(e.expr, _ft)
-                            and e.variables == (_w1, _w2)
-                        )
-
-                    def sub_deriv2(e, _l1=l1, _l2=l2):
-                        fname = _build_pretty_symbol(e.expr).name
-                        return _make_partial2(fname, _l1, _l2)
-
-                    expr = expr.replace(match_deriv2, sub_deriv2)
-
-                    # Replace first-order Derivative nodes that survive inside
-                    # second-order expressions (e.g. chain rule terms)
-                    for w, lbl in [(w1, l1), (w2, l2)]:
-
-                        def match_deriv1_in2(e, _w=w, _ft=func_type):
-                            return (
-                                isinstance(e, sp.Derivative)
-                                and isinstance(e.expr, _ft)
-                                and e.variables == (_w,)
-                            )
-
-                        def sub_deriv1_in2(e, _lbl=lbl):
-                            fname = _build_pretty_symbol(e.expr).name
-                            return _make_partial(fname, _lbl)
-
-                        expr = expr.replace(match_deriv1_in2, sub_deriv1_in2)
-
-                # Replace all remaining free instances (penetrates Sum,
-                # Piecewise, etc.)
-                def match_free(e, _ft=func_type):
-                    return isinstance(e, _ft)
-
-                def sub_free(e):
-                    return _build_pretty_symbol(e)
-
-                expr = expr.replace(match_free, sub_free)
-
-            return expr
-
         latex_finals = {}
 
+        # First derivatives
         first_exprs = {
             "T": self.dt,
             "V": self.dv,
@@ -492,12 +362,16 @@ class DiffPlz:
         }
 
         for diff_key, expr in first_exprs.items():
-            expr = _process_expr(expr, order=1, diff_key=diff_key)
-            result = (
-                sp.latex(expr).replace("()", "").replace(r"\left( \right)", "")
+            expr = process_derivative_expression(
+                expr,
+                order=1,
+                diff_key=diff_key,
+                internal_functions=self.internal_functions,
             )
+            result = clean_latex_string(sp.latex(expr))
             latex_finals["d" + diff_key] = result
 
+        # Second derivatives
         second_exprs = {
             "T2": self.dt2,
             "V2": self.dv2,
@@ -512,22 +386,16 @@ class DiffPlz:
         }
 
         for diff_key, expr in second_exprs.items():
-            expr = _process_expr(expr, order=2, diff_key=diff_key)
-            result = (
-                sp.latex(expr).replace("()", "").replace(r"\left( \right)", "")
+            expr = process_derivative_expression(
+                expr,
+                order=2,
+                diff_key=diff_key,
+                internal_functions=self.internal_functions,
             )
+            result = clean_latex_string(sp.latex(expr))
             latex_finals["d" + diff_key] = result
 
-        # =====================================================================
-        # Dumb adhoc things
-        # =====================================================================
-        latex_finals["dT2"] = latex_finals["dT2"].replace(
-            r"\partial T \partial T", r"\partial T^2"
-        )
-
-        latex_finals["dni"] = latex_finals.pop("dn_i")
-
-        return latex_finals
+        return finalize_latex_dict(latex_finals)
 
     def _detect_arguments(self) -> List[sp.Symbol]:
         """Check the thermodynamic variables used in the expression."""
