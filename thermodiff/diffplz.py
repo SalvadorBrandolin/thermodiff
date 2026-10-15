@@ -418,6 +418,22 @@ class DiffPlz:
 
         return arguments
 
+    def to_fortran(self, *args, **kwargs):
+        """Generate a Fortran subroutine for this instance.
+
+        This is a thin wrapper around
+        :func:`thermodiff.fortran.to_fortran`.  See that function for the
+        accepted arguments.
+
+        Returns
+        -------
+        str
+            The free-form Fortran source code.
+        """
+        from thermodiff.fortran import to_fortran
+
+        return to_fortran(self, *args, **kwargs)
+
     def __repr__(self):
         """Return a string representation of the DiffPlz object."""
         return f"DiffPlz(name={self.name}, args={self.arguments})"

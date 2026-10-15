@@ -22,6 +22,11 @@ jobs:
           python-version: ${{ matrix.python-version}}
       - name: Install pandoc
         run: sudo apt-get install pandoc
+      - name: Set up gfortran
+        uses: fortran-lang/setup-fortran@v1
+        with:
+          compiler: gcc
+          version: 'latest'
       - name: Install tox
         run: pip install tox tox-gh-actions
       - name: Test with tox
@@ -43,6 +48,11 @@ jobs:
           architecture: x64
       - name: Install pandoc
         run: choco install pandoc
+      - name: Set up gfortran
+        uses: fortran-lang/setup-fortran@v1
+        with:
+          compiler: gcc
+          version: 'latest'
       - name: Install tox
         run: pip install tox tox-gh-actions
       - name: Test with tox
@@ -63,6 +73,11 @@ jobs:
           python-version: ${{ matrix.python-version}}
       - name: Install pandoc
         run: brew install pandoc
+      - name: Set up gfortran
+        uses: fortran-lang/setup-fortran@v1
+        with:
+          compiler: gcc
+          version: 'latest'
       - name: Install tox
         run: pip install tox tox-gh-actions
       - name: Test with tox
