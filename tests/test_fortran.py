@@ -1,5 +1,6 @@
 """Tests for the Fortran code generation module."""
 
+import os
 import shutil
 import subprocess
 
@@ -168,7 +169,7 @@ class TestCompile:
         module += "\nend module thermo_mod\n"
         source = tmp_path / "main.f90"
         source.write_text(module + driver)
-        exe = tmp_path / "a.out"
+        exe = tmp_path / ("a.exe" if os.name == "nt" else "a.out")
         compile_result = subprocess.run(
             ["gfortran", "-O2", "-o", str(exe), str(source)],
             capture_output=True,

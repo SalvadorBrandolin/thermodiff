@@ -60,6 +60,8 @@ server). Supports Python 3.10-3.13.
 - Only three modules under `tests/`. `test_mole_fraction.py` asserts exact LaTeX
   strings, so changes to `latex_readable_plz()` output formatting break tests.
 - `tests/test_fortran.py` compiles and runs the generated Fortran with
-  `gfortran` when it is available, and skips those cases otherwise.
+  `gfortran` when it is available, and skips those cases otherwise. CI
+  installs gfortran (via `fortran-lang/setup-fortran`) on Linux, Windows and
+  macOS so those cases run there.
 - CI: `.github/workflows/ci.yml` runs tox on Linux/Windows/macOS x py3.10-3.13;
   `.github/workflows/docs.yml` deploys `gh-pages` from `main`.
