@@ -20,7 +20,16 @@ from thermodiff import (
     to_fortran,
 )
 
-HAS_GFORTRAN = shutil.which("gfortran") is not None
+
+def _find_gfortran():
+    """Return the gfortran executable to use, honoring ``FC``."""
+    compiler = os.environ.get("FC")
+    if compiler and "gfortran" in os.path.basename(compiler).lower():
+        return compiler
+    return shutil.which("gfortran")
+
+
+GFORTRAN = _find_gfortran()
 
 
 def explicit_diff():
@@ -160,7 +169,7 @@ class TestOptions:
         assert diff.to_fortran() == to_fortran(diff)
 
 
-@pytest.mark.skipif(not HAS_GFORTRAN, reason="gfortran not available")
+@pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 class TestCompile:
     """Compile and run the generated code with gfortran."""
 
@@ -171,7 +180,7 @@ class TestCompile:
         source.write_text(module + driver)
         exe = tmp_path / ("a.exe" if os.name == "nt" else "a.out")
         compile_result = subprocess.run(
-            ["gfortran", "-O2", "-o", str(exe), str(source)],
+            [GFORTRAN, "-O2", "-o", str(exe), str(source)],
             capture_output=True,
             text=True,
             cwd=tmp_path,
