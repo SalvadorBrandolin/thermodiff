@@ -25,6 +25,7 @@ from thermodiff.core.kronecker_handling import (
     handle_sum_kronecker,
 )
 from thermodiff.diffplz import DiffPlz
+from thermodiff.fortran import to_fortran
 from thermodiff.thermovars import P, R, T, V, i, j, k, l, m, n, nc
 
 __all__ = [
@@ -40,6 +41,8 @@ __all__ = [
     "handle_sum_kronecker",
     # DiffPlz class:
     "DiffPlz",
+    # Fortran code generation:
+    "to_fortran",
     # Thermodynamic variables and indices:
     "i",
     "j",

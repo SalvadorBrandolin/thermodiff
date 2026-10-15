@@ -12,6 +12,7 @@
 
    thermovars
    diffplz
+   fortran
    core/init
    
 
