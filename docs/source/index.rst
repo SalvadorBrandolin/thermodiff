@@ -12,6 +12,7 @@
 
    thermovars
    diffplz
+   fortran
    latex_utils
    core/init
    
