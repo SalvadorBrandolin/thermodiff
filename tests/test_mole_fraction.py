@@ -222,7 +222,7 @@ class TestSumIndexedFunctions:
 
 
 # =============================================================================
-# Example 3 — tau_lk explicit (UNIQUAC-style), clean_plz + latex_readable_plz
+# Example 3 - tau_lk explicit (UNIQUAC-style), clean_plz + latex_readable_plz
 # =============================================================================
 class TestTauLkExplicit:
     """Derivatives of tau_lk = exp(a + b/T + c*ln(T) + d*T + e*T^2).

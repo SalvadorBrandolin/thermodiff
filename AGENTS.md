@@ -1,67 +1,187 @@
-# AGENTS.md
+# AGENTS.md - Thermodiff
 
-Small SymPy-based Python library for symbolic differentiation/manipulation of
-thermodynamic expressions. One installable package, `thermodiff` (no app or
-server). Supports Python 3.10-3.13.
+## Project Overview
+Thermodiff is a lightweight Python package for symbolic differentiation and manipulation of thermodynamic expressions using SymPy. It provides utilities for:
+- Indexed functions and summation handling
+- Kronecker delta simplification
+- Automated thermodynamic derivative computation (`DiffPlz` class)
+- LaTeX output for equations
 
-## Setup
+## Key Commands
 
-- No lockfile; deps are not vendored. For local dev:
-  `pip install -r requirements-dev.txt && pip install -e .`
-- `tox` is the primary task runner and builds its own envs. CI just runs `tox -r`.
+### Development Setup
+```bash
+# Install in development mode with dev dependencies
+pip install -e . -r requirements-dev.txt
+```
 
-## Commands
+### Testing
+```bash
+# Run all tests (pytest)
+pytest tests/
 
-- All checks: `tox -r` (slow; runs style, docstyle, check-manifest, docs,
-  py310-py313, coverage).
-- One interpreter / full test suite: `tox -e py312`
-- Single test (args pass through to pytest):
-  `tox -e py312 -- tests/test_mole_fraction.py::TestMoleFraction::test_dni_is_piecewise`
-- Lint: `tox -e style` -> flake8 over `tests/ thermodiff/`
-- Docstring style: `tox -e docstyle` -> pydocstyle, numpy convention
-- Coverage: `tox -e coverage` - fails under 90% (`--fail-under=90`)
-- Docs: `tox -e docs` (or `sphinx-build -b html docs/source _build`).
-  Requires `pandoc` installed; deps live in `docs/requirements.txt` (furo theme).
+# Run with coverage (requires 90% minimum)
+pytest tests/ --cov=thermodiff --cov-report=term-missing
 
-## Conventions and gotchas
+# Run a single test file
+pytest tests/test_mole_fraction.py
 
-- Black config is in `pyproject.toml`: `line-length = 79` (not the default 88)
-  and `target-version = ["py312"]`. There is no separate flake8 config;
-  flake8-black enforces the 79-char limit.
-- flake8 runs with flake8-builtins, flake8-import-order, and pep8-naming.
-  The index symbol `l` is intentional and needs `# noqa: E741` (see
-  `thermovars.py`).
-- Public API is re-exported in `thermodiff/__init__.py`; keep `__all__` in sync.
-  It currently lists `install_in_colab`, which is defined nowhere.
+# Run a single test class
+pytest tests/test_mole_fraction.py::TestMoleFraction
 
-## Architecture
+# Run a single test
+pytest tests/test_mole_fraction.py::TestMoleFraction::test_dt_is_zero
+```
 
-- `thermodiff/thermovars.py` - canonical SymPy symbols: `T`, `V`, `P`, `R`, `nc`,
-  indices `i`/`j`/`k`/`l`/`m`, and `n` (an `IndexedBase` over `nc`).
-- `thermodiff/diffplz.py` - `DiffPlz`, the main class. Computes T/V/P and
-  compositional derivatives and handles Kronecker deltas.
-- `thermodiff/fortran.py` - `to_fortran(diff, ...)` generates a free-form
-  Fortran subroutine returning the value and its derivatives. Also exposed as
-  `DiffPlz.to_fortran()`. `Sum` is expanded to `do` loops, `Piecewise` to
-  `if`/`else`, and `idx_function` placeholders become extra input arguments
-  (`strict=True` raises instead).
-- `thermodiff/core/` - helpers: `idx_function`, `sum_components`/`sum_custom`,
-  and Kronecker-delta handling.
-- Domain rule: `i` and `j` are reserved by `DiffPlz` for the derivative
-  variables. Expressions passed to it must use `k`, `l`, `m` instead.
-- `idx_function(name)` creates an `sp.Function` subclass whose derivatives stay
-  unevaluated, which is required for symbolic derivatives to render nicely.
-- `DiffPlz.clean_plz()` rewrites derivatives in terms of the named function; run
-  it before `latex_readable_plz()`. `latex_readable_plz()` is explicitly ad-hoc
-  and fragile.
+### Code Quality
+```bash
+# Lint (flake8 with plugins)
+flake8 tests/ thermodiff/
 
-## Testing
+# Docstyle (numpy convention)
+pydocstyle thermodiff --convention=numpy
 
-- Only three modules under `tests/`. `test_mole_fraction.py` asserts exact LaTeX
-  strings, so changes to `latex_readable_plz()` output formatting break tests.
-- `tests/test_fortran.py` compiles and runs the generated Fortran with
-  `gfortran` when it is available, and skips those cases otherwise. CI
-  installs gfortran (via `fortran-lang/setup-fortran`) on Linux, Windows and
-  macOS so those cases run there.
-- CI: `.github/workflows/ci.yml` runs tox on Linux/Windows/macOS x py3.10-3.13;
-  `.github/workflows/docs.yml` deploys `gh-pages` from `main`.
+# Format (Black, line-length 79, target py312)
+black tests/ thermodiff/
+
+# Check manifest
+check-manifest
+```
+
+### Documentation
+```bash
+# Build HTML docs
+cd docs && make html
+# or via tox
+tox -e docs
+```
+
+### Tox Environments
+```bash
+# All environments
+tox
+
+# Specific Python versions
+tox -e py310
+tox -e py311
+tox -e py312
+tox -e py313
+
+# Style checks
+tox -e style
+tox -e docstyle
+
+# Coverage
+tox -e coverage
+```
+
+## Package Structure
+```
+thermodiff/
+├── __init__.py          # Public exports
+├── diffplz.py           # DiffPlz class (main feature)
+├── thermovars.py        # Predefined symbols (P, R, T, V, i, j, k, l, m, n, nc)
+└── core/
+    ├── __init__.py
+    ├── easy_sums.py     # sum_components, sum_custom
+    ├── idxfunction.py   # idx_function factory
+    └── kronecker_handling.py  # handle_free_kronecker, handle_sum_kronecker
+```
+
+## Important Conventions
+
+### Testing
+- Tests use `pytest` with fixtures (`@pytest.fixture(autouse=True)`)
+- Tests are organized in classes matching tutorial examples
+- LaTeX output is tested against exact expected strings
+- Coverage threshold: 90% (enforced in `tox.ini`)
+
+### Code Style
+- Black: line-length 79, target Python 3.12
+- Flake8 with plugins: black, builtins, import-order, pep8-naming
+- Docstrings: NumPy convention (validated by pydocstyle)
+
+### SymPy Patterns Used
+- `sp.Sum` for symbolic summations
+- `sp.Derivative` for unevaluated derivatives
+- `sp.Piecewise` for conditional expressions (Kronecker handling)
+- `sp.Function` for internal function symbols in LaTeX output
+- `idx_function(r"\phi")(n[k])` creates indexed function symbols
+
+### DiffPlz Usage Pattern
+```python
+from thermodiff import DiffPlz, sum_components, idx_function, n, k, l, T
+
+phi_k = idx_function(r"\phi")(n[k])
+tau_lk = idx_function(r"\tau")(l, k, T)
+expr = sum_components(n[k] * phi_k * tau_lk, k)
+
+diff = DiffPlz(expr, internal_functions=[phi_k, tau_lk], indexes=[k, l], name="f")
+
+# Access derivatives
+diff.dt      # d/dT
+diff.dv      # d/dV
+diff.dp      # d/dP
+diff.dni     # d/dn_i
+diff.dnidnj  # d²/dn_i dn_j
+diff.dtdni   # d²/dT dn_i
+
+# LaTeX output
+latex = diff.latex_readable_plz()
+diff.clean_plz(["dT", "dT2"])  # Factor internal functions in derivatives
+```
+
+## Default Workflow: Thermodynamic Model Differentiation & yaeos Implementation
+
+When requested to implement or analyze a thermodynamic model specified in LaTeX, the agent must follow this multi-step workflow:
+
+### 1. Workspace & Output Directory
+- Create and organize all generated files within a directory with a descriptive name corresponding to the user request/model (e.g., `models/<model_name>/` or `<model_name>_implementation/`).
+
+### 2. Symbolic Differentiation with `thermodiff`
+- Parse the model's LaTeX mathematical formulation.
+- Use `thermodiff` (`DiffPlz`, `idx_function`, `sum_components`, `sum_custom`, etc.) to obtain the required thermodynamic derivatives ($d/dT$, $d/dV$, $d/dP$, $d/dn_i$, $d^2/dn_i dn_j$, $d^2/dT dn_i$, etc.).
+- Consult `thermodiff` documentation and tutorials to identify opportunities for simplification, defining intermediate/internal functions, and generating readable, simplified analytical expressions (e.g. using `.clean_plz(...)` and `.latex_readable_plz()`).
+- Save the python file used to generate the derivatives.
+
+### 3. Fortran 90 Implementation & Numerical Validation
+- Implement the model and its analytical derivatives in Fortran 90.
+- Perform numerical verification by comparing the analytical derivatives against numerical differentiation (e.g., central finite differences or complex-step differentiation).
+- Create a Markdown report (`report.md`) containing:
+  - The mathematical expressions in LaTeX for both the model and its derivatives.
+  - A comparison table/summary between analytical derivatives and numerical differentiation results.
+  - Discussion of any edge cases or numerical tolerance considerations.
+
+### 4. Integration with `yaeos` Architecture
+- Implement the final model following the conventions, interfaces, and design patterns of the [yaeos](https://github.com/ipqa-research/yaeos) library.
+- Consult the corresponding reference implementations according to the model type:
+  - **Helmholtz Energy Models (Equation of State / Residual Helmholtz)**:
+    - [ar_models.f90](https://github.com/ipqa-research/yaeos/blob/main/src/models/residual_helmholtz/ar_models.f90)
+    - [generic_cubic.f90](https://github.com/ipqa-research/yaeos/blob/main/src/models/residual_helmholtz/cubic/generic_cubic.f90)
+  - **Alpha Functions**:
+    - [alphas.f90](https://github.com/ipqa-research/yaeos/blob/main/src/models/residual_helmholtz/cubic/alphas/alphas.f90)
+  - **Mixing Rules**:
+    - [quadratic_mixing.f90](https://github.com/ipqa-research/yaeos/blob/main/src/models/residual_helmholtz/cubic/mixing_rules/quadratic_mixing.f90)
+  - **Excess Gibbs Energy ($G^E$) Models**:
+    - [ge_models.f90](https://github.com/ipqa-research/yaeos/blob/main/src/models/excess_gibbs/ge_models.f90)
+    - [uniquac.f90](https://github.com/ipqa-research/yaeos/blob/main/src/models/excess_gibbs/uniquac.f90)
+
+## CI/CD
+- GitHub Actions runs: `py310` (with style, docstyle, check-manifest, coverage, docs), `py311`, `py312`, `py313`
+- Coverage must pass 90% threshold
+- No separate CI config file found; `tox.ini` defines the matrix via `[gh-actions]`
+
+## Common Gotchas
+1. **No `AGENTS.md` or `.github/` configs existed** — this file is the primary agent guide
+2. **Install via git** — `pip install git+https://github.com/SalvadorBrandolin/thermodiff` (not on PyPI)
+3. **SymPy >= 1.14.0** required
+4. **Predefined symbols** in `thermovars.py`: `P, R, T, V` (thermo vars) and `i, j, k, l, m, n, nc` (indices)
+5. **Internal functions** must be passed to `DiffPlz` for proper LaTeX substitution (`clean_plz`, `latex_readable_plz`)
+6. **Kronecker handling** is automatic via `handle_free_kronecker` / `handle_sum_kronecker` in core
+7. **Running code** Always work on a virtual environment, prefer the environment "thermodiff" of virtualenv 
+
+## Quick Verification
+```bash
+# Smoke test import and basic functionality
+python -c "import thermodiff as td; print(td.DiffPlz(td.T))"
+```
