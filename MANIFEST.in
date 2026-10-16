@@ -4,6 +4,8 @@ include pyproject.toml
 
 recursive-include thermodiff *.py
 
+recursive-include examples *.model *.md
+
 exclude tox.ini *.ipynb
 exclude requirements-dev.txt
 exclude AGENTS.md

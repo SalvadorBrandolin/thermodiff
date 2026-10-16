@@ -8,3 +8,4 @@ Tutorial
    mole_fraction.ipynb
    mhv.ipynb
    fortran.ipynb
+   model_file.ipynb

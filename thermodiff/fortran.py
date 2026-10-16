@@ -102,7 +102,9 @@ def _free_indices(expr: sp.Expr) -> set:
     An index is free when it is not the summation index of any
     :class:`sympy.Sum` inside ``expr``.
     """
-    bound = {total.limits[0][0] for total in expr.atoms(sp.Sum)}
+    bound = {
+        limit[0] for total in expr.atoms(sp.Sum) for limit in total.limits
+    }
     return {idx for idx in expr.atoms(sp.Idx) if idx not in bound}
 
 
@@ -290,15 +292,21 @@ def _expand_sums(expr: sp.Expr, namer: _Namer):
         if not innermost:
             break
         for total in innermost:
-            idx, low, high = total.limits[0]
             tmp = namer("t")
-            low_s = _print_expr(low)
-            high_s = _print_expr(high)
-            body_s = _print_expr(total.function)
             statements.append(f"{tmp} = 0.0d0")
-            statements.append(f"do {idx} = {low_s}, {high_s}")
-            statements.append(f"{_INDENT}{tmp} = {tmp} + {body_s}")
-            statements.append("end do")
+            depth = 0
+            for idx, low, high in total.limits:
+                low_s = _print_expr(low)
+                high_s = _print_expr(high)
+                statements.append(
+                    f"{_INDENT * depth}do {idx} = {low_s}, {high_s}"
+                )
+                depth += 1
+            body_s = _print_expr(total.function)
+            statements.append(f"{_INDENT * depth}{tmp} = {tmp} + {body_s}")
+            for _ in total.limits:
+                depth -= 1
+                statements.append(f"{_INDENT * depth}end do")
             residual = residual.xreplace({total: tmp})
 
     return statements, residual
@@ -355,12 +363,83 @@ def _render_output(name: str, expr: sp.Expr, free_order: list, namer) -> list:
     return lines
 
 
+def _wrap_name_list(keyword, names, limit=120):
+    """Split ``keyword`` plus names into continuation-free lines.
+
+    Parameters
+    ----------
+    keyword : str
+        Declaration prefix including the ``::``, for example
+        ``"real(8) :: "``.
+    names : list of str
+        Names to declare.
+    limit : int, optional
+        Maximum line length.
+
+    Returns
+    -------
+    list of str
+        One or more declaration lines.
+    """
+    lines = []
+    current = None
+    for name in names:
+        if current is None:
+            current = name
+        elif len(keyword) + len(current) + len(name) + 2 > limit:
+            lines.append(keyword + current)
+            current = name
+        else:
+            current += ", " + name
+    if current is not None:
+        lines.append(keyword + current)
+    return lines
+
+
+def _wrap_signature(sub_name, arg_names, limit=120):
+    """Return the subroutine statement, wrapped if necessary.
+
+    Parameters
+    ----------
+    sub_name : str
+        Subroutine name.
+    arg_names : list of str
+        Argument names.
+    limit : int, optional
+        Maximum line length.
+
+    Returns
+    -------
+    list of str
+        The (possibly continued) subroutine statement.
+    """
+    head = f"subroutine {sub_name}("
+    if len(head) + len(", ".join(arg_names)) <= limit:
+        return [head + ", ".join(arg_names) + ")"]
+
+    continuation = _INDENT + "  "
+    lines = []
+    current = ""
+    for arg in arg_names:
+        candidate = arg if not current else current + ", " + arg
+        if current and len(head) + len(candidate) > limit:
+            lines.append(head + current + ", &")
+            head = continuation
+            current = arg
+        else:
+            current = candidate
+    lines.append(head + current + ")")
+    return lines
+
+
 def to_fortran(
     diff,
     derivatives=None,
     name=None,
     subroutine_name=None,
     strict=False,
+    integer_args=None,
+    module_symbols=None,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -381,12 +460,22 @@ def to_fortran(
         When ``True``, raise a ``ValueError`` if the expression contains
         internal functions or unresolved derivatives instead of exposing
         them as input arguments.  By default ``False``.
+    integer_args : list of str, optional
+        Names of extra arguments that must be declared as
+        ``integer, intent(in)`` (for example, extra dimensions).
+    module_symbols : list of str, optional
+        Names that are provided by a ``use`` statement of the enclosing
+        module.  They are neither declared as arguments nor included in
+        the subroutine signature.
 
     Returns
     -------
     str
         The free-form Fortran source code.
     """
+    module_symbols = set(module_symbols or ())
+    integer_args = list(integer_args or [])
+
     base = _sanitize(name if name is not None else diff.name)
     sub_name = (
         _sanitize(subroutine_name) if subroutine_name else base + "_derivs"
@@ -430,7 +519,14 @@ def to_fortran(
     placeholder_names = set(resolver.ranks)
 
     # ---- gather parameters --------------------------------------------
-    uses_n = any(n in expr.atoms(sp.IndexedBase) for expr in all_exprs)
+    # NOTE: ``n`` is compared by name because ``expr`` has been rebuilt by
+    # the ``nc`` replacement above, which also rewrites the shape of the
+    # ``n`` IndexedBase.
+    n_name = str(n)
+    uses_n = any(
+        n_name in {str(base_) for base_ in expr.atoms(sp.IndexedBase)}
+        for expr in all_exprs
+    )
 
     index_syms = set()
     indexed_bases = set()
@@ -447,7 +543,6 @@ def to_fortran(
     base_names = {str(base_) for base_ in indexed_bases}
 
     param_scalars = set()
-    param_arrays = set()
     for expr in all_exprs:
         for sym in expr.atoms(sp.Symbol):
             name = str(sym)
@@ -455,32 +550,48 @@ def to_fortran(
                 continue
             if sym in (T, V, P) or name == "nc":
                 continue
+            if name in module_symbols or name in integer_args:
+                continue
             param_scalars.add(name)
-    for base_ in indexed_bases:
-        if base_ == n or str(base_) in placeholder_names:
-            continue
-        param_arrays.add(str(base_))
 
-    params = sorted(param_scalars - param_arrays - placeholder_names)
+    array_ranks = {}
+    for expr in all_exprs:
+        for indexed in expr.atoms(sp.Indexed):
+            base_name = str(indexed.base)
+            rank = len(indexed.indices)
+            array_ranks[base_name] = max(array_ranks.get(base_name, 0), rank)
+    param_arrays = {
+        base_name: rank
+        for base_name, rank in array_ranks.items()
+        if base_name != n_name and base_name not in placeholder_names
+    }
+    if uses_n:
+        param_arrays[n_name] = 1
+
+    params = sorted(param_scalars - placeholder_names)
     placeholder_args = sorted(resolver.ranks)
 
     needs_nc = (
-        uses_n or bool(param_arrays) or any(free for _, _, _, free in prepared)
+        uses_n
+        or bool(param_arrays)
+        or any(free for _, _, _, free in prepared)
+        or any(sp.Symbol("nc") in expr.atoms(sp.Symbol) for expr in all_exprs)
     )
 
     # ---- input declarations -------------------------------------------
     inputs = []
     if needs_nc:
         inputs.append("integer, intent(in) :: nc")
-    if uses_n:
-        inputs.append("real(8), intent(in) :: n(:)")
+    if integer_args:
+        inputs.append("integer, intent(in) :: " + ", ".join(integer_args))
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
         if any(expr.has(var) for expr in all_exprs):
             inputs.append(f"real(8), intent(in) :: {label}")
     for param in params:
         inputs.append(f"real(8), intent(in) :: {param}")
     for arr in sorted(param_arrays):
-        inputs.append(f"real(8), intent(in) :: {arr}(:)")
+        dims = ", ".join([":"] * param_arrays[arr])
+        inputs.append(f"real(8), intent(in) :: {arr}({dims})")
     for arg in placeholder_args:
         rank = resolver.ranks[arg]
         if rank == 0:
@@ -517,8 +628,7 @@ def to_fortran(
     arg_names = []
     if needs_nc:
         arg_names.append("nc")
-    if uses_n:
-        arg_names.append("n")
+    arg_names.extend(integer_args)
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
         if any(expr.has(var) for expr in all_exprs):
             arg_names.append(label)
@@ -530,17 +640,17 @@ def to_fortran(
     while sub_name in arg_names:
         sub_name += "_s"
 
-    lines = [f"subroutine {sub_name}({', '.join(arg_names)})"]
+    lines = _wrap_signature(sub_name, arg_names)
     lines.append(f"{_INDENT}implicit none")
     for decl in inputs:
         lines.append(_INDENT + decl)
     for decl in output_decls:
         lines.append(_INDENT + decl)
 
-    if temps:
-        lines.append(_INDENT + "real(8) :: " + ", ".join(temps))
-    if loop_indices:
-        lines.append(_INDENT + "integer :: " + ", ".join(loop_indices))
+    for line in _wrap_name_list("real(8) :: ", temps):
+        lines.append(_INDENT + line)
+    for line in _wrap_name_list("integer :: ", loop_indices):
+        lines.append(_INDENT + line)
 
     lines.append("")
     for line in body:

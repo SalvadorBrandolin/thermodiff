@@ -1,0 +1,23 @@
+model pr
+target fortran
+use yaeos__constants, only: R
+
+variables
+    n   nc
+    V
+    T
+
+parameters
+    ac    nc
+    Tc    nc
+    k     nc nc
+    b     nc
+
+expressions
+    alpha_i = (T/Tc_i)^2
+    a_i     = ac_i*alpha_i
+    amix    = sum_i sum_j n_i*n_j*sqrt(a_i*a_j)*(1 - k_ij)
+    bmix    = sum_i n_i*b_i
+
+function
+    R*T/(V - bmix) - amix/(V*(V + bmix) + bmix*(V - bmix))

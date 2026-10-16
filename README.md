@@ -20,3 +20,28 @@ pip install git+https://github.com/SalvadorBrandolin/thermodiff
 On the [tutorial](https://salvadorbrandolin.github.io/thermodiff/) you can
 check all the basics functionalities of this tool and an example of use.
 
+## Model files
+
+Models can also be described in a small declarative `.model` file and
+compiled into a Fortran module with the function and all its derivatives:
+
+```shell
+thermodiff-model model.model -o model.f90
+```
+
+See the [model files](https://salvadorbrandolin.github.io/thermodiff/model.html)
+documentation and the corresponding tutorial.
+
+## Graphical front-end
+
+An optional Streamlit application builds the model with buttons, editable
+tables and menus, compiling as you edit.  It shows the generated Fortran
+module and a typeset preview of every derivative:
+
+```shell
+pip install 'thermodiff[gui]'
+thermodiff-gui
+```
+
+See the [GUI documentation](https://salvadorbrandolin.github.io/thermodiff/gui.html).
+
