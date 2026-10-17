@@ -164,6 +164,35 @@ class TestOptions:
         with pytest.raises(ValueError, match="Unknown derivatives"):
             to_fortran(explicit_diff(), derivatives=["nope"])
 
+    def test_friendly_derivative_names(self):
+        code = to_fortran(explicit_diff(), derivatives=["dT", "dn"])
+        assert "dfdT" in code
+        assert "dfdn(:)" in code
+        assert "dfdV" not in code
+
+    def test_diffplz_skips_unselected_derivatives(self):
+        diff = DiffPlz(
+            T * sum_components(n[k] ** 2, k),
+            indexes=[k],
+            name="f",
+            derivatives=["dn"],
+        )
+        assert diff.dt is None
+        assert diff.dni is not None
+        code = to_fortran(diff)
+        assert "dfdn" in code
+        assert "dfdT" not in code
+
+    def test_mismatched_selection_raises(self):
+        diff = DiffPlz(
+            T * sum_components(n[k] ** 2, k),
+            indexes=[k],
+            name="f",
+            derivatives=["dn"],
+        )
+        with pytest.raises(ValueError, match="not computed"):
+            to_fortran(diff, derivatives=["dt"])
+
     def test_method_delegates(self):
         diff = explicit_diff()
         assert diff.to_fortran() == to_fortran(diff)

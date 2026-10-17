@@ -34,9 +34,11 @@ def _build_parser():
     parser.add_argument(
         "--derivatives",
         help=(
-            "comma separated list of derivatives to emit, for example "
-            "'dt,dv,dni'.  By default all first and second order "
-            "derivatives are emitted."
+            "derivatives to emit, for example 'dT,dn,dndn'.  Friendly "
+            "names (dT, dV, dP, dn, dT2, dV2, dP2, dndn, dTdV, dTdP, "
+            "dVdP, dndT, dndV, dndP) and the groups 'all', 'none', "
+            "'first' and 'second' are accepted.  By default every "
+            "derivative applicable to the declared variables is emitted."
         ),
     )
     return parser
@@ -57,13 +59,7 @@ def main(argv=None):
     """
     args = _build_parser().parse_args(argv)
 
-    derivatives = None
-    if args.derivatives:
-        derivatives = [
-            name.strip()
-            for name in args.derivatives.split(",")
-            if name.strip()
-        ]
+    derivatives = args.derivatives if args.derivatives else None
 
     try:
         if args.model == "-":

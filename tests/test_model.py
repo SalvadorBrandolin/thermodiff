@@ -153,6 +153,30 @@ class TestParsing:
         assert "dfdV" not in code
         assert "dfdn" not in code
 
+    def test_friendly_derivative_selection(self):
+        code = compile_model(PR_MODEL, derivatives="dn,dndn")
+        assert "intent(out) :: dfdn" in code
+        assert "intent(out) :: dfdndn" in code
+        for absent in ["dfdT", "dfdV", "dfdT2", "dfdndT", "dfdndV"]:
+            assert absent not in code
+
+    def test_derivative_groups(self):
+        first = compile_model(PR_MODEL, derivatives="first")
+        assert "intent(out) :: dfdT" in first
+        assert "intent(out) :: dfdn" in first
+        assert "dfdT2" not in first
+        none = compile_model(PR_MODEL, derivatives="none")
+        assert "intent(out) :: f" in none
+        assert "intent(out) :: dfd" not in none
+
+    def test_inapplicable_derivative_is_an_error(self):
+        with pytest.raises(ModelError, match="requires the variable"):
+            compile_model(PR_MODEL, derivatives=["dP"])
+
+    def test_unknown_derivative_is_an_error(self):
+        with pytest.raises(ModelError, match="Unknown derivatives"):
+            compile_model(PR_MODEL, derivatives=["nope"])
+
     def test_pressure_variable_derivatives(self):
         code = compile_model(PRES_MODEL, filename="pres.model")
         for name in ["dfdP", "dfdP2", "dfdTdP", "dfdVdP", "dfdndP"]:
@@ -226,6 +250,25 @@ def test_cli_writes_output(tmp_path):
     out_path = tmp_path / "pr.f90"
     assert main([str(model_path), "-o", str(out_path)]) == 0
     assert "module pr_mod" in out_path.read_text()
+
+
+def test_cli_selects_derivatives(tmp_path, capsys):
+    """``--derivatives`` keeps only the requested outputs."""
+    model_path = tmp_path / "pr.model"
+    model_path.write_text(PR_MODEL)
+    assert main([str(model_path), "--derivatives", "dn,dndn"]) == 0
+    output = capsys.readouterr().out
+    assert "intent(out) :: dfdn" in output
+    assert "intent(out) :: dfdndn" in output
+    assert "intent(out) :: dfdT" not in output
+
+
+def test_cli_reports_bad_derivative(tmp_path, capsys):
+    """An inapplicable derivative is reported as an error."""
+    model_path = tmp_path / "pr.model"
+    model_path.write_text(PR_MODEL)
+    assert main([str(model_path), "--derivatives", "dP"]) == 1
+    assert "error:" in capsys.readouterr().err
 
 
 def test_cli_reports_errors(tmp_path, capsys):

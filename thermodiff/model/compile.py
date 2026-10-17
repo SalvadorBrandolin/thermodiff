@@ -16,9 +16,13 @@ def compile_model(text, filename=None, derivatives=None):
         Contents of the ``.model`` file.
     filename : str, optional
         File name used for error messages.
-    derivatives : list of str, optional
-        Derivative attributes to emit.  By default all first and second
-        order derivatives among the declared variables are emitted.
+    derivatives : str or list of str, optional
+        Derivatives to emit, for example ``"dn,dndn"`` or ``["dT"]``.
+        Friendly names (``dT``, ``dn``, ``dndT``, ...), the groups
+        ``all``, ``none``, ``first`` and ``second`` and the
+        :class:`~thermodiff.diffplz.DiffPlz` attribute names are
+        accepted.  By default every derivative applicable to the declared
+        variables is emitted.
 
     Returns
     -------
@@ -37,8 +41,8 @@ def compile_model_file(path, derivatives=None):
     ----------
     path : str
         Path to the ``.model`` file.
-    derivatives : list of str, optional
-        Derivative attributes to emit.
+    derivatives : str or list of str, optional
+        Derivatives to emit.  See :func:`compile_model`.
 
     Returns
     -------

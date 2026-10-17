@@ -33,6 +33,7 @@ import sympy as sp
 from sympy.core.function import DefinedFunction
 from sympy.printing.fortran import fcode
 
+from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES, resolve_derivatives
 from thermodiff.thermovars import P, T, V, i, j, n, nc
 
 __all__ = ["to_fortran"]
@@ -58,7 +59,7 @@ _DERIV_SUFFIX = {
 }
 
 #: Order in which the derivatives are emitted.
-_DERIV_ORDER = list(_DERIV_SUFFIX)
+_DERIV_ORDER = list(DERIVATIVE_ATTRIBUTES)
 
 #: Settings passed to :func:`sympy.printing.fortran.fcode`.
 _FCODE_SETTINGS = {
@@ -447,10 +448,13 @@ def to_fortran(
     ----------
     diff : DiffPlz
         The differentiated thermodynamic expression.
-    derivatives : list of str, optional
-        Names of the derivative attributes to emit, for example
-        ``["dt", "dv", "dni", "dnidnj"]``.  By default every non-zero
-        derivative computed by ``diff`` is emitted.
+    derivatives : str or list of str, optional
+        Derivatives to emit, for example ``["dT", "dV", "dn"]``.  Both the
+        friendly names and the derivative attributes (``["dt", "dv",
+        "dni"]``) are accepted, as well as the groups ``all``, ``none``,
+        ``first`` and ``second`` (see
+        :func:`thermodiff.derivatives.resolve_derivatives`).  By default
+        every non-zero derivative computed by ``diff`` is emitted.
     name : str, optional
         Base name used for the generated variables.  Defaults to the
         ``name`` attribute of ``diff``.
@@ -482,19 +486,31 @@ def to_fortran(
     )
 
     if derivatives is None:
-        selected = [
-            attr
-            for attr in _DERIV_ORDER
-            if getattr(diff, attr, sp.Integer(0)) != 0
-        ]
+        candidates = getattr(diff, "derivatives", None)
+        if candidates is None:
+            candidates = _DERIV_ORDER
+        selected = []
+        for attr in _DERIV_ORDER:
+            if attr not in candidates:
+                continue
+            value = getattr(diff, attr, None)
+            if value is None or value == 0:
+                continue
+            selected.append(attr)
     else:
-        unknown = set(derivatives) - set(_DERIV_SUFFIX)
-        if unknown:
+        resolved = resolve_derivatives(derivatives)
+        selected = [attr for attr in _DERIV_ORDER if attr in resolved]
+        missing = [
+            attr for attr in selected if getattr(diff, attr, None) is None
+        ]
+        if missing:
             raise ValueError(
-                f"Unknown derivatives: {sorted(unknown)}. "
-                f"Valid keys: {_DERIV_ORDER}"
+                "Derivatives not computed by the DiffPlz instance: "
+                + ", ".join(missing)
+                + ". Rebuild it with derivatives="
+                + repr(list(resolved))
+                + "."
             )
-        selected = [attr for attr in _DERIV_ORDER if attr in derivatives]
 
     resolver = _PlaceholderResolver(strict=strict)
 

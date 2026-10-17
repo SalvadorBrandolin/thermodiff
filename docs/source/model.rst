@@ -119,6 +119,31 @@ of the following are hard errors with the offending file and line:
 * duplicate declarations,
 * unknown sections or malformed declarations.
 
+Selecting derivatives
+---------------------
+
+By default the compiler emits the function and every first and second order
+derivative among the declared variables.  When only a few of them are needed,
+request them explicitly and the generated subroutine declares just those
+outputs::
+
+    thermodiff-model model.model --derivatives dn,dndn
+
+The names are the generated output variables without the leading ``df``:
+``dT``, ``dV``, ``dP``, ``dn``, ``dT2``, ``dV2``, ``dP2``, ``dndn``,
+``dTdV``, ``dTdP``, ``dVdP``, ``dndT``, ``dndV`` and ``dndP``.  A leading
+``df`` is optional, the order of the mixed derivatives is free (``dTdn`` and
+``dndT`` are the same) and the :class:`~thermodiff.diffplz.DiffPlz` attribute
+names (``dt``, ``dni`` ...) are accepted as aliases.
+
+The groups ``all`` (the default), ``none`` (only the function value) and
+``first`` / ``second`` select several derivatives at once::
+
+    thermodiff-model model.model --derivatives first
+
+Requesting a derivative that does not apply to the declared variables is an
+error; for example ``dP`` requires a variable named ``P``.
+
 Python API
 ----------
 

@@ -12,6 +12,7 @@ module only takes care of the things that are specific to a whole model:
 
 import sympy as sp
 
+from thermodiff.derivatives import resolve_derivatives
 from thermodiff.diffplz import DiffPlz
 from thermodiff.fortran import _sanitize, to_fortran
 from thermodiff.model.errors import ModelError
@@ -24,10 +25,7 @@ _LOOP_NAMES = list("klmpqrsuwxyzabcdeghov")
 
 
 def select_derivatives(declared_variables):
-    """Return the derivative attributes to emit.
-
-    All first and second order derivatives among the declared variables
-    are selected (they are still skipped if they are identically zero).
+    """Return every derivative applicable to the declared variables.
 
     Parameters
     ----------
@@ -42,29 +40,7 @@ def select_derivatives(declared_variables):
         :meth:`thermodiff.diffplz.DiffPlz` and
         :func:`thermodiff.fortran.to_fortran`.
     """
-    declared = set(declared_variables)
-    selected = []
-    if "T" in declared:
-        selected += ["dt", "dt2"]
-    if "V" in declared:
-        selected += ["dv", "dv2"]
-    if "P" in declared:
-        selected += ["dp", "dp2"]
-    if "n" in declared:
-        selected += ["dni", "dnidnj"]
-    if {"T", "V"} <= declared:
-        selected.append("dtdv")
-    if {"T", "P"} <= declared:
-        selected.append("dtdp")
-    if {"V", "P"} <= declared:
-        selected.append("dvdp")
-    if {"T", "n"} <= declared:
-        selected.append("dtdni")
-    if {"V", "n"} <= declared:
-        selected.append("dvdni")
-    if {"P", "n"} <= declared:
-        selected.append("dpdni")
-    return selected
+    return resolve_derivatives(["all"], declared_variables)
 
 
 def _reserved_names(ir, derivatives):
@@ -109,9 +85,11 @@ def build_diff(ir, derivatives=None):
     ----------
     ir : ModelIR
         Symbolic model built by :mod:`thermodiff.model.ir`.
-    derivatives : list of str, optional
-        Derivative attributes to select.  Defaults to
-        :func:`select_derivatives`.
+    derivatives : str or list of str, optional
+        Derivatives to select.  Accepts the friendly names and groups of
+        :func:`thermodiff.derivatives.resolve_derivatives`.  Defaults to
+        :func:`select_derivatives`, that is, every derivative applicable
+        to the declared variables.
 
     Returns
     -------
@@ -123,8 +101,21 @@ def build_diff(ir, derivatives=None):
     """
     if derivatives is None:
         derivatives = select_derivatives(ir.declared_variables)
+    else:
+        try:
+            derivatives = resolve_derivatives(
+                derivatives, ir.declared_variables
+            )
+        except ValueError as error:
+            raise ModelError(str(error)) from error
     function, indexes = _rename_indices(ir, derivatives)
-    diff = DiffPlz(function, internal_functions=[], indexes=indexes, name="f")
+    diff = DiffPlz(
+        function,
+        internal_functions=[],
+        indexes=indexes,
+        name="f",
+        derivatives=derivatives,
+    )
     return diff, derivatives
 
 
@@ -135,8 +126,9 @@ def emit_module(ir, derivatives=None, diff=None):
     ----------
     ir : ModelIR
         Symbolic model built by :mod:`thermodiff.model.ir`.
-    derivatives : list of str, optional
-        Derivative attributes to emit.  Defaults to
+    derivatives : str or list of str, optional
+        Derivatives to emit.  Accepts the friendly names and groups of
+        :func:`thermodiff.derivatives.resolve_derivatives`.  Defaults to
         :func:`select_derivatives`.
     diff : DiffPlz, optional
         A pre-built differentiation, as returned by :func:`build_diff`.
@@ -150,7 +142,9 @@ def emit_module(ir, derivatives=None, diff=None):
     if diff is None:
         diff, derivatives = build_diff(ir, derivatives)
     elif derivatives is None:
-        derivatives = select_derivatives(ir.declared_variables)
+        derivatives = getattr(diff, "derivatives", None)
+        if derivatives is None:
+            derivatives = select_derivatives(ir.declared_variables)
 
     model = _sanitize(ir.model_name)
     subroutine = _sanitize(ir.model_name) + "_derivs"
