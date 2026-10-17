@@ -1,0 +1,11 @@
+# Deployment dependencies for the Streamlit GUI (thermodiff/gui/app.py).
+#
+# A root requirements.txt is used by Streamlit Community Cloud in preference
+# to pyproject.toml, which keeps the deployment on pip instead of Poetry.
+#
+# * the editable install makes the `thermodiff` package importable from the
+#   app entrypoint (Streamlit only adds the app's own folder to sys.path);
+# * Streamlit is pinned to a version that provides the editable tables and
+#   the widgets used by the app.
+-e .
+streamlit>=1.30

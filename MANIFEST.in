@@ -8,6 +8,7 @@ recursive-include examples *.model *.md
 
 exclude tox.ini *.ipynb
 exclude requirements-dev.txt
+exclude requirements.txt
 exclude AGENTS.md
 
 recursive-exclude dist *
