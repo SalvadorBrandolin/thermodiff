@@ -173,12 +173,35 @@ outputs that needs it was passed.  This mirrors the style used throughout
 Shared computations
 -------------------
 
-The generated code evaluates every distinct summation once and reuses it
-across the derivatives that need it.  Sub-expressions that do not depend on
-an index and are used by several derivatives are then hoisted into common
-temporaries.  For the Peng-Robinson example above the mixture parameters
-``amix`` and ``bmix`` - and the sums they are built from - are therefore
-computed a single time instead of once per derivative.
+The derivatives of a model overlap heavily, so the generator removes the
+redundancy in three stages, from the cheapest to the most aggressive:
+
+1. **Shared sums.**  Every distinct summation is evaluated once and reused
+   by all the derivatives that need it, which keeps the residuals free of
+   repeated loop nests.
+2. **Scalar common sub-expressions.**  Sub-expressions that do not depend on
+   an index and are used by several derivatives are hoisted into scalar
+   temporaries.
+3. **Index-dependent array temporaries.**  Sub-expressions that *do* depend
+   on one or more indices are materialised into array temporaries.  The
+   indices are renamed to a canonical set first, so that
+   ``sqrt(ac(k)*ac(l))`` and ``sqrt(ac(i)*ac(j))`` are recognised as the
+   same array; the result is computed once and then read by every sum and
+   derivative that uses it.
+
+For the Peng-Robinson example above this means that ``amix`` and ``bmix`` -
+and the sums they are built from - are computed a single time, and that the
+``sqrt`` of the attractive term is an ``nc`` by ``nc`` array evaluated once
+instead of being repeated inside each summation and each second derivative.
+
+Stage 3 trades ``O(nc**rank)`` memory for speed.  When that extra memory is
+not acceptable, turn it off and keep the fully inlined expressions::
+
+    thermodiff-model model.model --no-array-cse
+
+The ``benchmarks/`` directory contains a harness that compares the output of
+the successive generations of the generator on the Toy and Peng-Robinson
+models (see ``benchmarks/report.md``).
 
 Python API
 ----------

@@ -51,6 +51,15 @@ def _build_parser():
             "derivatives."
         ),
     )
+    parser.add_argument(
+        "--no-array-cse",
+        dest="array_cse",
+        action="store_false",
+        help=(
+            "do not materialise index-dependent sub-expressions shared by "
+            "several derivatives; keep the fully inlined expressions."
+        ),
+    )
     return parser
 
 
@@ -85,6 +94,7 @@ def main(argv=None):
             ir,
             derivatives=derivatives,
             optional_derivatives=args.optional_derivatives,
+            array_cse=args.array_cse,
         )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)

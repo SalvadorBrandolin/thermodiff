@@ -8,7 +8,11 @@ __all__ = ["compile_model", "compile_model_file"]
 
 
 def compile_model(
-    text, filename=None, derivatives=None, optional_derivatives=False
+    text,
+    filename=None,
+    derivatives=None,
+    optional_derivatives=False,
+    array_cse=True,
 ):
     """Compile the contents of a ``.model`` file into a Fortran module.
 
@@ -28,6 +32,10 @@ def compile_model(
     optional_derivatives : bool, optional
         When ``True``, every output is declared as a Fortran ``optional``
         argument and computed only when the caller passes it.
+    array_cse : bool, optional
+        When ``True`` (the default), index-dependent sub-expressions
+        shared by several derivatives are materialised into array
+        temporaries computed a single time.
 
     Returns
     -------
@@ -40,10 +48,13 @@ def compile_model(
         ir,
         derivatives=derivatives,
         optional_derivatives=optional_derivatives,
+        array_cse=array_cse,
     )
 
 
-def compile_model_file(path, derivatives=None, optional_derivatives=False):
+def compile_model_file(
+    path, derivatives=None, optional_derivatives=False, array_cse=True
+):
     """Compile a ``.model`` file into a Fortran module.
 
     Parameters
@@ -54,6 +65,9 @@ def compile_model_file(path, derivatives=None, optional_derivatives=False):
         Derivatives to emit.  See :func:`compile_model`.
     optional_derivatives : bool, optional
         Declare the outputs as Fortran ``optional`` arguments.  See
+        :func:`compile_model`.
+    array_cse : bool, optional
+        Materialise shared index-dependent sub-expressions.  See
         :func:`compile_model`.
 
     Returns
@@ -68,4 +82,5 @@ def compile_model_file(path, derivatives=None, optional_derivatives=False):
         filename=path,
         derivatives=derivatives,
         optional_derivatives=optional_derivatives,
+        array_cse=array_cse,
     )

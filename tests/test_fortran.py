@@ -19,7 +19,7 @@ from thermodiff import (
     sum_components,
     to_fortran,
 )
-from thermodiff.fortran import _Namer, _common_scalar_cse
+from thermodiff.fortran import _Namer, _common_scalar_cse, _indexed_cse
 
 
 def _find_gfortran():
@@ -254,6 +254,37 @@ class TestSharing:
         b = sp.IndexedBase("b", shape=(sp.Symbol("nc", integer=True),))
         exprs = [b[k] + 1, b[k] + 2]
         residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert definitions == []
+        assert residuals == exprs
+
+    def test_indexed_cse_hoists_shared_factors(self):
+        namer = _Namer()
+        arrays = {}
+        root = sp.sqrt(n[k] ** 2 + 1)
+        exprs = [root * T, root * V, root + 1]
+        residuals, definitions = _indexed_cse(exprs, namer, arrays)
+        assert len(definitions) == 1
+        definition = definitions[0]
+        assert len(definition["free"]) == 1
+        base = definition["target"].base
+        assert str(base) in arrays
+        assert arrays[str(base)] == 1
+        assert all(
+            any(indexed.base == base for indexed in expr.atoms(sp.Indexed))
+            for expr in residuals
+        )
+
+    def test_indexed_cse_ignores_conditions(self):
+        # ``Eq`` conditions and ``Piecewise`` must never be turned into a
+        # real array temporary.
+        namer = _Namer()
+        arrays = {}
+        condition = sp.Eq(k, l)
+        exprs = [
+            sp.Piecewise((n[k], condition), (0, True)),
+            sp.Piecewise((n[k] * T, condition), (0, True)),
+        ]
+        residuals, definitions = _indexed_cse(exprs, namer, arrays)
         assert definitions == []
         assert residuals == exprs
 

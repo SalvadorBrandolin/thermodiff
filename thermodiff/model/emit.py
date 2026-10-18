@@ -119,7 +119,9 @@ def build_diff(ir, derivatives=None):
     return diff, derivatives
 
 
-def emit_module(ir, derivatives=None, diff=None, optional_derivatives=False):
+def emit_module(
+    ir, derivatives=None, diff=None, optional_derivatives=False, array_cse=True
+):
     """Generate the Fortran module for a :class:`ModelIR`.
 
     Parameters
@@ -138,6 +140,11 @@ def emit_module(ir, derivatives=None, diff=None, optional_derivatives=False):
         argument and computed only when the caller passes it.  Shared
         temporaries are skipped when none of the outputs that need them is
         present.
+    array_cse : bool, optional
+        When ``True`` (the default), index-dependent sub-expressions
+        shared by several derivatives are materialised into array
+        temporaries computed a single time.  Set it to ``False`` to keep
+        the fully inlined expressions.
 
     Returns
     -------
@@ -162,6 +169,7 @@ def emit_module(ir, derivatives=None, diff=None, optional_derivatives=False):
         integer_args=ir.dimensions,
         module_symbols=ir.imported,
         optional_derivatives=optional_derivatives,
+        array_cse=array_cse,
     )
 
     lines = [

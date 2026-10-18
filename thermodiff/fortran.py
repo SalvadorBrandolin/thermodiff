@@ -501,6 +501,131 @@ def _common_scalar_cse(expressions, namer, arrays):
     return exprs, definitions
 
 
+#: Candidate names for the auxiliary loop variables used by the array
+#: temporaries of :func:`_indexed_cse`.  Names already present in the model
+#: are skipped, so the generated code stays clash free.
+_AUX_INDEX_NAMES = ["p", "q", "r", "u", "w", "x", "y", "z"]
+
+
+def _index_symbols(expr) -> list:
+    """Return the model indices appearing in ``expr``, sorted by name."""
+    return sorted(expr.atoms(sp.Idx), key=str)
+
+
+def _is_hoistable(sub) -> bool:
+    """Whether ``sub`` may be replaced by an array temporary."""
+    if not isinstance(sub, sp.Expr) or sub.is_Atom:
+        return False
+    if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)):
+        return False
+    if sub.has(sp.Sum) or sub.has(sp.Piecewise):
+        return False
+    if sub.is_Relational or sub.is_Boolean:
+        return False
+    return bool(sub.atoms(sp.Idx))
+
+
+def _indexed_cse(expressions, namer, arrays):
+    """Hoist index-dependent sub-expressions shared by several outputs.
+
+    :func:`_common_scalar_cse` only hoists sub-expressions that do not
+    depend on an index.  This pass also handles sub-expressions that *do*:
+    the indices are first renamed to a canonical set, so that
+    ``sqrt(ac(k)*ac(l))`` and ``sqrt(ac(i)*ac(j))`` are recognised as the
+    same array.  Every such sub-expression is then materialised into an
+    array temporary that is computed a single time.
+
+    For a mixture model this turns the ``sqrt``/``log``/``pow`` calls
+    repeated inside the ``nc``-nested summations into one pass, so a
+    derivative that needs a shared factor reads it from memory instead of
+    recomputing it.
+
+    The rewrite is exact: a sub-expression is only replaced by an indexed
+    temporary whose definition is that very sub-expression, evaluated over
+    the same indices.
+
+    Parameters
+    ----------
+    expressions : list of sympy expressions
+        Expressions to optimise (they may still contain ``Sum`` objects).
+    namer : _Namer
+        Generator of temporary variable names.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    residuals : list of sympy expressions
+        ``expressions`` with the shared index-dependent sub-expressions
+        replaced by array temporaries.
+    definitions : list of dict
+        How to compute each array temporary, in dependency order.
+    """
+    exprs = list(expressions)
+    definitions = []
+    used = {str(symbol) for expr in exprs for symbol in expr.atoms(sp.Symbol)}
+    used.update({"nc", "res"})
+    slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
+
+    def canonical(sub):
+        indices = _index_symbols(sub)
+        mapping = {
+            index: slots[position] for position, index in enumerate(indices)
+        }
+        return sub.xreplace(mapping), indices
+
+    while True:
+        counts = {}
+        sizes = {}
+        for expr in exprs:
+            for sub in sp.preorder_traversal(expr):
+                if not _is_hoistable(sub):
+                    continue
+                indices = _index_symbols(sub)
+                if len(indices) > len(slots):
+                    continue
+                canon, _ = canonical(sub)
+                counts[canon] = counts.get(canon, 0) + 1
+                sizes[canon] = len(indices)
+        best = None
+        best_key = None
+        for canon, count in counts.items():
+            if count < 2:
+                continue
+            ops = sp.count_ops(canon)
+            # A single repeated operation is not worth the extra array
+            # unless it is used at least three times.
+            if ops < 2 and count < 3:
+                continue
+            key = (count, ops)
+            if best_key is None or key > best_key:
+                best_key = key
+                best = canon
+        if best is None:
+            break
+        free = slots[: sizes[best]]
+        target = _new_shared_temp(namer, free, arrays)
+        definitions.append(
+            {
+                "target": target,
+                "free": free,
+                "limits": [],
+                "body": best,
+            }
+        )
+        base = target.base
+        replacements = {}
+        for expr in exprs:
+            for sub in sp.preorder_traversal(expr):
+                if not _is_hoistable(sub):
+                    continue
+                canon, indices = canonical(sub)
+                if canon == best:
+                    replacements[sub] = sp.Indexed(base, *indices)
+        exprs = [expr.xreplace(replacements) for expr in exprs]
+    return exprs, definitions
+
+
 def _render_definition(definition) -> list:
     """Render the statements that fill one shared temporary."""
     target = definition["target"]
@@ -677,6 +802,7 @@ def to_fortran(
     integer_args=None,
     module_symbols=None,
     optional_derivatives=False,
+    array_cse=True,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -713,6 +839,11 @@ def to_fortran(
         when the caller passes it.  A shared temporary is skipped
         whenever none of the outputs that need it is present, so calling
         the subroutine with a subset of the outputs also skips the work.
+    array_cse : bool, optional
+        When ``True`` (the default), index-dependent sub-expressions that
+        several outputs share are materialised into array temporaries
+        computed a single time (see :func:`_indexed_cse`).  Disable it to
+        obtain the plain, fully inlined expressions.
 
     Returns
     -------
@@ -871,6 +1002,10 @@ def to_fortran(
     # ---- body ----------------------------------------------------------
     namer = _Namer()
     arrays = {}
+    if array_cse:
+        all_exprs, array_defs = _indexed_cse(all_exprs, namer, arrays)
+    else:
+        array_defs = []
     residuals, sum_defs = _share_sums(all_exprs, namer, diff.indexes, arrays)
     residuals, cse_defs = _common_scalar_cse(residuals, namer, arrays)
     rendered = [
@@ -883,7 +1018,7 @@ def to_fortran(
         for (attr, out_name, _, _), residual in zip(prepared, residuals)
     ]
 
-    definitions = sum_defs + cse_defs
+    definitions = array_defs + sum_defs + cse_defs
     out_names = {attr: out_name for attr, out_name, _, _ in rendered}
 
     temp_names = {

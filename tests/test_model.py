@@ -3,6 +3,7 @@
 import io
 import math
 import os
+import re
 import shutil
 import subprocess
 
@@ -179,9 +180,23 @@ class TestParsing:
 
     def test_shared_terms_are_computed_once(self):
         code = compile_model(PR_MODEL)
-        # ``bmix = sum(n_i b_i)`` feeds every derivative but is expanded
-        # a single time.
-        assert code.count("b(l)*n(l)") == 1
+        # ``bmix = sum(n_i b_i)`` feeds every derivative but its summand
+        # is materialised a single time (``t1(p) = b(p)*n(p)``).
+        assert len(re.findall(r"b\(\w+\)\*n\(\w+\)", code)) == 1
+
+    def test_repeated_indexed_factor_is_materialised(self):
+        code = compile_model(PR_MODEL)
+        # The ``sqrt`` of the attractive term is shared by every
+        # derivative, so it must live in a rank-2 temporary computed once
+        # instead of being repeated inside each sum.
+        assert len(re.findall(r"sqrt\(T\*\*4\*ac\(\w+\)\*ac\(", code)) == 1
+        assert "sqrt(T**4*ac" in code
+        assert re.search(r"real\(8\) :: \w+\(nc, nc\)", code)
+
+    def test_array_cse_can_be_disabled(self):
+        code = compile_model(PR_MODEL, array_cse=False)
+        assert not re.search(r"real\(8\) :: \w+\(nc, nc\)", code)
+        assert "sqrt(T**4*ac" in code
 
     def test_pressure_variable_derivatives(self):
         code = compile_model(PRES_MODEL, filename="pres.model")
