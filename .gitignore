@@ -196,3 +196,7 @@ cython_debug/
 *.mod
 *.o
 *.smod
+
+# Local benchmark study: regenerable with benchmarks/scientific/reproduce.sh,
+# not part of the package or the sdist, kept out of version control.
+benchmarks/scientific/
