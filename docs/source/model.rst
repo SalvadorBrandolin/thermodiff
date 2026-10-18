@@ -194,8 +194,11 @@ and the sums they are built from - are computed a single time, and that the
 ``sqrt`` of the attractive term is an ``nc`` by ``nc`` array evaluated once
 instead of being repeated inside each summation and each second derivative.
 
-Stage 3 trades ``O(nc**rank)`` memory for speed.  When that extra memory is
-not acceptable, turn it off and keep the fully inlined expressions::
+Stage 3 trades ``O(nc**rank)`` memory for speed.  Only sub-expressions of
+rank up to two are materialised: a rank-three temporary has ``O(nc**3)``
+entries, which does not fit in cache and makes the generated code slower than
+recomputing the factor.  When even the rank-two memory is not acceptable, turn
+the pass off and keep the fully inlined expressions::
 
     thermodiff-model model.model --no-array-cse
 

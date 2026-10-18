@@ -506,6 +506,13 @@ def _common_scalar_cse(expressions, namer, arrays):
 #: are skipped, so the generated code stays clash free.
 _AUX_INDEX_NAMES = ["p", "q", "r", "u", "w", "x", "y", "z"]
 
+#: Largest rank that :func:`_indexed_cse` materialises.  The pass trades
+#: memory for speed, and that only pays off up to rank two.  A rank three
+#: temporary has ``nc**3`` entries, which is large enough to fall out of
+#: cache: benchmarks show it makes the generated code slower than simply
+#: recomputing the factor, while still allocating ``O(nc**3)`` memory.
+_MAX_ARRAY_CSE_RANK = 2
+
 
 def _index_symbols(expr) -> list:
     """Return the model indices appearing in ``expr``, sorted by name."""
@@ -543,6 +550,10 @@ def _indexed_cse(expressions, namer, arrays):
     The rewrite is exact: a sub-expression is only replaced by an indexed
     temporary whose definition is that very sub-expression, evaluated over
     the same indices.
+
+    Only sub-expressions of rank up to :data:`_MAX_ARRAY_CSE_RANK` are
+    materialised; see that constant for why rank three and above are left
+    alone.
 
     Parameters
     ----------
@@ -582,7 +593,7 @@ def _indexed_cse(expressions, namer, arrays):
                 if not _is_hoistable(sub):
                     continue
                 indices = _index_symbols(sub)
-                if len(indices) > len(slots):
+                if len(indices) > _MAX_ARRAY_CSE_RANK:
                     continue
                 canon, _ = canonical(sub)
                 counts[canon] = counts.get(canon, 0) + 1
@@ -614,12 +625,16 @@ def _indexed_cse(expressions, namer, arrays):
             }
         )
         base = target.base
+        rank = len(free)
         replacements = {}
         for expr in exprs:
             for sub in sp.preorder_traversal(expr):
                 if not _is_hoistable(sub):
                     continue
-                canon, indices = canonical(sub)
+                indices = _index_symbols(sub)
+                if len(indices) != rank:
+                    continue
+                canon, _ = canonical(sub)
                 if canon == best:
                     replacements[sub] = sp.Indexed(base, *indices)
         exprs = [expr.xreplace(replacements) for expr in exprs]
@@ -842,7 +857,9 @@ def to_fortran(
     array_cse : bool, optional
         When ``True`` (the default), index-dependent sub-expressions that
         several outputs share are materialised into array temporaries
-        computed a single time (see :func:`_indexed_cse`).  Disable it to
+        computed a single time (see :func:`_indexed_cse`).  Only
+        sub-expressions of rank up to two are materialised, because a
+        larger temporary costs more than it saves.  Disable the pass to
         obtain the plain, fully inlined expressions.
 
     Returns

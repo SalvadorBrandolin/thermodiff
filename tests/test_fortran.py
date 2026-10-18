@@ -15,6 +15,7 @@ from thermodiff import (
     idx_function,
     k,
     l,
+    m,
     n,
     sum_components,
     to_fortran,
@@ -273,6 +274,51 @@ class TestSharing:
             any(indexed.base == base for indexed in expr.atoms(sp.Indexed))
             for expr in residuals
         )
+
+    def test_indexed_cse_hoists_rank_two(self):
+        namer = _Namer()
+        arrays = {}
+        root = sp.sqrt(n[k] * n[l] + 1)
+        exprs = [root * T, root * V, root + 1]
+        residuals, definitions = _indexed_cse(exprs, namer, arrays)
+        assert len(definitions) == 1
+        base = definitions[0]["target"].base
+        assert arrays[str(base)] == 2
+        assert all(
+            any(indexed.base == base for indexed in expr.atoms(sp.Indexed))
+            for expr in residuals
+        )
+
+    def test_indexed_cse_skips_rank_three(self):
+        # A rank three temporary is ``nc**3`` entries; benchmarks show it
+        # costs more than it saves, so it must never be created.
+        namer = _Namer()
+        arrays = {}
+        w = sp.IndexedBase("w", shape=(sp.Symbol("nc", integer=True),) * 3)
+        root = sp.sqrt(w[k, l, m] ** 2 + 1)
+        exprs = [root * T, root * V, root + 1]
+        residuals, definitions = _indexed_cse(exprs, namer, arrays)
+        assert definitions == []
+        assert arrays == {}
+        assert residuals == exprs
+
+    def test_rank_three_model_has_no_rank_three_temporaries(self):
+        # Regression: materialising a rank three factor made the generated
+        # code slower (``nc**3`` entries fall out of cache).  A rank three
+        # model must still share its rank two factors, but never allocate a
+        # rank three temporary.
+        ac = sp.IndexedBase("ac", shape=(sp.Symbol("nc", integer=True),))
+        w = sp.IndexedBase("w", shape=(sp.Symbol("nc", integer=True),) * 3)
+        term = n[k] * n[l] * n[m] * sp.sqrt(ac[k] * ac[l] * ac[m]) * w[k, l, m]
+        expr = T * sum_components(
+            sum_components(sum_components(term, m), l), k
+        )
+        diff = DiffPlz(
+            expr, internal_functions=None, indexes=[k, l, m], name="f"
+        )
+        code = to_fortran(diff)
+        assert "(nc, nc, nc)" not in code
+        assert "(nc, nc)" in code
 
     def test_indexed_cse_ignores_conditions(self):
         # ``Eq`` conditions and ``Piecewise`` must never be turned into a
