@@ -198,6 +198,34 @@ class TestOptions:
         diff = explicit_diff()
         assert diff.to_fortran() == to_fortran(diff)
 
+    def test_optional_outputs_are_declared(self):
+        code = to_fortran(explicit_diff(), optional_derivatives=True)
+        assert "real(8), optional, intent(out) :: f" in code
+        assert "real(8), optional, intent(out) :: dfdT" in code
+        assert "real(8), optional, intent(out) :: dfdn(:)" in code
+        assert "real(8), optional, intent(out) :: dfdndn(:, :)" in code
+
+    def test_optional_outputs_are_guarded(self):
+        code = to_fortran(explicit_diff(), optional_derivatives=True)
+        assert "if (present(f)) then" in code
+        assert "if (present(dfdT)) then" in code
+        assert "if (present(dfdn)) then" in code
+
+    def test_optional_is_off_by_default(self):
+        code = to_fortran(explicit_diff())
+        assert "optional" not in code
+        assert "present(" not in code
+
+    def test_optional_guards_follow_derivative_selection(self):
+        code = to_fortran(
+            explicit_diff(),
+            derivatives=["dt", "dn"],
+            optional_derivatives=True,
+        )
+        assert "present(dfdV)" not in code
+        assert "present(dfdndn)" not in code
+        assert "if (present(dfdT)) then" in code
+
 
 class TestSharing:
     """Shared summations and common sub-expressions."""
@@ -309,3 +337,29 @@ class TestCompile:
         # dx_1/dn_1 = 1/6 - 1/36 ; dx_1/dn_2 = -2/36
         assert values[3] == pytest.approx(1 / 6 - 1 / 36)
         assert values[4] == pytest.approx(-2 / 36)
+
+    def test_optional_derivatives_subset(self, tmp_path):
+        code = to_fortran(explicit_diff(), optional_derivatives=True)
+        driver = (
+            "program main\n"
+            "  use thermo_mod\n"
+            "  implicit none\n"
+            "  integer, parameter :: nc = 3\n"
+            "  real(8) :: n(nc), V, T\n"
+            "  real(8) :: f, full_f, full_t, only_t\n"
+            "  n = [1.0d0, 2.0d0, 3.0d0]\n"
+            "  V = 5.0d0\n"
+            "  T = 2.0d0\n"
+            "  call f_derivs(nc, V, T, n, f=f)\n"
+            "  call f_derivs(nc, V, T, n, f=full_f, dfdT=full_t)\n"
+            "  call f_derivs(nc, V, T, n, dfdT=only_t)\n"
+            "  write(*,*) f, full_f, full_t, only_t\n"
+            "end program main\n"
+        )
+        output = self._compile_and_run(tmp_path, code, driver)
+        values = [float(v) for v in output.split()]
+        # f = T*sum(n**2) + V*sum(n) ; dfdT = sum(n**2)
+        assert values[0] == pytest.approx(58.0)  # only f
+        assert values[1] == pytest.approx(58.0)  # f alongside dfdT
+        assert values[2] == pytest.approx(14.0)  # dfdT alongside f
+        assert values[3] == pytest.approx(14.0)  # dfdT on its own

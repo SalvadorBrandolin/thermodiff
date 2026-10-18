@@ -324,12 +324,16 @@ def _indent_lines(text: str, depth: int) -> list:
     return [prefix + line for line in text.splitlines() if line.strip()]
 
 
-def _declare_output(name: str, rank: int) -> str:
+def _declare_output(name: str, rank: int, optional: bool = False) -> str:
     """Return the declaration line for an output argument."""
+    if optional:
+        attributes = "real(8), optional, intent(out)"
+    else:
+        attributes = "real(8), intent(out)"
     if rank == 0:
-        return f"real(8), intent(out) :: {name}"
+        return f"{attributes} :: {name}"
     dims = ", ".join([":"] * rank)
-    return f"real(8), intent(out) :: {name}({dims})"
+    return f"{attributes} :: {name}({dims})"
 
 
 def _render_output(name: str, expr: sp.Expr, free_order: list, namer) -> list:
@@ -531,6 +535,70 @@ def _render_definition(definition) -> list:
     return lines
 
 
+def _temp_name(target) -> str:
+    """Return the base name of a shared temporary."""
+    if isinstance(target, sp.Indexed):
+        return str(target.base)
+    return str(target)
+
+
+def _referenced_temp_names(expr, temp_names) -> set:
+    """Return the names of the temporaries referenced by ``expr``."""
+    names = set()
+    for symbol in expr.atoms(sp.Symbol):
+        if str(symbol) in temp_names:
+            names.add(str(symbol))
+    for indexed in expr.atoms(sp.Indexed):
+        base = indexed.base
+        if isinstance(base, sp.IndexedBase) and str(base) in temp_names:
+            names.add(str(base))
+    return names
+
+
+def _guard(attributes, out_names) -> str:
+    """Return the ``present(...)`` condition for a group of outputs.
+
+    Returns an empty string when nothing depends on the group.
+    """
+    if not attributes:
+        return ""
+    names = []
+    if "value" in attributes and "value" in out_names:
+        names.append(out_names["value"])
+    names.extend(
+        out_names[attr]
+        for attr in _DERIV_ORDER
+        if attr in attributes and attr in out_names
+    )
+    return " .or. ".join(f"present({name})" for name in names)
+
+
+def _wrap_if(condition, limit=120) -> list:
+    """Wrap an ``if (condition) then`` line with continuations."""
+    pieces = condition.split(" .or. ")
+    lines = []
+    current = "if (" + pieces[0]
+    for piece in pieces[1:]:
+        token = " .or. " + piece
+        if len(current) + len(token) + len(") then") > limit:
+            lines.append(current + " .or. &")
+            current = "     " + piece
+        else:
+            current += token
+    lines.append(current + ") then")
+    return lines
+
+
+def _guarded(lines, condition) -> list:
+    """Wrap ``lines`` in an ``if (condition)`` block when needed."""
+    if not condition:
+        return list(lines)
+    block = _wrap_if(condition)
+    block.extend((_INDENT + line) if line else line for line in lines)
+    block.append("end if")
+    return block
+
+
 def _wrap_name_list(keyword, names, limit=120):
     """Split ``keyword`` plus names into continuation-free lines.
 
@@ -608,6 +676,7 @@ def to_fortran(
     strict=False,
     integer_args=None,
     module_symbols=None,
+    optional_derivatives=False,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -638,6 +707,12 @@ def to_fortran(
         Names that are provided by a ``use`` statement of the enclosing
         module.  They are neither declared as arguments nor included in
         the subroutine signature.
+    optional_derivatives : bool, optional
+        When ``True``, every output - the function value included - is
+        declared as a Fortran ``optional`` argument and computed only
+        when the caller passes it.  A shared temporary is skipped
+        whenever none of the outputs that need it is present, so calling
+        the subroutine with a subset of the outputs also skips the work.
 
     Returns
     -------
@@ -785,8 +860,12 @@ def to_fortran(
 
     # ---- output declarations ------------------------------------------
     output_decls = [
-        _declare_output(out_name, len(free_order))
-        for _, out_name, _, free_order in prepared
+        _declare_output(
+            out_name,
+            len(free_order),
+            optional=optional_derivatives,
+        )
+        for _attr, out_name, _, free_order in prepared
     ]
 
     # ---- body ----------------------------------------------------------
@@ -805,12 +884,42 @@ def to_fortran(
     ]
 
     definitions = sum_defs + cse_defs
+    out_names = {attr: out_name for attr, out_name, _, _ in rendered}
+
+    temp_names = {
+        _temp_name(definition["target"]) for definition in definitions
+    }
+    consumers = {name: set() for name in temp_names}
+    for attr, _out_name, residual, _free in rendered:
+        for name in _referenced_temp_names(residual, temp_names):
+            consumers[name].add(attr)
+    for definition in reversed(definitions):
+        name = _temp_name(definition["target"])
+        for dependency in _referenced_temp_names(
+            definition["body"], temp_names
+        ):
+            consumers[dependency] |= consumers[name]
+
     body = []
     for definition in definitions:
-        body.extend(_render_definition(definition))
+        if optional_derivatives:
+            condition = _guard(
+                consumers[_temp_name(definition["target"])], out_names
+            )
+        else:
+            condition = ""
+        body.extend(_guarded(_render_definition(definition), condition))
         body.append("")
-    for _, out_name, expr, free_order in rendered:
-        body.extend(_render_output(out_name, expr, free_order, namer))
+    for _attr, out_name, expr, free_order in rendered:
+        if optional_derivatives:
+            condition = f"present({out_name})"
+        else:
+            condition = ""
+        body.extend(
+            _guarded(
+                _render_output(out_name, expr, free_order, namer), condition
+            )
+        )
         body.append("")
 
     temps = sorted(

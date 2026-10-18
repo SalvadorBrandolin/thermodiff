@@ -101,7 +101,7 @@ def assemble_model(
     return "\n".join(lines)
 
 
-def build_result(text, filename="<editor>"):
+def build_result(text, filename="<editor>", optional_derivatives=False):
     """Compile ``.model`` text and collect everything the GUI shows.
 
     This never raises: compilation problems are reported in the ``error``
@@ -113,6 +113,10 @@ def build_result(text, filename="<editor>"):
         Contents of the ``.model`` file.
     filename : str, optional
         Name used in error messages.
+    optional_derivatives : bool, optional
+        Declare the outputs as Fortran ``optional`` arguments so the
+        generated subroutine computes only the derivatives the caller
+        passes.
 
     Returns
     -------
@@ -124,7 +128,12 @@ def build_result(text, filename="<editor>"):
         raw = read_sections(text, filename)
         ir = build_ir(raw, filename)
         diff, derivatives = build_diff(ir)
-        code = emit_module(ir, derivatives=derivatives, diff=diff)
+        code = emit_module(
+            ir,
+            derivatives=derivatives,
+            diff=diff,
+            optional_derivatives=optional_derivatives,
+        )
         preview = latex_preview(diff, derivatives)
         warnings = list(ir.warnings)
     except ModelError as error:
@@ -149,7 +158,13 @@ def build_result(text, filename="<editor>"):
 
 
 def build_from_parts(
-    model_name, uses, variables, parameters, expressions, function
+    model_name,
+    uses,
+    variables,
+    parameters,
+    expressions,
+    function,
+    optional_derivatives=False,
 ):
     """Assemble structured parts and compile them in one step.
 
@@ -157,6 +172,8 @@ def build_from_parts(
     ----------
     model_name, uses, variables, parameters, expressions, function
         See :func:`assemble_model`.
+    optional_derivatives : bool, optional
+        See :func:`build_result`.
 
     Returns
     -------
@@ -166,7 +183,7 @@ def build_from_parts(
     text = assemble_model(
         model_name, uses, variables, parameters, expressions, function
     )
-    return build_result(text)
+    return build_result(text, optional_derivatives=optional_derivatives)
 
 
 def parse_parts(text):

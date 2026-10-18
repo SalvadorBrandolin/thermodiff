@@ -188,6 +188,24 @@ class TestParsing:
         for name in ["dfdP", "dfdP2", "dfdTdP", "dfdVdP", "dfdndP"]:
             assert f"intent(out) :: {name}" in code
 
+    def test_optional_derivatives_are_declared(self):
+        code = compile_model(PR_MODEL, optional_derivatives=True)
+        for name in ["f", "dfdT", "dfdV", "dfdn", "dfdndn"]:
+            assert f"real(8), optional, intent(out) :: {name}" in code
+        assert "if (present(f)) then" in code
+        assert "if (present(dfdndn)) then" in code
+
+    def test_optional_derivatives_skip_shared_terms(self):
+        code = compile_model(PR_MODEL, optional_derivatives=True)
+        # A temporary that only the compositional second derivatives need
+        # is skipped unless one of them is actually passed.
+        assert "if (present(dfdn) .or. present(dfdndn)" in code
+
+    def test_optional_is_off_by_default(self):
+        code = self.code()
+        assert "optional" not in code
+        assert "present(" not in code
+
     def test_implicit_multiplication_and_powers(self):
         model = (
             "model m\nvariables\n n nc\nparameters\n b nc\n"
@@ -269,6 +287,16 @@ def test_cli_selects_derivatives(tmp_path, capsys):
     assert "intent(out) :: dfdT" not in output
 
 
+def test_cli_optional_derivatives(tmp_path, capsys):
+    """``--optional-derivatives`` declares every output as optional."""
+    model_path = tmp_path / "pr.model"
+    model_path.write_text(PR_MODEL)
+    assert main([str(model_path), "--optional-derivatives"]) == 0
+    output = capsys.readouterr().out
+    assert "real(8), optional, intent(out) :: f" in output
+    assert "if (present(dfdT)) then" in output
+
+
 def test_cli_reports_bad_derivative(tmp_path, capsys):
     """An inapplicable derivative is reported as an error."""
     model_path = tmp_path / "pr.model"
@@ -334,6 +362,8 @@ def test_compile_model_file(tmp_path):
     model_path = tmp_path / "pr.model"
     model_path.write_text(PR_MODEL)
     assert "module pr_mod" in compile_model_file(str(model_path))
+    optional = compile_model_file(str(model_path), optional_derivatives=True)
+    assert "optional, intent(out)" in optional
 
 
 def test_too_many_indices():
@@ -517,6 +547,45 @@ def _pr_driver():
     )
 
 
+def _pr_optional_driver():
+    """Return a driver that calls the PR module with subsets of outputs."""
+    data = _PR_DATA
+    literals = {
+        name: ", ".join(f"{value:.17g}d0" for value in data[name])
+        for name in ("n", "ac", "tc", "b")
+    }
+    kmat = ", ".join(f"{value:.17g}d0" for row in data["k"] for value in row)
+    return (
+        "program main\n"
+        "  use yaeos__constants\n"
+        "  use pr_mod\n"
+        "  implicit none\n"
+        f"  integer, parameter :: nc = {data['nc']}\n"
+        "  real(8) :: n(nc), V, T\n"
+        "  real(8) :: ac(nc), Tc(nc), k(nc, nc), b(nc)\n"
+        "  real(8) :: fv, dfdT\n"
+        "  real(8) :: dfdn(nc), dfdndn(nc, nc)\n"
+        "  integer :: i, j\n"
+        f"  n = [{literals['n']}]\n"
+        f"  ac = [{literals['ac']}]\n"
+        f"  Tc = [{literals['tc']}]\n"
+        f"  b = [{literals['b']}]\n"
+        f"  k = reshape([{kmat}], [nc, nc])\n"
+        f"  V = {data['vol']:.17g}d0\n"
+        f"  T = {data['temp']:.17g}d0\n"
+        "  call pr_derivs(nc, V, T, Tc, ac, b, k, n, f=fv)\n"
+        "  write(*,*) fv\n"
+        "  call pr_derivs(nc, V, T, Tc, ac, b, k, n, dfdT=dfdT, dfdn=dfdn)\n"
+        "  write(*,*) dfdT\n"
+        "  write(*,*) (dfdn(i), i=1,nc)\n"
+        "  call pr_derivs(nc, V, T, Tc, ac, b, k, n, dfdndn=dfdndn)\n"
+        "  do i=1,nc\n"
+        "    write(*,*) (dfdndn(i,j), j=1,nc)\n"
+        "  end do\n"
+        "end program main\n"
+    )
+
+
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 class TestCompile:
     """Compile and run the generated modules."""
@@ -547,6 +616,29 @@ class TestCompile:
         # Central differences are limited by round-off for the tiny second
         # order derivatives, hence the relatively loose absolute tolerance.
         assert values == pytest.approx(reference, rel=1e-5, abs=1e-6)
+
+    def test_optional_derivatives_subset(self, tmp_path):
+        full = self._compile_and_run(
+            tmp_path,
+            compile_model(PR_MODEL, filename="pr.model"),
+            _pr_driver(),
+            stub=_YAEOS_CONSTANTS_STUB,
+        )
+        code = compile_model(
+            PR_MODEL, filename="pr.model", optional_derivatives=True
+        )
+        values = self._compile_and_run(
+            tmp_path,
+            code,
+            _pr_optional_driver(),
+            stub=_YAEOS_CONSTANTS_STUB,
+        )
+        # f on its own; dfdT and dfdn without asking for f; dfdndn on its
+        # own.  Every value must agree with the full evaluation.
+        assert values[0] == pytest.approx(full[0], rel=1e-12)
+        assert values[1] == pytest.approx(full[1], rel=1e-12)
+        assert values[2:5] == pytest.approx(full[6:9], rel=1e-12)
+        assert values[5:14] == pytest.approx(full[15:24], rel=1e-12)
 
     def test_molefrac_compiles(self, tmp_path):
         code = compile_model(MOLEFRAC_MODEL, filename="m.model")

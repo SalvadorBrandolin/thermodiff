@@ -7,7 +7,9 @@ from thermodiff.model.parser import read_sections
 __all__ = ["compile_model", "compile_model_file"]
 
 
-def compile_model(text, filename=None, derivatives=None):
+def compile_model(
+    text, filename=None, derivatives=None, optional_derivatives=False
+):
     """Compile the contents of a ``.model`` file into a Fortran module.
 
     Parameters
@@ -23,6 +25,9 @@ def compile_model(text, filename=None, derivatives=None):
         :class:`~thermodiff.diffplz.DiffPlz` attribute names are
         accepted.  By default every derivative applicable to the declared
         variables is emitted.
+    optional_derivatives : bool, optional
+        When ``True``, every output is declared as a Fortran ``optional``
+        argument and computed only when the caller passes it.
 
     Returns
     -------
@@ -31,10 +36,14 @@ def compile_model(text, filename=None, derivatives=None):
     """
     raw = read_sections(text, filename)
     ir = build_ir(raw, filename)
-    return emit_module(ir, derivatives=derivatives)
+    return emit_module(
+        ir,
+        derivatives=derivatives,
+        optional_derivatives=optional_derivatives,
+    )
 
 
-def compile_model_file(path, derivatives=None):
+def compile_model_file(path, derivatives=None, optional_derivatives=False):
     """Compile a ``.model`` file into a Fortran module.
 
     Parameters
@@ -43,6 +52,9 @@ def compile_model_file(path, derivatives=None):
         Path to the ``.model`` file.
     derivatives : str or list of str, optional
         Derivatives to emit.  See :func:`compile_model`.
+    optional_derivatives : bool, optional
+        Declare the outputs as Fortran ``optional`` arguments.  See
+        :func:`compile_model`.
 
     Returns
     -------
@@ -51,4 +63,9 @@ def compile_model_file(path, derivatives=None):
     """
     with open(path, "r", encoding="utf-8") as handle:
         text = handle.read()
-    return compile_model(text, filename=path, derivatives=derivatives)
+    return compile_model(
+        text,
+        filename=path,
+        derivatives=derivatives,
+        optional_derivatives=optional_derivatives,
+    )

@@ -144,6 +144,32 @@ The groups ``all`` (the default), ``none`` (only the function value) and
 Requesting a derivative that does not apply to the declared variables is an
 error; for example ``dP`` requires a variable named ``P``.
 
+Computing derivatives on demand
+-------------------------------
+
+Selecting derivatives decides which outputs *exist*; the caller still has to
+pass every one of them.  When the number of derivatives grows this becomes
+wasteful, because a given caller usually needs only a handful.
+
+With ``--optional-derivatives`` every output - the function value included -
+is declared as a Fortran ``optional`` argument, and each output (together
+with the shared terms that only it needs) is computed only when the caller
+actually passes it::
+
+    thermodiff-model model.model --optional-derivatives
+
+The generated subroutine can then be called with any subset of the
+derivatives, in any order, using keyword arguments::
+
+    call pr_derivs(nc, V, T, Tc, ac, b, k, n, f=f)          ! only the value
+    call pr_derivs(nc, V, T, Tc, ac, b, k, n, dfdT=dfdT)    ! only dT
+    call pr_derivs(nc, V, T, Tc, ac, b, k, n, f=f, dfdn=dfdn, dfdndn=dfdndn)
+
+Computations that several outputs share are guarded by the *union* of their
+``present`` conditions, so a summation is skipped unless at least one of the
+outputs that needs it was passed.  This mirrors the style used throughout
+`yaeos <https://github.com/ipqa-research/yaeos>`_.
+
 Shared computations
 -------------------
 

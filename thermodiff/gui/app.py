@@ -58,7 +58,9 @@ result is the `function`.
 generated subroutine.
 
 Both a function and *all* its first and second derivatives (with respect
-to the declared variables) are generated automatically.
+to the declared variables) are generated automatically.  With *optional
+derivatives* the generated subroutine declares every output as a Fortran
+`optional` argument and computes only the ones the caller passes.
 """
 
 
@@ -183,6 +185,18 @@ def main():
         st.header("Model language")
         st.markdown(_HELP)
 
+        st.divider()
+        st.header("Output options")
+        optional_derivatives = st.checkbox(
+            "Compute derivatives on demand",
+            value=True,
+            help=(
+                "Declare every output as a Fortran 'optional' argument. "
+                "The generated subroutine then computes only the "
+                "derivatives the caller actually passes."
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Builder
     # ------------------------------------------------------------------
@@ -238,7 +252,7 @@ def main():
     )
 
     with st.spinner("Differentiating the model..."):
-        result = _compile(text)
+        result = _compile(text, optional_derivatives=optional_derivatives)
 
     _render_status(result)
 

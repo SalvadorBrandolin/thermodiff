@@ -62,6 +62,19 @@ def test_every_example_compiles(name):
     assert result["latex"]["derivatives"]
 
 
+def test_optional_derivatives_flag_reaches_fortran():
+    parts = _parts(examples.DEFAULT_EXAMPLE)
+    result = logic.build_from_parts(**parts, optional_derivatives=True)
+    assert result["error"] is None
+    assert "real(8), optional, intent(out) :: f" in result["code"]
+    assert "present(" in result["code"]
+
+
+def test_optional_derivatives_defaults_off():
+    result = logic.build_from_parts(**_parts(examples.DEFAULT_EXAMPLE))
+    assert "optional" not in result["code"]
+
+
 def test_blank_rows_are_dropped():
     text = logic.assemble_model(
         "m",

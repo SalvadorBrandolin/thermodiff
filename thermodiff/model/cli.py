@@ -41,6 +41,16 @@ def _build_parser():
             "derivative applicable to the declared variables is emitted."
         ),
     )
+    parser.add_argument(
+        "--optional-derivatives",
+        action="store_true",
+        help=(
+            "declare every output as a Fortran 'optional' argument and "
+            "compute it only when the caller passes it.  The generated "
+            "subroutine can then be called with any subset of the "
+            "derivatives."
+        ),
+    )
     return parser
 
 
@@ -71,7 +81,11 @@ def main(argv=None):
                 text = handle.read()
         raw = read_sections(text, filename)
         ir = build_ir(raw, filename)
-        code = emit_module(ir, derivatives=derivatives)
+        code = emit_module(
+            ir,
+            derivatives=derivatives,
+            optional_derivatives=args.optional_derivatives,
+        )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

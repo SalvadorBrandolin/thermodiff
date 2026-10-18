@@ -119,7 +119,7 @@ def build_diff(ir, derivatives=None):
     return diff, derivatives
 
 
-def emit_module(ir, derivatives=None, diff=None):
+def emit_module(ir, derivatives=None, diff=None, optional_derivatives=False):
     """Generate the Fortran module for a :class:`ModelIR`.
 
     Parameters
@@ -133,6 +133,11 @@ def emit_module(ir, derivatives=None, diff=None):
     diff : DiffPlz, optional
         A pre-built differentiation, as returned by :func:`build_diff`.
         When given, ``derivatives`` must match the ones it was built with.
+    optional_derivatives : bool, optional
+        When ``True``, every output is declared as a Fortran ``optional``
+        argument and computed only when the caller passes it.  Shared
+        temporaries are skipped when none of the outputs that need them is
+        present.
 
     Returns
     -------
@@ -156,6 +161,7 @@ def emit_module(ir, derivatives=None, diff=None):
         subroutine_name=subroutine,
         integer_args=ir.dimensions,
         module_symbols=ir.imported,
+        optional_derivatives=optional_derivatives,
     )
 
     lines = [
