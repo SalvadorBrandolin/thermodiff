@@ -364,6 +364,173 @@ def _render_output(name: str, expr: sp.Expr, free_order: list, namer) -> list:
     return lines
 
 
+def _new_shared_temp(namer, free_order, arrays):
+    """Create a temporary for a shared sub-expression.
+
+    Parameters
+    ----------
+    namer : _Namer
+        Generator of temporary variable names.
+    free_order : list
+        Free indices the temporary depends on; empty for a scalar.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    sympy expression
+        A ``Symbol`` for a scalar temporary, or an ``Indexed`` (indexed by
+        ``free_order``) for an array temporary.
+    """
+    name = str(namer("t"))
+    if not free_order:
+        return sp.Symbol(name)
+    arrays[name] = len(free_order)
+    base = sp.IndexedBase(name, shape=(nc,) * len(free_order))
+    return sp.Indexed(base, *free_order)
+
+
+def _share_sums(expressions, namer, indexes, arrays):
+    """Replace every ``Sum`` by a temporary that is computed once.
+
+    Identical summations reused by several outputs are evaluated a single
+    time.  Sums that appear in only one output are hoisted too, which keeps
+    the output residuals free of loop nests and lets the scalar common
+    sub-expression pass below see through them.
+
+    Parameters
+    ----------
+    expressions : list of sympy expressions
+        Expressions that may contain summations.
+    namer : _Namer
+        Generator of temporary variable names.
+    indexes : list
+        User index order, used to sort the free indices of a temporary.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    residuals : list of sympy expressions
+        ``expressions`` with every ``Sum`` replaced by a temporary.
+    definitions : list of dict
+        How to compute each temporary, in dependency order.
+    """
+    exprs = list(expressions)
+    definitions = []
+    while True:
+        innermost = []
+        seen = set()
+        for expr in exprs:
+            for total in expr.atoms(sp.Sum):
+                if total.function.atoms(sp.Sum) or total in seen:
+                    continue
+                seen.add(total)
+                innermost.append(total)
+        if not innermost:
+            break
+        replacements = {}
+        for total in innermost:
+            free = _order_free(_free_indices(total), indexes)
+            target = _new_shared_temp(namer, free, arrays)
+            definitions.append(
+                {
+                    "target": target,
+                    "free": free,
+                    "limits": list(total.limits),
+                    "body": total.function,
+                }
+            )
+            replacements[total] = target
+        exprs = [expr.xreplace(replacements) for expr in exprs]
+    return exprs, definitions
+
+
+def _common_scalar_cse(expressions, namer, arrays):
+    """Extract scalar sub-expressions shared by several outputs.
+
+    Only sub-expressions without free indices are hoisted, so every
+    temporary can be computed once, before the output loops, without
+    worrying about the index scope of a particular output.
+
+    Parameters
+    ----------
+    expressions : list of sympy expressions
+        Sum free expressions to optimise.
+    namer : _Namer
+        Generator of temporary variable names.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    residuals : list of sympy expressions
+        ``expressions`` with the shared sub-expressions replaced.
+    definitions : list of dict
+        How to compute each shared scalar, in dependency order.
+    """
+    exprs = list(expressions)
+    definitions = []
+    while True:
+        counts = {}
+        for expr in exprs:
+            for sub in sp.preorder_traversal(expr):
+                if not isinstance(sub, sp.Expr) or sub.is_Atom:
+                    continue
+                if _free_indices(sub):
+                    continue
+                counts[sub] = counts.get(sub, 0) + 1
+        repeated = [sub for sub, count in counts.items() if count > 1]
+        if not repeated:
+            break
+        best = max(repeated, key=lambda sub: (counts[sub], sp.count_ops(sub)))
+        target = _new_shared_temp(namer, [], arrays)
+        definitions.append(
+            {
+                "target": target,
+                "free": [],
+                "limits": [],
+                "body": best,
+            }
+        )
+        exprs = [expr.xreplace({best: target}) for expr in exprs]
+    return exprs, definitions
+
+
+def _render_definition(definition) -> list:
+    """Render the statements that fill one shared temporary."""
+    target = definition["target"]
+    free = definition["free"]
+    lines = []
+    depth = 0
+    for idx in free:
+        lines.append(_INDENT * depth + f"do {idx} = 1, nc")
+        depth += 1
+
+    target_s = _print_expr(target)
+    limits = definition["limits"]
+    if limits:
+        lines.append(_INDENT * depth + f"{target_s} = 0.0d0")
+        for idx, low, high in limits:
+            low_s = _print_expr(low)
+            high_s = _print_expr(high)
+            lines.append(_INDENT * depth + f"do {idx} = {low_s}, {high_s}")
+            depth += 1
+        body_s = _print_expr(definition["body"])
+        lines.append(_INDENT * depth + f"{target_s} = {target_s} + {body_s}")
+        for _ in limits:
+            depth -= 1
+            lines.append(_INDENT * depth + "end do")
+    else:
+        body_s = _print_expr(definition["body"])
+        lines.append(_INDENT * depth + f"{target_s} = {body_s}")
+
+    for _ in free:
+        depth -= 1
+        lines.append(_INDENT * depth + "end do")
+    return lines
+
+
 def _wrap_name_list(keyword, names, limit=120):
     """Split ``keyword`` plus names into continuation-free lines.
 
@@ -624,19 +791,42 @@ def to_fortran(
 
     # ---- body ----------------------------------------------------------
     namer = _Namer()
+    arrays = {}
+    residuals, sum_defs = _share_sums(all_exprs, namer, diff.indexes, arrays)
+    residuals, cse_defs = _common_scalar_cse(residuals, namer, arrays)
+    rendered = [
+        (
+            attr,
+            out_name,
+            residual,
+            _order_free(_free_indices(residual), diff.indexes),
+        )
+        for (attr, out_name, _, _), residual in zip(prepared, residuals)
+    ]
+
+    definitions = sum_defs + cse_defs
     body = []
-    for _, out_name, expr, free_order in prepared:
+    for definition in definitions:
+        body.extend(_render_definition(definition))
+        body.append("")
+    for _, out_name, expr, free_order in rendered:
         body.extend(_render_output(out_name, expr, free_order, namer))
         body.append("")
 
-    temps = sorted({str(t) for t in namer.created} | {"res"})
+    temps = sorted(
+        {str(t) for t in namer.created if str(t) not in arrays} | {"res"}
+    )
     loop_indices = sorted(
-        {str(idx) for _, _, _, free in prepared for idx in free}
+        {str(idx) for _, _, _, free in rendered for idx in free}
+        | {
+            str(idx)
+            for definition in definitions
+            for idx in definition["free"]
+        }
         | {
             str(limit[0])
-            for _, _, expr, _ in prepared
-            for total in expr.atoms(sp.Sum)
-            for limit in total.limits
+            for definition in definitions
+            for limit in definition["limits"]
         }
     )
 
@@ -665,6 +855,15 @@ def to_fortran(
 
     for line in _wrap_name_list("real(8) :: ", temps):
         lines.append(_INDENT + line)
+    for rank in sorted(set(arrays.values())):
+        dims = ", ".join(["nc"] * rank)
+        names = [
+            f"{name}({dims})"
+            for name in sorted(arrays)
+            if arrays[name] == rank
+        ]
+        for line in _wrap_name_list("real(8) :: ", names):
+            lines.append(_INDENT + line)
     for line in _wrap_name_list("integer :: ", loop_indices):
         lines.append(_INDENT + line)
 

@@ -144,6 +144,16 @@ The groups ``all`` (the default), ``none`` (only the function value) and
 Requesting a derivative that does not apply to the declared variables is an
 error; for example ``dP`` requires a variable named ``P``.
 
+Shared computations
+-------------------
+
+The generated code evaluates every distinct summation once and reuses it
+across the derivatives that need it.  Sub-expressions that do not depend on
+an index and are used by several derivatives are then hoisted into common
+temporaries.  For the Peng-Robinson example above the mixture parameters
+``amix`` and ``bmix`` - and the sums they are built from - are therefore
+computed a single time instead of once per derivative.
+
 Python API
 ----------
 

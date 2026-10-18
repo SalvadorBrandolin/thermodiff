@@ -177,6 +177,12 @@ class TestParsing:
         with pytest.raises(ModelError, match="Unknown derivatives"):
             compile_model(PR_MODEL, derivatives=["nope"])
 
+    def test_shared_terms_are_computed_once(self):
+        code = compile_model(PR_MODEL)
+        # ``bmix = sum(n_i b_i)`` feeds every derivative but is expanded
+        # a single time.
+        assert code.count("b(l)*n(l)") == 1
+
     def test_pressure_variable_derivatives(self):
         code = compile_model(PRES_MODEL, filename="pres.model")
         for name in ["dfdP", "dfdP2", "dfdTdP", "dfdVdP", "dfdndP"]:

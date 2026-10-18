@@ -19,6 +19,7 @@ from thermodiff import (
     sum_components,
     to_fortran,
 )
+from thermodiff.fortran import _Namer, _common_scalar_cse
 
 
 def _find_gfortran():
@@ -196,6 +197,37 @@ class TestOptions:
     def test_method_delegates(self):
         diff = explicit_diff()
         assert diff.to_fortran() == to_fortran(diff)
+
+
+class TestSharing:
+    """Shared summations and common sub-expressions."""
+
+    def test_repeated_sums_are_computed_once(self):
+        code = to_fortran(explicit_diff())
+        # ``sum(n)`` and ``sum(n**2)`` feed several derivatives but are
+        # expanded a single time each.
+        assert code.count("do k = 1, nc") == 2
+        assert code.count("n(k)**2") == 1
+
+    def test_common_scalars_are_hoisted(self):
+        namer = _Namer()
+        arrays = {}
+        x, y = sp.Symbol("x"), sp.Symbol("y")
+        product = x * y
+        exprs = [product + x, product + y, product + 1]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert len(definitions) == 1
+        target = definitions[0]["target"]
+        assert all(target in expr.free_symbols for expr in residuals)
+
+    def test_index_dependent_terms_are_not_hoisted(self):
+        namer = _Namer()
+        arrays = {}
+        b = sp.IndexedBase("b", shape=(sp.Symbol("nc", integer=True),))
+        exprs = [b[k] + 1, b[k] + 2]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert definitions == []
+        assert residuals == exprs
 
 
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
