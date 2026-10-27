@@ -4,8 +4,17 @@ include pyproject.toml
 
 recursive-include thermodiff *.py
 
+recursive-include examples *.model *.md
+
+recursive-include benchmarks *.py *.md
+
+# The scientific study under benchmarks/scientific is a local, regenerable
+# report; keep it out of the source distribution as well as out of git.
+prune benchmarks/scientific
+
 exclude tox.ini *.ipynb
 exclude requirements-dev.txt
+exclude requirements.txt
 exclude AGENTS.md
 
 recursive-exclude dist *

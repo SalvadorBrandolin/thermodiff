@@ -24,6 +24,7 @@ from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
+from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES, resolve_derivatives
 from thermodiff.latex_utils import (
     clean_latex_string,
     finalize_latex_dict,
@@ -79,6 +80,13 @@ class DiffPlz:
         Name of the DiffClass instance, by default "f". It could be for example
         the name of the thermodynamic function you are working with, like "G^E"
         or "A^r".
+    derivatives : str or iterable of str, optional
+        Derivative attributes to compute.  By default every derivative is
+        computed.  When a selection is given, only the selected derivatives
+        (and the lower order ones they are built from) are differentiated;
+        the attributes that were not requested are set to ``None``.  The
+        names understood by
+        :func:`thermodiff.derivatives.resolve_derivatives` are accepted.
 
     Attributes
     ----------
@@ -124,6 +132,9 @@ class DiffPlz:
         Cross second derivative pressure (P) and number of moles `i` (n[i]).
     arguments : List[sp.Symbol]
         List of symbols (variables) that appear in the expression.
+    derivatives : list of str or None
+        The derivative attributes that were selected for computation, or
+        ``None`` when every derivative was computed.
     """
 
     def __init__(
@@ -132,6 +143,7 @@ class DiffPlz:
         internal_functions: List[sp.Function] | None = None,
         indexes: List[sp.Idx] | None = None,  # noqa E741)
         name: str = "f",
+        derivatives=None,
     ):
         self.name = name
         self.expression = expression
@@ -139,35 +151,72 @@ class DiffPlz:
             internal_functions if internal_functions is not None else []
         )
         self.indexes = indexes if indexes is not None else [k, l, m]
+        self._cache = {}
 
-        # Temperature derivatives
-        self.dt = sp.diff(self.expression, T)
-        self.dt2 = sp.diff(self.dt, T)
+        if derivatives is None:
+            self.derivatives = None
+            selected = list(DERIVATIVE_ATTRIBUTES)
+        else:
+            selected = resolve_derivatives(derivatives)
+            self.derivatives = list(selected)
 
-        # Volume derivatives
-        self.dv = sp.diff(self.expression, V)
-        self.dv2 = sp.diff(self.dv, V)
-
-        # Pressure derivatives
-        self.dp = sp.diff(self.expression, P)
-        self.dp2 = sp.diff(self.dp, P)
-
-        # Derivatives with respect to number of moles
-        self.dni = self.diff_ni(self.expression, i)
-        self.dnidnj = self.diff_dnidnj(self.dni, j)
-
-        # Cross second derivatives
-        self.dtdv = sp.diff(self.dt, V)
-        self.dtdp = sp.diff(self.dt, P)
-        self.dtdni = self.diff_ni(self.dt, i)
-
-        self.dvdni = self.diff_ni(self.dv, i)
-        self.dvdp = sp.diff(self.dv, P)
-
-        self.dpdni = self.diff_ni(self.dp, i)
+        for attribute in DERIVATIVE_ATTRIBUTES:
+            value = self._compute(attribute) if attribute in selected else None
+            setattr(self, attribute, value)
 
         # Arguments
         self.arguments = self._detect_arguments()
+
+    def _compute(self, attribute: str) -> sp.Expr:
+        """Return a derivative, computing and caching it on demand.
+
+        Parameters
+        ----------
+        attribute : str
+            One of :data:`thermodiff.derivatives.DERIVATIVE_ATTRIBUTES`.
+
+        Returns
+        -------
+        sympy expression
+            The requested derivative.
+        """
+        if attribute in self._cache:
+            return self._cache[attribute]
+
+        expression = self.expression
+        if attribute == "dt":
+            value = sp.diff(expression, T)
+        elif attribute == "dv":
+            value = sp.diff(expression, V)
+        elif attribute == "dp":
+            value = sp.diff(expression, P)
+        elif attribute == "dni":
+            value = self.diff_ni(expression, i)
+        elif attribute == "dt2":
+            value = sp.diff(self._compute("dt"), T)
+        elif attribute == "dv2":
+            value = sp.diff(self._compute("dv"), V)
+        elif attribute == "dp2":
+            value = sp.diff(self._compute("dp"), P)
+        elif attribute == "dnidnj":
+            value = self.diff_dnidnj(self._compute("dni"), j)
+        elif attribute == "dtdv":
+            value = sp.diff(self._compute("dt"), V)
+        elif attribute == "dtdp":
+            value = sp.diff(self._compute("dt"), P)
+        elif attribute == "dtdni":
+            value = self.diff_ni(self._compute("dt"), i)
+        elif attribute == "dvdni":
+            value = self.diff_ni(self._compute("dv"), i)
+        elif attribute == "dvdp":
+            value = sp.diff(self._compute("dv"), P)
+        elif attribute == "dpdni":
+            value = self.diff_ni(self._compute("dp"), i)
+        else:  # pragma: no cover - guarded by DERIVATIVE_ATTRIBUTES
+            raise ValueError(f"Unknown derivative attribute {attribute!r}")
+
+        self._cache[attribute] = value
+        return value
 
     def diff_ni(self, expression: sp.Expr, index: sp.Idx) -> sp.Expr:
         """Obtain the compositional derivative dn[index].
@@ -296,6 +345,8 @@ class DiffPlz:
             first = {k: v for k, v in first.items() if k in derivs_to_clean}
 
         for _, (attr_name, expr, deriv_sym) in first.items():
+            if expr is None:
+                continue
             expr = _safe_subs(expr, self.expression, sym)
             expr = _safe_subs(expr, self.expression / T, sym / T)
             setattr(self, attr_name, expr)
@@ -334,10 +385,12 @@ class DiffPlz:
         }
 
         for _, (attr_name, expr) in second.items():
+            if expr is None:
+                continue
             expr = _safe_subs(expr, self.expression, sym)
 
             for name, base_expr in base.items():
-                if base_expr != 0:
+                if base_expr is not None and base_expr != 0:
                     expr = _safe_subs(expr, base_expr, deriv_symbols[name])
                     expr = _safe_subs(
                         expr, base_expr / T, deriv_symbols[name] / T
@@ -362,6 +415,8 @@ class DiffPlz:
         }
 
         for diff_key, expr in first_exprs.items():
+            if expr is None:
+                continue
             expr = process_derivative_expression(
                 expr,
                 order=1,
@@ -386,6 +441,8 @@ class DiffPlz:
         }
 
         for diff_key, expr in second_exprs.items():
+            if expr is None:
+                continue
             expr = process_derivative_expression(
                 expr,
                 order=2,

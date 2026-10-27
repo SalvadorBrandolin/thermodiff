@@ -4,7 +4,8 @@ requires = ["setuptools", "wheel"]
 
 [project]
 name = "thermodiff"
-version = "1.5.0"
+requires-python = ">=3.10"
+version = "1.6.0"
 authors = [{name = "Brandolín, Salvador Eduardo", email = "salvadorebrandolin@unc.edu.ar"}]
 license = {text = "MIT License"}
 readme = "README.md"
@@ -24,8 +25,15 @@ dependencies = [
     'sympy>=1.14.0',
 ]
 
+[project.scripts]
+thermodiff-model = "thermodiff.model.cli:main"
+thermodiff-gui = "thermodiff.gui.cli:main"
+
+[project.optional-dependencies]
+gui = ["streamlit>=1.30"]
+
 [tool.setuptools]
-packages = ["thermodiff"]
+packages = ["thermodiff", "thermodiff.core", "thermodiff.model", "thermodiff.gui"]
 
 [tool.pytest.ini_options]
 markers = [
@@ -35,3 +43,12 @@ markers = [
 [tool.black]
 line-length = 79
 target-version = ["py312"]
+
+# The Streamlit application is a declarative UI script that can only run
+# with the optional ``gui`` extra, so it is not part of the standard test
+# run.  The testable helpers live in thermodiff/gui/logic.py.
+[tool.coverage.run]
+omit = [
+    "thermodiff/gui/app.py",
+]
+

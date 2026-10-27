@@ -1,0 +1,11 @@
+model molefrac
+target fortran
+
+variables
+    n   nc
+
+expressions
+    ntot = sum_i n_i
+
+function
+    n_k / ntot

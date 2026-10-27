@@ -15,10 +15,12 @@ from thermodiff import (
     idx_function,
     k,
     l,
+    m,
     n,
     sum_components,
     to_fortran,
 )
+from thermodiff.fortran import _Namer, _common_scalar_cse, _indexed_cse
 
 
 def _find_gfortran():
@@ -164,9 +166,173 @@ class TestOptions:
         with pytest.raises(ValueError, match="Unknown derivatives"):
             to_fortran(explicit_diff(), derivatives=["nope"])
 
+    def test_friendly_derivative_names(self):
+        code = to_fortran(explicit_diff(), derivatives=["dT", "dn"])
+        assert "dfdT" in code
+        assert "dfdn(:)" in code
+        assert "dfdV" not in code
+
+    def test_diffplz_skips_unselected_derivatives(self):
+        diff = DiffPlz(
+            T * sum_components(n[k] ** 2, k),
+            indexes=[k],
+            name="f",
+            derivatives=["dn"],
+        )
+        assert diff.dt is None
+        assert diff.dni is not None
+        code = to_fortran(diff)
+        assert "dfdn" in code
+        assert "dfdT" not in code
+
+    def test_mismatched_selection_raises(self):
+        diff = DiffPlz(
+            T * sum_components(n[k] ** 2, k),
+            indexes=[k],
+            name="f",
+            derivatives=["dn"],
+        )
+        with pytest.raises(ValueError, match="not computed"):
+            to_fortran(diff, derivatives=["dt"])
+
     def test_method_delegates(self):
         diff = explicit_diff()
         assert diff.to_fortran() == to_fortran(diff)
+
+    def test_optional_outputs_are_declared(self):
+        code = to_fortran(explicit_diff(), optional_derivatives=True)
+        assert "real(8), optional, intent(out) :: f" in code
+        assert "real(8), optional, intent(out) :: dfdT" in code
+        assert "real(8), optional, intent(out) :: dfdn(:)" in code
+        assert "real(8), optional, intent(out) :: dfdndn(:, :)" in code
+
+    def test_optional_outputs_are_guarded(self):
+        code = to_fortran(explicit_diff(), optional_derivatives=True)
+        assert "if (present(f)) then" in code
+        assert "if (present(dfdT)) then" in code
+        assert "if (present(dfdn)) then" in code
+
+    def test_optional_is_off_by_default(self):
+        code = to_fortran(explicit_diff())
+        assert "optional" not in code
+        assert "present(" not in code
+
+    def test_optional_guards_follow_derivative_selection(self):
+        code = to_fortran(
+            explicit_diff(),
+            derivatives=["dt", "dn"],
+            optional_derivatives=True,
+        )
+        assert "present(dfdV)" not in code
+        assert "present(dfdndn)" not in code
+        assert "if (present(dfdT)) then" in code
+
+
+class TestSharing:
+    """Shared summations and common sub-expressions."""
+
+    def test_repeated_sums_are_computed_once(self):
+        code = to_fortran(explicit_diff())
+        # ``sum(n)`` and ``sum(n**2)`` feed several derivatives but are
+        # expanded a single time each.
+        assert code.count("do k = 1, nc") == 2
+        assert code.count("n(k)**2") == 1
+
+    def test_common_scalars_are_hoisted(self):
+        namer = _Namer()
+        arrays = {}
+        x, y = sp.Symbol("x"), sp.Symbol("y")
+        product = x * y
+        exprs = [product + x, product + y, product + 1]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert len(definitions) == 1
+        target = definitions[0]["target"]
+        assert all(target in expr.free_symbols for expr in residuals)
+
+    def test_index_dependent_terms_are_not_hoisted(self):
+        namer = _Namer()
+        arrays = {}
+        b = sp.IndexedBase("b", shape=(sp.Symbol("nc", integer=True),))
+        exprs = [b[k] + 1, b[k] + 2]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert definitions == []
+        assert residuals == exprs
+
+    def test_indexed_cse_hoists_shared_factors(self):
+        namer = _Namer()
+        arrays = {}
+        root = sp.sqrt(n[k] ** 2 + 1)
+        exprs = [root * T, root * V, root + 1]
+        residuals, definitions = _indexed_cse(exprs, namer, arrays)
+        assert len(definitions) == 1
+        definition = definitions[0]
+        assert len(definition["free"]) == 1
+        base = definition["target"].base
+        assert str(base) in arrays
+        assert arrays[str(base)] == 1
+        assert all(
+            any(indexed.base == base for indexed in expr.atoms(sp.Indexed))
+            for expr in residuals
+        )
+
+    def test_indexed_cse_hoists_rank_two(self):
+        namer = _Namer()
+        arrays = {}
+        root = sp.sqrt(n[k] * n[l] + 1)
+        exprs = [root * T, root * V, root + 1]
+        residuals, definitions = _indexed_cse(exprs, namer, arrays)
+        assert len(definitions) == 1
+        base = definitions[0]["target"].base
+        assert arrays[str(base)] == 2
+        assert all(
+            any(indexed.base == base for indexed in expr.atoms(sp.Indexed))
+            for expr in residuals
+        )
+
+    def test_indexed_cse_skips_rank_three(self):
+        # A rank three temporary is ``nc**3`` entries; benchmarks show it
+        # costs more than it saves, so it must never be created.
+        namer = _Namer()
+        arrays = {}
+        w = sp.IndexedBase("w", shape=(sp.Symbol("nc", integer=True),) * 3)
+        root = sp.sqrt(w[k, l, m] ** 2 + 1)
+        exprs = [root * T, root * V, root + 1]
+        residuals, definitions = _indexed_cse(exprs, namer, arrays)
+        assert definitions == []
+        assert arrays == {}
+        assert residuals == exprs
+
+    def test_rank_three_model_has_no_rank_three_temporaries(self):
+        # Regression: materialising a rank three factor made the generated
+        # code slower (``nc**3`` entries fall out of cache).  A rank three
+        # model must still share its rank two factors, but never allocate a
+        # rank three temporary.
+        ac = sp.IndexedBase("ac", shape=(sp.Symbol("nc", integer=True),))
+        w = sp.IndexedBase("w", shape=(sp.Symbol("nc", integer=True),) * 3)
+        term = n[k] * n[l] * n[m] * sp.sqrt(ac[k] * ac[l] * ac[m]) * w[k, l, m]
+        expr = T * sum_components(
+            sum_components(sum_components(term, m), l), k
+        )
+        diff = DiffPlz(
+            expr, internal_functions=None, indexes=[k, l, m], name="f"
+        )
+        code = to_fortran(diff)
+        assert "(nc, nc, nc)" not in code
+        assert "(nc, nc)" in code
+
+    def test_indexed_cse_ignores_conditions(self):
+        # ``Eq`` conditions and ``Piecewise`` must never be turned into a
+        # real array temporary.
+        namer = _Namer()
+        arrays = {}
+        condition = sp.Eq(k, l)
+        exprs = [
+            sp.Piecewise((n[k], condition), (0, True)),
+            sp.Piecewise((n[k] * T, condition), (0, True)),
+        ]
+        residuals, definitions = _indexed_cse(exprs, namer, arrays)
+        assert definitions == []
+        assert residuals == exprs
 
 
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
@@ -248,3 +414,29 @@ class TestCompile:
         # dx_1/dn_1 = 1/6 - 1/36 ; dx_1/dn_2 = -2/36
         assert values[3] == pytest.approx(1 / 6 - 1 / 36)
         assert values[4] == pytest.approx(-2 / 36)
+
+    def test_optional_derivatives_subset(self, tmp_path):
+        code = to_fortran(explicit_diff(), optional_derivatives=True)
+        driver = (
+            "program main\n"
+            "  use thermo_mod\n"
+            "  implicit none\n"
+            "  integer, parameter :: nc = 3\n"
+            "  real(8) :: n(nc), V, T\n"
+            "  real(8) :: f, full_f, full_t, only_t\n"
+            "  n = [1.0d0, 2.0d0, 3.0d0]\n"
+            "  V = 5.0d0\n"
+            "  T = 2.0d0\n"
+            "  call f_derivs(nc, V, T, n, f=f)\n"
+            "  call f_derivs(nc, V, T, n, f=full_f, dfdT=full_t)\n"
+            "  call f_derivs(nc, V, T, n, dfdT=only_t)\n"
+            "  write(*,*) f, full_f, full_t, only_t\n"
+            "end program main\n"
+        )
+        output = self._compile_and_run(tmp_path, code, driver)
+        values = [float(v) for v in output.split()]
+        # f = T*sum(n**2) + V*sum(n) ; dfdT = sum(n**2)
+        assert values[0] == pytest.approx(58.0)  # only f
+        assert values[1] == pytest.approx(58.0)  # f alongside dfdT
+        assert values[2] == pytest.approx(14.0)  # dfdT alongside f
+        assert values[3] == pytest.approx(14.0)  # dfdT on its own

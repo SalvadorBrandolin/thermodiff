@@ -33,6 +33,7 @@ import sympy as sp
 from sympy.core.function import DefinedFunction
 from sympy.printing.fortran import fcode
 
+from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES, resolve_derivatives
 from thermodiff.thermovars import P, T, V, i, j, n, nc
 
 __all__ = ["to_fortran"]
@@ -58,7 +59,7 @@ _DERIV_SUFFIX = {
 }
 
 #: Order in which the derivatives are emitted.
-_DERIV_ORDER = list(_DERIV_SUFFIX)
+_DERIV_ORDER = list(DERIVATIVE_ATTRIBUTES)
 
 #: Settings passed to :func:`sympy.printing.fortran.fcode`.
 _FCODE_SETTINGS = {
@@ -102,7 +103,9 @@ def _free_indices(expr: sp.Expr) -> set:
     An index is free when it is not the summation index of any
     :class:`sympy.Sum` inside ``expr``.
     """
-    bound = {total.limits[0][0] for total in expr.atoms(sp.Sum)}
+    bound = {
+        limit[0] for total in expr.atoms(sp.Sum) for limit in total.limits
+    }
     return {idx for idx in expr.atoms(sp.Idx) if idx not in bound}
 
 
@@ -290,15 +293,21 @@ def _expand_sums(expr: sp.Expr, namer: _Namer):
         if not innermost:
             break
         for total in innermost:
-            idx, low, high = total.limits[0]
             tmp = namer("t")
-            low_s = _print_expr(low)
-            high_s = _print_expr(high)
-            body_s = _print_expr(total.function)
             statements.append(f"{tmp} = 0.0d0")
-            statements.append(f"do {idx} = {low_s}, {high_s}")
-            statements.append(f"{_INDENT}{tmp} = {tmp} + {body_s}")
-            statements.append("end do")
+            depth = 0
+            for idx, low, high in total.limits:
+                low_s = _print_expr(low)
+                high_s = _print_expr(high)
+                statements.append(
+                    f"{_INDENT * depth}do {idx} = {low_s}, {high_s}"
+                )
+                depth += 1
+            body_s = _print_expr(total.function)
+            statements.append(f"{_INDENT * depth}{tmp} = {tmp} + {body_s}")
+            for _ in total.limits:
+                depth -= 1
+                statements.append(f"{_INDENT * depth}end do")
             residual = residual.xreplace({total: tmp})
 
     return statements, residual
@@ -315,12 +324,16 @@ def _indent_lines(text: str, depth: int) -> list:
     return [prefix + line for line in text.splitlines() if line.strip()]
 
 
-def _declare_output(name: str, rank: int) -> str:
+def _declare_output(name: str, rank: int, optional: bool = False) -> str:
     """Return the declaration line for an output argument."""
+    if optional:
+        attributes = "real(8), optional, intent(out)"
+    else:
+        attributes = "real(8), intent(out)"
     if rank == 0:
-        return f"real(8), intent(out) :: {name}"
+        return f"{attributes} :: {name}"
     dims = ", ".join([":"] * rank)
-    return f"real(8), intent(out) :: {name}({dims})"
+    return f"{attributes} :: {name}({dims})"
 
 
 def _render_output(name: str, expr: sp.Expr, free_order: list, namer) -> list:
@@ -355,12 +368,456 @@ def _render_output(name: str, expr: sp.Expr, free_order: list, namer) -> list:
     return lines
 
 
+def _new_shared_temp(namer, free_order, arrays):
+    """Create a temporary for a shared sub-expression.
+
+    Parameters
+    ----------
+    namer : _Namer
+        Generator of temporary variable names.
+    free_order : list
+        Free indices the temporary depends on; empty for a scalar.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    sympy expression
+        A ``Symbol`` for a scalar temporary, or an ``Indexed`` (indexed by
+        ``free_order``) for an array temporary.
+    """
+    name = str(namer("t"))
+    if not free_order:
+        return sp.Symbol(name)
+    arrays[name] = len(free_order)
+    base = sp.IndexedBase(name, shape=(nc,) * len(free_order))
+    return sp.Indexed(base, *free_order)
+
+
+def _share_sums(expressions, namer, indexes, arrays):
+    """Replace every ``Sum`` by a temporary that is computed once.
+
+    Identical summations reused by several outputs are evaluated a single
+    time.  Sums that appear in only one output are hoisted too, which keeps
+    the output residuals free of loop nests and lets the scalar common
+    sub-expression pass below see through them.
+
+    Parameters
+    ----------
+    expressions : list of sympy expressions
+        Expressions that may contain summations.
+    namer : _Namer
+        Generator of temporary variable names.
+    indexes : list
+        User index order, used to sort the free indices of a temporary.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    residuals : list of sympy expressions
+        ``expressions`` with every ``Sum`` replaced by a temporary.
+    definitions : list of dict
+        How to compute each temporary, in dependency order.
+    """
+    exprs = list(expressions)
+    definitions = []
+    while True:
+        innermost = []
+        seen = set()
+        for expr in exprs:
+            for total in expr.atoms(sp.Sum):
+                if total.function.atoms(sp.Sum) or total in seen:
+                    continue
+                seen.add(total)
+                innermost.append(total)
+        if not innermost:
+            break
+        replacements = {}
+        for total in innermost:
+            free = _order_free(_free_indices(total), indexes)
+            target = _new_shared_temp(namer, free, arrays)
+            definitions.append(
+                {
+                    "target": target,
+                    "free": free,
+                    "limits": list(total.limits),
+                    "body": total.function,
+                }
+            )
+            replacements[total] = target
+        exprs = [expr.xreplace(replacements) for expr in exprs]
+    return exprs, definitions
+
+
+def _common_scalar_cse(expressions, namer, arrays):
+    """Extract scalar sub-expressions shared by several outputs.
+
+    Only sub-expressions without free indices are hoisted, so every
+    temporary can be computed once, before the output loops, without
+    worrying about the index scope of a particular output.
+
+    Parameters
+    ----------
+    expressions : list of sympy expressions
+        Sum free expressions to optimise.
+    namer : _Namer
+        Generator of temporary variable names.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    residuals : list of sympy expressions
+        ``expressions`` with the shared sub-expressions replaced.
+    definitions : list of dict
+        How to compute each shared scalar, in dependency order.
+    """
+    exprs = list(expressions)
+    definitions = []
+    while True:
+        counts = {}
+        for expr in exprs:
+            for sub in sp.preorder_traversal(expr):
+                if not isinstance(sub, sp.Expr) or sub.is_Atom:
+                    continue
+                if _free_indices(sub):
+                    continue
+                counts[sub] = counts.get(sub, 0) + 1
+        repeated = [sub for sub, count in counts.items() if count > 1]
+        if not repeated:
+            break
+        best = max(repeated, key=lambda sub: (counts[sub], sp.count_ops(sub)))
+        target = _new_shared_temp(namer, [], arrays)
+        definitions.append(
+            {
+                "target": target,
+                "free": [],
+                "limits": [],
+                "body": best,
+            }
+        )
+        exprs = [expr.xreplace({best: target}) for expr in exprs]
+    return exprs, definitions
+
+
+#: Candidate names for the auxiliary loop variables used by the array
+#: temporaries of :func:`_indexed_cse`.  Names already present in the model
+#: are skipped, so the generated code stays clash free.
+_AUX_INDEX_NAMES = ["p", "q", "r", "u", "w", "x", "y", "z"]
+
+#: Largest rank that :func:`_indexed_cse` materialises.  The pass trades
+#: memory for speed, and that only pays off up to rank two.  A rank three
+#: temporary has ``nc**3`` entries, which is large enough to fall out of
+#: cache: benchmarks show it makes the generated code slower than simply
+#: recomputing the factor, while still allocating ``O(nc**3)`` memory.
+_MAX_ARRAY_CSE_RANK = 2
+
+
+def _index_symbols(expr) -> list:
+    """Return the model indices appearing in ``expr``, sorted by name."""
+    return sorted(expr.atoms(sp.Idx), key=str)
+
+
+def _is_hoistable(sub) -> bool:
+    """Whether ``sub`` may be replaced by an array temporary."""
+    if not isinstance(sub, sp.Expr) or sub.is_Atom:
+        return False
+    if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)):
+        return False
+    if sub.has(sp.Sum) or sub.has(sp.Piecewise):
+        return False
+    if sub.is_Relational or sub.is_Boolean:
+        return False
+    return bool(sub.atoms(sp.Idx))
+
+
+def _indexed_cse(expressions, namer, arrays):
+    """Hoist index-dependent sub-expressions shared by several outputs.
+
+    :func:`_common_scalar_cse` only hoists sub-expressions that do not
+    depend on an index.  This pass also handles sub-expressions that *do*:
+    the indices are first renamed to a canonical set, so that
+    ``sqrt(ac(k)*ac(l))`` and ``sqrt(ac(i)*ac(j))`` are recognised as the
+    same array.  Every such sub-expression is then materialised into an
+    array temporary that is computed a single time.
+
+    For a mixture model this turns the ``sqrt``/``log``/``pow`` calls
+    repeated inside the ``nc``-nested summations into one pass, so a
+    derivative that needs a shared factor reads it from memory instead of
+    recomputing it.
+
+    The rewrite is exact: a sub-expression is only replaced by an indexed
+    temporary whose definition is that very sub-expression, evaluated over
+    the same indices.
+
+    Only sub-expressions of rank up to :data:`_MAX_ARRAY_CSE_RANK` are
+    materialised; see that constant for why rank three and above are left
+    alone.
+
+    Parameters
+    ----------
+    expressions : list of sympy expressions
+        Expressions to optimise (they may still contain ``Sum`` objects).
+    namer : _Namer
+        Generator of temporary variable names.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    residuals : list of sympy expressions
+        ``expressions`` with the shared index-dependent sub-expressions
+        replaced by array temporaries.
+    definitions : list of dict
+        How to compute each array temporary, in dependency order.
+    """
+    exprs = list(expressions)
+    definitions = []
+    used = {str(symbol) for expr in exprs for symbol in expr.atoms(sp.Symbol)}
+    used.update({"nc", "res"})
+    slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
+
+    def canonical(sub):
+        indices = _index_symbols(sub)
+        mapping = {
+            index: slots[position] for position, index in enumerate(indices)
+        }
+        return sub.xreplace(mapping), indices
+
+    while True:
+        counts = {}
+        sizes = {}
+        for expr in exprs:
+            for sub in sp.preorder_traversal(expr):
+                if not _is_hoistable(sub):
+                    continue
+                indices = _index_symbols(sub)
+                if len(indices) > _MAX_ARRAY_CSE_RANK:
+                    continue
+                canon, _ = canonical(sub)
+                counts[canon] = counts.get(canon, 0) + 1
+                sizes[canon] = len(indices)
+        best = None
+        best_key = None
+        for canon, count in counts.items():
+            if count < 2:
+                continue
+            ops = sp.count_ops(canon)
+            # A single repeated operation is not worth the extra array
+            # unless it is used at least three times.
+            if ops < 2 and count < 3:
+                continue
+            key = (count, ops)
+            if best_key is None or key > best_key:
+                best_key = key
+                best = canon
+        if best is None:
+            break
+        free = slots[: sizes[best]]
+        target = _new_shared_temp(namer, free, arrays)
+        definitions.append(
+            {
+                "target": target,
+                "free": free,
+                "limits": [],
+                "body": best,
+            }
+        )
+        base = target.base
+        rank = len(free)
+        replacements = {}
+        for expr in exprs:
+            for sub in sp.preorder_traversal(expr):
+                if not _is_hoistable(sub):
+                    continue
+                indices = _index_symbols(sub)
+                if len(indices) != rank:
+                    continue
+                canon, _ = canonical(sub)
+                if canon == best:
+                    replacements[sub] = sp.Indexed(base, *indices)
+        exprs = [expr.xreplace(replacements) for expr in exprs]
+    return exprs, definitions
+
+
+def _render_definition(definition) -> list:
+    """Render the statements that fill one shared temporary."""
+    target = definition["target"]
+    free = definition["free"]
+    lines = []
+    depth = 0
+    for idx in free:
+        lines.append(_INDENT * depth + f"do {idx} = 1, nc")
+        depth += 1
+
+    target_s = _print_expr(target)
+    limits = definition["limits"]
+    if limits:
+        lines.append(_INDENT * depth + f"{target_s} = 0.0d0")
+        for idx, low, high in limits:
+            low_s = _print_expr(low)
+            high_s = _print_expr(high)
+            lines.append(_INDENT * depth + f"do {idx} = {low_s}, {high_s}")
+            depth += 1
+        body_s = _print_expr(definition["body"])
+        lines.append(_INDENT * depth + f"{target_s} = {target_s} + {body_s}")
+        for _ in limits:
+            depth -= 1
+            lines.append(_INDENT * depth + "end do")
+    else:
+        body_s = _print_expr(definition["body"])
+        lines.append(_INDENT * depth + f"{target_s} = {body_s}")
+
+    for _ in free:
+        depth -= 1
+        lines.append(_INDENT * depth + "end do")
+    return lines
+
+
+def _temp_name(target) -> str:
+    """Return the base name of a shared temporary."""
+    if isinstance(target, sp.Indexed):
+        return str(target.base)
+    return str(target)
+
+
+def _referenced_temp_names(expr, temp_names) -> set:
+    """Return the names of the temporaries referenced by ``expr``."""
+    names = set()
+    for symbol in expr.atoms(sp.Symbol):
+        if str(symbol) in temp_names:
+            names.add(str(symbol))
+    for indexed in expr.atoms(sp.Indexed):
+        base = indexed.base
+        if isinstance(base, sp.IndexedBase) and str(base) in temp_names:
+            names.add(str(base))
+    return names
+
+
+def _guard(attributes, out_names) -> str:
+    """Return the ``present(...)`` condition for a group of outputs.
+
+    Returns an empty string when nothing depends on the group.
+    """
+    if not attributes:
+        return ""
+    names = []
+    if "value" in attributes and "value" in out_names:
+        names.append(out_names["value"])
+    names.extend(
+        out_names[attr]
+        for attr in _DERIV_ORDER
+        if attr in attributes and attr in out_names
+    )
+    return " .or. ".join(f"present({name})" for name in names)
+
+
+def _wrap_if(condition, limit=120) -> list:
+    """Wrap an ``if (condition) then`` line with continuations."""
+    pieces = condition.split(" .or. ")
+    lines = []
+    current = "if (" + pieces[0]
+    for piece in pieces[1:]:
+        token = " .or. " + piece
+        if len(current) + len(token) + len(") then") > limit:
+            lines.append(current + " .or. &")
+            current = "     " + piece
+        else:
+            current += token
+    lines.append(current + ") then")
+    return lines
+
+
+def _guarded(lines, condition) -> list:
+    """Wrap ``lines`` in an ``if (condition)`` block when needed."""
+    if not condition:
+        return list(lines)
+    block = _wrap_if(condition)
+    block.extend((_INDENT + line) if line else line for line in lines)
+    block.append("end if")
+    return block
+
+
+def _wrap_name_list(keyword, names, limit=120):
+    """Split ``keyword`` plus names into continuation-free lines.
+
+    Parameters
+    ----------
+    keyword : str
+        Declaration prefix including the ``::``, for example
+        ``"real(8) :: "``.
+    names : list of str
+        Names to declare.
+    limit : int, optional
+        Maximum line length.
+
+    Returns
+    -------
+    list of str
+        One or more declaration lines.
+    """
+    lines = []
+    current = None
+    for name in names:
+        if current is None:
+            current = name
+        elif len(keyword) + len(current) + len(name) + 2 > limit:
+            lines.append(keyword + current)
+            current = name
+        else:
+            current += ", " + name
+    if current is not None:
+        lines.append(keyword + current)
+    return lines
+
+
+def _wrap_signature(sub_name, arg_names, limit=120):
+    """Return the subroutine statement, wrapped if necessary.
+
+    Parameters
+    ----------
+    sub_name : str
+        Subroutine name.
+    arg_names : list of str
+        Argument names.
+    limit : int, optional
+        Maximum line length.
+
+    Returns
+    -------
+    list of str
+        The (possibly continued) subroutine statement.
+    """
+    head = f"subroutine {sub_name}("
+    if len(head) + len(", ".join(arg_names)) <= limit:
+        return [head + ", ".join(arg_names) + ")"]
+
+    continuation = _INDENT + "  "
+    lines = []
+    current = ""
+    for arg in arg_names:
+        candidate = arg if not current else current + ", " + arg
+        if current and len(head) + len(candidate) > limit:
+            lines.append(head + current + ", &")
+            head = continuation
+            current = arg
+        else:
+            current = candidate
+    lines.append(head + current + ")")
+    return lines
+
+
 def to_fortran(
     diff,
     derivatives=None,
     name=None,
     subroutine_name=None,
     strict=False,
+    integer_args=None,
+    module_symbols=None,
+    optional_derivatives=False,
+    array_cse=True,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -368,10 +825,13 @@ def to_fortran(
     ----------
     diff : DiffPlz
         The differentiated thermodynamic expression.
-    derivatives : list of str, optional
-        Names of the derivative attributes to emit, for example
-        ``["dt", "dv", "dni", "dnidnj"]``.  By default every non-zero
-        derivative computed by ``diff`` is emitted.
+    derivatives : str or list of str, optional
+        Derivatives to emit, for example ``["dT", "dV", "dn"]``.  Both the
+        friendly names and the derivative attributes (``["dt", "dv",
+        "dni"]``) are accepted, as well as the groups ``all``, ``none``,
+        ``first`` and ``second`` (see
+        :func:`thermodiff.derivatives.resolve_derivatives`).  By default
+        every non-zero derivative computed by ``diff`` is emitted.
     name : str, optional
         Base name used for the generated variables.  Defaults to the
         ``name`` attribute of ``diff``.
@@ -381,31 +841,66 @@ def to_fortran(
         When ``True``, raise a ``ValueError`` if the expression contains
         internal functions or unresolved derivatives instead of exposing
         them as input arguments.  By default ``False``.
+    integer_args : list of str, optional
+        Names of extra arguments that must be declared as
+        ``integer, intent(in)`` (for example, extra dimensions).
+    module_symbols : list of str, optional
+        Names that are provided by a ``use`` statement of the enclosing
+        module.  They are neither declared as arguments nor included in
+        the subroutine signature.
+    optional_derivatives : bool, optional
+        When ``True``, every output - the function value included - is
+        declared as a Fortran ``optional`` argument and computed only
+        when the caller passes it.  A shared temporary is skipped
+        whenever none of the outputs that need it is present, so calling
+        the subroutine with a subset of the outputs also skips the work.
+    array_cse : bool, optional
+        When ``True`` (the default), index-dependent sub-expressions that
+        several outputs share are materialised into array temporaries
+        computed a single time (see :func:`_indexed_cse`).  Only
+        sub-expressions of rank up to two are materialised, because a
+        larger temporary costs more than it saves.  Disable the pass to
+        obtain the plain, fully inlined expressions.
 
     Returns
     -------
     str
         The free-form Fortran source code.
     """
+    module_symbols = set(module_symbols or ())
+    integer_args = list(integer_args or [])
+
     base = _sanitize(name if name is not None else diff.name)
     sub_name = (
         _sanitize(subroutine_name) if subroutine_name else base + "_derivs"
     )
 
     if derivatives is None:
-        selected = [
-            attr
-            for attr in _DERIV_ORDER
-            if getattr(diff, attr, sp.Integer(0)) != 0
-        ]
+        candidates = getattr(diff, "derivatives", None)
+        if candidates is None:
+            candidates = _DERIV_ORDER
+        selected = []
+        for attr in _DERIV_ORDER:
+            if attr not in candidates:
+                continue
+            value = getattr(diff, attr, None)
+            if value is None or value == 0:
+                continue
+            selected.append(attr)
     else:
-        unknown = set(derivatives) - set(_DERIV_SUFFIX)
-        if unknown:
+        resolved = resolve_derivatives(derivatives)
+        selected = [attr for attr in _DERIV_ORDER if attr in resolved]
+        missing = [
+            attr for attr in selected if getattr(diff, attr, None) is None
+        ]
+        if missing:
             raise ValueError(
-                f"Unknown derivatives: {sorted(unknown)}. "
-                f"Valid keys: {_DERIV_ORDER}"
+                "Derivatives not computed by the DiffPlz instance: "
+                + ", ".join(missing)
+                + ". Rebuild it with derivatives="
+                + repr(list(resolved))
+                + "."
             )
-        selected = [attr for attr in _DERIV_ORDER if attr in derivatives]
 
     resolver = _PlaceholderResolver(strict=strict)
 
@@ -430,7 +925,14 @@ def to_fortran(
     placeholder_names = set(resolver.ranks)
 
     # ---- gather parameters --------------------------------------------
-    uses_n = any(n in expr.atoms(sp.IndexedBase) for expr in all_exprs)
+    # NOTE: ``n`` is compared by name because ``expr`` has been rebuilt by
+    # the ``nc`` replacement above, which also rewrites the shape of the
+    # ``n`` IndexedBase.
+    n_name = str(n)
+    uses_n = any(
+        n_name in {str(base_) for base_ in expr.atoms(sp.IndexedBase)}
+        for expr in all_exprs
+    )
 
     index_syms = set()
     indexed_bases = set()
@@ -447,7 +949,6 @@ def to_fortran(
     base_names = {str(base_) for base_ in indexed_bases}
 
     param_scalars = set()
-    param_arrays = set()
     for expr in all_exprs:
         for sym in expr.atoms(sp.Symbol):
             name = str(sym)
@@ -455,32 +956,48 @@ def to_fortran(
                 continue
             if sym in (T, V, P) or name == "nc":
                 continue
+            if name in module_symbols or name in integer_args:
+                continue
             param_scalars.add(name)
-    for base_ in indexed_bases:
-        if base_ == n or str(base_) in placeholder_names:
-            continue
-        param_arrays.add(str(base_))
 
-    params = sorted(param_scalars - param_arrays - placeholder_names)
+    array_ranks = {}
+    for expr in all_exprs:
+        for indexed in expr.atoms(sp.Indexed):
+            base_name = str(indexed.base)
+            rank = len(indexed.indices)
+            array_ranks[base_name] = max(array_ranks.get(base_name, 0), rank)
+    param_arrays = {
+        base_name: rank
+        for base_name, rank in array_ranks.items()
+        if base_name != n_name and base_name not in placeholder_names
+    }
+    if uses_n:
+        param_arrays[n_name] = 1
+
+    params = sorted(param_scalars - placeholder_names)
     placeholder_args = sorted(resolver.ranks)
 
     needs_nc = (
-        uses_n or bool(param_arrays) or any(free for _, _, _, free in prepared)
+        uses_n
+        or bool(param_arrays)
+        or any(free for _, _, _, free in prepared)
+        or any(sp.Symbol("nc") in expr.atoms(sp.Symbol) for expr in all_exprs)
     )
 
     # ---- input declarations -------------------------------------------
     inputs = []
     if needs_nc:
         inputs.append("integer, intent(in) :: nc")
-    if uses_n:
-        inputs.append("real(8), intent(in) :: n(:)")
+    if integer_args:
+        inputs.append("integer, intent(in) :: " + ", ".join(integer_args))
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
         if any(expr.has(var) for expr in all_exprs):
             inputs.append(f"real(8), intent(in) :: {label}")
     for param in params:
         inputs.append(f"real(8), intent(in) :: {param}")
     for arr in sorted(param_arrays):
-        inputs.append(f"real(8), intent(in) :: {arr}(:)")
+        dims = ", ".join([":"] * param_arrays[arr])
+        inputs.append(f"real(8), intent(in) :: {arr}({dims})")
     for arg in placeholder_args:
         rank = resolver.ranks[arg]
         if rank == 0:
@@ -491,25 +1008,86 @@ def to_fortran(
 
     # ---- output declarations ------------------------------------------
     output_decls = [
-        _declare_output(out_name, len(free_order))
-        for _, out_name, _, free_order in prepared
+        _declare_output(
+            out_name,
+            len(free_order),
+            optional=optional_derivatives,
+        )
+        for _attr, out_name, _, free_order in prepared
     ]
 
     # ---- body ----------------------------------------------------------
     namer = _Namer()
+    arrays = {}
+    if array_cse:
+        all_exprs, array_defs = _indexed_cse(all_exprs, namer, arrays)
+    else:
+        array_defs = []
+    residuals, sum_defs = _share_sums(all_exprs, namer, diff.indexes, arrays)
+    residuals, cse_defs = _common_scalar_cse(residuals, namer, arrays)
+    rendered = [
+        (
+            attr,
+            out_name,
+            residual,
+            _order_free(_free_indices(residual), diff.indexes),
+        )
+        for (attr, out_name, _, _), residual in zip(prepared, residuals)
+    ]
+
+    definitions = array_defs + sum_defs + cse_defs
+    out_names = {attr: out_name for attr, out_name, _, _ in rendered}
+
+    temp_names = {
+        _temp_name(definition["target"]) for definition in definitions
+    }
+    consumers = {name: set() for name in temp_names}
+    for attr, _out_name, residual, _free in rendered:
+        for name in _referenced_temp_names(residual, temp_names):
+            consumers[name].add(attr)
+    for definition in reversed(definitions):
+        name = _temp_name(definition["target"])
+        for dependency in _referenced_temp_names(
+            definition["body"], temp_names
+        ):
+            consumers[dependency] |= consumers[name]
+
     body = []
-    for _, out_name, expr, free_order in prepared:
-        body.extend(_render_output(out_name, expr, free_order, namer))
+    for definition in definitions:
+        if optional_derivatives:
+            condition = _guard(
+                consumers[_temp_name(definition["target"])], out_names
+            )
+        else:
+            condition = ""
+        body.extend(_guarded(_render_definition(definition), condition))
+        body.append("")
+    for _attr, out_name, expr, free_order in rendered:
+        if optional_derivatives:
+            condition = f"present({out_name})"
+        else:
+            condition = ""
+        body.extend(
+            _guarded(
+                _render_output(out_name, expr, free_order, namer), condition
+            )
+        )
         body.append("")
 
-    temps = sorted({str(t) for t in namer.created} | {"res"})
+    temps = sorted(
+        {str(t) for t in namer.created if str(t) not in arrays} | {"res"}
+    )
     loop_indices = sorted(
-        {str(idx) for _, _, _, free in prepared for idx in free}
+        {str(idx) for _, _, _, free in rendered for idx in free}
+        | {
+            str(idx)
+            for definition in definitions
+            for idx in definition["free"]
+        }
         | {
             str(limit[0])
-            for _, _, expr, _ in prepared
-            for total in expr.atoms(sp.Sum)
-            for limit in total.limits
+            for definition in definitions
+            for limit in definition["limits"]
         }
     )
 
@@ -517,8 +1095,7 @@ def to_fortran(
     arg_names = []
     if needs_nc:
         arg_names.append("nc")
-    if uses_n:
-        arg_names.append("n")
+    arg_names.extend(integer_args)
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
         if any(expr.has(var) for expr in all_exprs):
             arg_names.append(label)
@@ -530,17 +1107,26 @@ def to_fortran(
     while sub_name in arg_names:
         sub_name += "_s"
 
-    lines = [f"subroutine {sub_name}({', '.join(arg_names)})"]
+    lines = _wrap_signature(sub_name, arg_names)
     lines.append(f"{_INDENT}implicit none")
     for decl in inputs:
         lines.append(_INDENT + decl)
     for decl in output_decls:
         lines.append(_INDENT + decl)
 
-    if temps:
-        lines.append(_INDENT + "real(8) :: " + ", ".join(temps))
-    if loop_indices:
-        lines.append(_INDENT + "integer :: " + ", ".join(loop_indices))
+    for line in _wrap_name_list("real(8) :: ", temps):
+        lines.append(_INDENT + line)
+    for rank in sorted(set(arrays.values())):
+        dims = ", ".join(["nc"] * rank)
+        names = [
+            f"{name}({dims})"
+            for name in sorted(arrays)
+            if arrays[name] == rank
+        ]
+        for line in _wrap_name_list("real(8) :: ", names):
+            lines.append(_INDENT + line)
+    for line in _wrap_name_list("integer :: ", loop_indices):
+        lines.append(_INDENT + line)
 
     lines.append("")
     for line in body:

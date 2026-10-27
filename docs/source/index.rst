@@ -13,6 +13,8 @@
    thermovars
    diffplz
    fortran
+   model
+   gui
    latex_utils
    core/init
    
