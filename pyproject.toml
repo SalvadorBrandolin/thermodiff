@@ -4,8 +4,8 @@ requires = ["setuptools", "wheel"]
 
 [project]
 name = "thermodiff"
-version = "1.0.0"
 requires-python = ">=3.10"
+version = "1.6.0"
 authors = [{name = "Brandolín, Salvador Eduardo", email = "salvadorebrandolin@unc.edu.ar"}]
 license = {text = "MIT License"}
 readme = "README.md"
@@ -51,3 +51,4 @@ target-version = ["py312"]
 omit = [
     "thermodiff/gui/app.py",
 ]
+
