@@ -1,0 +1,183 @@
+name: Publish release to PyPI
+
+# Publishes the package to PyPI when a GitHub release is published in the
+# canonical repository, SalvadorBrandolin/thermodiff.
+#
+# This file is intended to be merged into that repository by pull request.
+# It is triggered by `release: published`, so the release itself is the
+# human decision point; no separate tag push is needed.
+#
+# Authentication uses PyPI Trusted Publishing (OIDC): no API token or
+# password is stored in the repository. The PyPI project must have a
+# trusted publisher configured for:
+#   owner:       SalvadorBrandolin
+#   repository:  thermodiff
+#   workflow:    release.yml
+#   environment: pypi
+# See RELEASING.md.
+#
+# A fork can contain this file, but the repository guard below prevents a
+# release published in a fork from publishing to PyPI.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: SalvadorBrandolin/thermodiff
+  PACKAGE_NAME: thermodiff
+
+jobs:
+  ci:
+    name: Full CI
+    if: github.repository == 'SalvadorBrandolin/thermodiff'
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.repository == 'SalvadorBrandolin/thermodiff'
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Check out the released tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Check release tag matches the package version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          ref = os.environ["RELEASE_TAG"].strip()
+          tag = ref[1:] if ref.startswith("v") else ref
+
+          with open("pyproject.toml", "rb") as handle:
+              project = tomllib.load(handle)["project"]
+
+          version = project["version"]
+          name = project["name"]
+
+          if name != "thermodiff":
+              raise SystemExit(f"Unexpected project name: {name!r}")
+          if tag != version:
+              raise SystemExit(
+                  f"Release tag {ref!r} does not match pyproject version "
+                  f"{version!r}. Bump the version and cut the release again."
+              )
+
+          description = project.get("description", "")
+          if description.strip().lower() in {"", "project description"}:
+              print(
+                  "::warning::pyproject.toml still has a placeholder "
+                  "description; PyPI will show it verbatim."
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={version}\n")
+              out.write(f"tag={ref}\n")
+          print(f"Releasing {name} {version} from {ref}")
+          PY
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Validate distribution metadata
+        run: python -m twine check --strict dist/*
+
+      - name: Install the wheel in a clean environment
+        run: |
+          python -m venv /tmp/thermodiff-release
+          /tmp/thermodiff-release/bin/python -m pip install --upgrade pip
+          /tmp/thermodiff-release/bin/python -m pip install dist/*.whl
+          /tmp/thermodiff-release/bin/python -m pip check
+          /tmp/thermodiff-release/bin/python - <<'PY'
+          import importlib.metadata as metadata
+          import thermodiff
+
+          installed = metadata.version("thermodiff")
+          print(f"imported thermodiff, version {installed}")
+          print(f"module file: {thermodiff.__file__}")
+          PY
+          test -x /tmp/thermodiff-release/bin/thermodiff-model
+          test -x /tmp/thermodiff-release/bin/thermodiff-gui
+          /tmp/thermodiff-release/bin/thermodiff-model --help >/dev/null
+
+      - name: Store distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to PyPI
+    needs: [build, ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.repository == 'SalvadorBrandolin/thermodiff'
+    environment:
+      name: pypi
+      url: https://pypi.org/p/thermodiff
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  attach:
+    name: Attach distributions to the release
+    needs: [build, publish, ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.repository == 'SalvadorBrandolin/thermodiff'
+    permissions:
+      contents: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload to the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: gh release upload "$TAG" dist/* --clobber
