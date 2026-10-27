@@ -1,0 +1,757 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../../genindex.html"><link rel="search" title="Search" href="../../../search.html">
+
+    <!-- Generated with Sphinx 9.2.0 and Furo 2025.12.19 -->
+        <title>thermodiff.model.ir - thermodiff 1.6.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../../index.html"><div class="brand">thermodiff 1.6.0 documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../../index.html">
+  
+  <span class="sidebar-brand-text">thermodiff 1.6.0 documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../tutorial/index.html">Tutorial</a><input aria-label="Toggle navigation of Tutorial" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/getting_started.html">Getting started</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/mole_fraction.html">Tutorial: the basics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/mhv.html">Differentiate: Modified Huron-Vidal mixrule</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/fortran.html">Fortran code generation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/model_file.html">Model files: compiling a <code class="docutils literal notranslate"><span class="pre">.model</span></code> file to Fortran</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../thermovars.html">Thermodynamic Variables</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../diffplz.html">DiffPlz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../fortran.html">Fortran code generation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../model.html">Model files (<code class="docutils literal notranslate"><span class="pre">.model</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../gui.html">Graphical front-end</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../latex_utils.html">LaTeX Utilities</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../core/init.html">Core module</a><input aria-label="Toggle navigation of Core module" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../core/idxfunction.html">IndexBase Function</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../core/kronecker_handling.html">Kronecker delta Handling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../core/easy_sums.html">Easy Summations Functions</a></li>
+</ul>
+</li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <h1>Source code for thermodiff.model.ir</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""Symbolic interpretation of a parsed ``.model`` file.</span>
+
+<span class="sd">This module turns the raw declarations of :mod:`thermodiff.model.parser`</span>
+<span class="sd">into a SymPy expression by:</span>
+
+<span class="sd">* resolving declared names (arrays, scalars, dimensions and names brought</span>
+<span class="sd">  in by ``use`` statements),</span>
+<span class="sd">* substituting the ``expressions`` block into the ``function`` expression,</span>
+<span class="sd">* validating that every index is balanced,</span>
+<span class="sd">* renaming the user indices so they never clash with the ``i``/``j``</span>
+<span class="sd">  indices reserved by :class:`~thermodiff.diffplz.DiffPlz`.</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">sympy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sp</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff</span><span class="w"> </span><span class="kn">import</span> <span class="n">thermovars</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff.model.errors</span><span class="w"> </span><span class="kn">import</span> <span class="n">ModelError</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff.model.parser</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExpressionParser</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Declaration"</span><span class="p">,</span> <span class="s2">"ModelIR"</span><span class="p">,</span> <span class="s2">"build_ir"</span><span class="p">,</span> <span class="s2">"split_decl_name"</span><span class="p">]</span>
+
+
+<span class="c1">#: Thermodynamic variables that ``DiffPlz`` knows how to differentiate.</span>
+<span class="n">_VARIABLE_SYMBOLS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"T"</span><span class="p">:</span> <span class="n">thermovars</span><span class="o">.</span><span class="n">T</span><span class="p">,</span>
+    <span class="s2">"V"</span><span class="p">:</span> <span class="n">thermovars</span><span class="o">.</span><span class="n">V</span><span class="p">,</span>
+    <span class="s2">"P"</span><span class="p">:</span> <span class="n">thermovars</span><span class="o">.</span><span class="n">P</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="c1">#: Prefix used for the internal index symbols.  It avoids clashing with the</span>
+<span class="c1">#: ``i`` and ``j`` indices reserved for the derivatives.</span>
+<span class="n">_INDEX_PREFIX</span> <span class="o">=</span> <span class="s2">"model_idx_"</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Declaration</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""A resolved declaration.</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    base : str</span>
+<span class="sd">        Base name of the declared object.</span>
+<span class="sd">    rank : int</span>
+<span class="sd">        Number of indices (0 for scalars).</span>
+<span class="sd">    letters : tuple of str</span>
+<span class="sd">        Subscript letters written in the declaration, if any.</span>
+<span class="sd">    dims : tuple of str</span>
+<span class="sd">        Dimension names of the declaration.</span>
+<span class="sd">    line : int</span>
+<span class="sd">        Line number of the declaration.</span>
+<span class="sd">    """</span>
+
+    <span class="n">base</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">rank</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">letters</span><span class="p">:</span> <span class="nb">tuple</span>
+    <span class="n">dims</span><span class="p">:</span> <span class="nb">tuple</span>
+    <span class="n">line</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ModelIR</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""The symbolic interpretation of a ``.model`` file."""</span>
+
+    <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">uses</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">imported</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">dimensions</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">variables</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">parameters</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">declared_variables</span><span class="p">:</span> <span class="nb">set</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">set</span><span class="p">)</span>
+    <span class="n">function</span><span class="p">:</span> <span class="n">sp</span><span class="o">.</span><span class="n">Expr</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">indexes</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">warnings</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">split_decl_name</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">dims</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Split a declaration token into base name, letters and dimensions.</span>
+
+<span class="sd">    ``k_ij`` declared with two dimensions becomes the base ``k`` with the</span>
+<span class="sd">    (decorative) subscripts ``ij``.  A trailing ``_letters`` is only</span>
+<span class="sd">    treated as subscripts when its length matches the number of declared</span>
+<span class="sd">    dimensions, or when no dimensions are given at all.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    token : str</span>
+<span class="sd">        Name as written in the file, for example ``k_ij``.</span>
+<span class="sd">    dims : tuple of str</span>
+<span class="sd">        Declared dimensions.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    base : str</span>
+<span class="sd">        Base name.</span>
+<span class="sd">    letters : tuple of str</span>
+<span class="sd">        Subscript letters, if any.</span>
+<span class="sd">    dims : tuple of str</span>
+<span class="sd">        The dimensions to use (``nc`` by default for each letter).</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="s2">"_"</span> <span class="ow">in</span> <span class="n">token</span><span class="p">:</span>
+        <span class="n">base</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">suffix</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">rpartition</span><span class="p">(</span><span class="s2">"_"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">base</span> <span class="ow">and</span> <span class="n">suffix</span><span class="o">.</span><span class="n">isalpha</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">dims</span><span class="p">:</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">suffix</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">dims</span><span class="p">):</span>
+                    <span class="k">return</span> <span class="n">base</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">suffix</span><span class="p">),</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">dims</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">base</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">suffix</span><span class="p">),</span> <span class="p">(</span><span class="s2">"nc"</span><span class="p">,)</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">suffix</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">token</span><span class="p">,</span> <span class="p">(),</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">dims</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_imported_names</span><span class="p">(</span><span class="n">use_text</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Return the names declared after ``only:`` in a ``use`` line."""</span>
+    <span class="n">lowered</span> <span class="o">=</span> <span class="n">use_text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="n">marker</span> <span class="o">=</span> <span class="n">lowered</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s2">"only"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">marker</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">marker</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="s2">"only"</span><span class="p">)</span>
+    <span class="n">rest</span> <span class="o">=</span> <span class="n">use_text</span><span class="p">[</span><span class="n">start</span><span class="p">:]</span><span class="o">.</span><span class="n">lstrip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">rest</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">":"</span><span class="p">):</span>
+        <span class="n">rest</span> <span class="o">=</span> <span class="n">rest</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+    <span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="n">name</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">rest</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">","</span><span class="p">)]</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span> <span class="k">if</span> <span class="n">name</span><span class="p">]</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_Resolver</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Resolve identifiers found in expressions to SymPy objects."""</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">default_upper</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scalars</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bases</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">indexed_bases</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pool</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">default_upper</span> <span class="o">=</span> <span class="n">default_upper</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">index</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">letter</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""Return (creating if needed) the internal index for ``letter``."""</span>
+        <span class="k">if</span> <span class="n">letter</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">[</span><span class="n">letter</span><span class="p">]</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Idx</span><span class="p">(</span><span class="n">_INDEX_PREFIX</span> <span class="o">+</span> <span class="n">letter</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">[</span><span class="n">letter</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_scalar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">symbol</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scalars</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">symbol</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_base</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">indexed_base</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bases</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">rank</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">indexed_bases</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">indexed_base</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">resolve</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">token</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""Return the SymPy object for an identifier ``token``."""</span>
+        <span class="k">if</span> <span class="n">token</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">scalars</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">scalars</span><span class="p">[</span><span class="n">token</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">token</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">bases</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"array </span><span class="si">{</span><span class="n">token</span><span class="si">!r}</span><span class="s2"> requires </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">bases</span><span class="p">[</span><span class="n">token</span><span class="p">]</span><span class="si">}</span><span class="s2"> subscript(s)"</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="s2">"_"</span> <span class="ow">in</span> <span class="n">token</span><span class="p">:</span>
+            <span class="n">base</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">suffix</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">rpartition</span><span class="p">(</span><span class="s2">"_"</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">base</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">bases</span> <span class="ow">and</span> <span class="n">suffix</span><span class="o">.</span><span class="n">isalpha</span><span class="p">():</span>
+                <span class="n">rank</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">bases</span><span class="p">[</span><span class="n">base</span><span class="p">]</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">suffix</span><span class="p">)</span> <span class="o">!=</span> <span class="n">rank</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">"array </span><span class="si">{</span><span class="n">base</span><span class="si">!r}</span><span class="s2"> expects </span><span class="si">{</span><span class="n">rank</span><span class="si">}</span><span class="s2"> subscript(s), "</span>
+                        <span class="sa">f</span><span class="s2">"got </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">suffix</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+                    <span class="p">)</span>
+                <span class="n">indexed_base</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">indexed_bases</span><span class="p">[</span><span class="n">base</span><span class="p">]</span>
+                <span class="n">indices</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">char</span><span class="p">)</span> <span class="k">for</span> <span class="n">char</span> <span class="ow">in</span> <span class="n">suffix</span><span class="p">]</span>
+                <span class="k">return</span> <span class="n">sp</span><span class="o">.</span><span class="n">Indexed</span><span class="p">(</span><span class="n">indexed_base</span><span class="p">,</span> <span class="o">*</span><span class="n">indices</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"undefined name </span><span class="si">{</span><span class="n">token</span><span class="si">!r}</span><span class="s2">"</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_register_dimension</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">dimensions</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Register a dimension name and return its symbol."""</span>
+    <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s2">"nc"</span><span class="p">:</span>
+        <span class="n">symbol</span> <span class="o">=</span> <span class="n">thermovars</span><span class="o">.</span><span class="n">nc</span>
+        <span class="n">resolver</span><span class="o">.</span><span class="n">add_scalar</span><span class="p">(</span><span class="s2">"nc"</span><span class="p">,</span> <span class="n">symbol</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">symbol</span>
+    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">resolver</span><span class="o">.</span><span class="n">scalars</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">resolver</span><span class="o">.</span><span class="n">scalars</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+    <span class="n">symbol</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">integer</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">resolver</span><span class="o">.</span><span class="n">add_scalar</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">symbol</span><span class="p">)</span>
+    <span class="n">dimensions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">symbol</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_build_declaration</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">dimensions</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="n">kind</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Turn a raw declaration into a :class:`Declaration`."""</span>
+    <span class="n">base</span><span class="p">,</span> <span class="n">letters</span><span class="p">,</span> <span class="n">dims</span> <span class="o">=</span> <span class="n">split_decl_name</span><span class="p">(</span><span class="n">raw</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">raw</span><span class="o">.</span><span class="n">dims</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">dim</span> <span class="ow">in</span> <span class="n">dims</span><span class="p">:</span>
+        <span class="n">_register_dimension</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">dimensions</span><span class="p">)</span>
+    <span class="n">rank</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">dims</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">letters</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">letters</span><span class="p">)</span> <span class="o">!=</span> <span class="n">rank</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"declaration </span><span class="si">{</span><span class="n">raw</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s2"> has inconsistent subscripts/dimensions"</span><span class="p">,</span>
+            <span class="n">raw</span><span class="o">.</span><span class="n">line</span><span class="p">,</span>
+            <span class="n">filename</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="n">declaration</span> <span class="o">=</span> <span class="n">Declaration</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">letters</span><span class="p">,</span> <span class="n">dims</span><span class="p">,</span> <span class="n">raw</span><span class="o">.</span><span class="n">line</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s2">"variables"</span><span class="p">:</span>
+        <span class="n">_register_variable</span><span class="p">(</span><span class="n">declaration</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">declaration</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_indexed_base</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">dims</span><span class="p">,</span> <span class="n">resolver</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Create an :class:`sympy.IndexedBase` with a well defined shape.</span>
+
+<span class="sd">    A shape is required so that the Fortran printer can inspect bare</span>
+<span class="sd">    indexed objects without raising.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">dims</span><span class="p">:</span>
+        <span class="n">shape</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">resolver</span><span class="o">.</span><span class="n">scalars</span><span class="p">[</span><span class="n">dim</span><span class="p">]</span> <span class="k">for</span> <span class="n">dim</span> <span class="ow">in</span> <span class="n">dims</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">shape</span> <span class="o">=</span> <span class="p">(</span><span class="n">resolver</span><span class="o">.</span><span class="n">default_upper</span><span class="p">,)</span> <span class="o">*</span> <span class="n">rank</span>
+    <span class="k">return</span> <span class="n">sp</span><span class="o">.</span><span class="n">IndexedBase</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">shape</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_register_variable</span><span class="p">(</span><span class="n">declaration</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">filename</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Store a variable in the resolver."""</span>
+    <span class="n">base</span> <span class="o">=</span> <span class="n">declaration</span><span class="o">.</span><span class="n">base</span>
+    <span class="n">rank</span> <span class="o">=</span> <span class="n">declaration</span><span class="o">.</span><span class="n">rank</span>
+    <span class="k">if</span> <span class="n">base</span> <span class="ow">in</span> <span class="n">resolver</span><span class="o">.</span><span class="n">bases</span> <span class="ow">or</span> <span class="n">base</span> <span class="ow">in</span> <span class="n">resolver</span><span class="o">.</span><span class="n">scalars</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">base</span><span class="si">!r}</span><span class="s2"> is declared more than once"</span><span class="p">,</span>
+            <span class="n">declaration</span><span class="o">.</span><span class="n">line</span><span class="p">,</span>
+            <span class="n">filename</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">base</span> <span class="o">==</span> <span class="s2">"n"</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">rank</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+                <span class="s2">"'n' must be declared with a single dimension (rank 1)"</span><span class="p">,</span>
+                <span class="n">declaration</span><span class="o">.</span><span class="n">line</span><span class="p">,</span>
+                <span class="n">filename</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="n">resolver</span><span class="o">.</span><span class="n">add_base</span><span class="p">(</span><span class="s2">"n"</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">thermovars</span><span class="o">.</span><span class="n">n</span><span class="p">)</span>
+        <span class="k">return</span>
+    <span class="k">if</span> <span class="n">base</span> <span class="ow">in</span> <span class="n">_VARIABLE_SYMBOLS</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">rank</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"variable </span><span class="si">{</span><span class="n">base</span><span class="si">!r}</span><span class="s2"> must be a scalar"</span><span class="p">,</span>
+                <span class="n">declaration</span><span class="o">.</span><span class="n">line</span><span class="p">,</span>
+                <span class="n">filename</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="n">resolver</span><span class="o">.</span><span class="n">add_scalar</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">_VARIABLE_SYMBOLS</span><span class="p">[</span><span class="n">base</span><span class="p">])</span>
+        <span class="k">return</span>
+    <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">resolver</span><span class="o">.</span><span class="n">add_scalar</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="n">base</span><span class="p">))</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">resolver</span><span class="o">.</span><span class="n">add_base</span><span class="p">(</span>
+            <span class="n">base</span><span class="p">,</span>
+            <span class="n">rank</span><span class="p">,</span>
+            <span class="n">_indexed_base</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">rank</span><span class="p">,</span> <span class="n">declaration</span><span class="o">.</span><span class="n">dims</span><span class="p">,</span> <span class="n">resolver</span><span class="p">),</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_register_parameter</span><span class="p">(</span><span class="n">declaration</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">filename</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Store a parameter in the resolver."""</span>
+    <span class="n">base</span> <span class="o">=</span> <span class="n">declaration</span><span class="o">.</span><span class="n">base</span>
+    <span class="k">if</span> <span class="n">base</span> <span class="ow">in</span> <span class="n">resolver</span><span class="o">.</span><span class="n">scalars</span> <span class="ow">or</span> <span class="n">base</span> <span class="ow">in</span> <span class="n">resolver</span><span class="o">.</span><span class="n">bases</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">base</span><span class="si">!r}</span><span class="s2"> is declared more than once"</span><span class="p">,</span>
+            <span class="n">declaration</span><span class="o">.</span><span class="n">line</span><span class="p">,</span>
+            <span class="n">filename</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">declaration</span><span class="o">.</span><span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">resolver</span><span class="o">.</span><span class="n">add_scalar</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="n">base</span><span class="p">))</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">resolver</span><span class="o">.</span><span class="n">add_base</span><span class="p">(</span>
+            <span class="n">base</span><span class="p">,</span>
+            <span class="n">declaration</span><span class="o">.</span><span class="n">rank</span><span class="p">,</span>
+            <span class="n">_indexed_base</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">declaration</span><span class="o">.</span><span class="n">rank</span><span class="p">,</span> <span class="n">declaration</span><span class="o">.</span><span class="n">dims</span><span class="p">,</span> <span class="n">resolver</span><span class="p">),</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_inline</span><span class="p">(</span><span class="n">expr</span><span class="p">,</span> <span class="n">defs</span><span class="p">,</span> <span class="n">resolver</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Substitute every known intermediate definition into ``expr``."""</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">defs</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">replacements</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">base</span><span class="p">,</span> <span class="p">(</span><span class="n">rank</span><span class="p">,</span> <span class="n">letters</span><span class="p">,</span> <span class="n">definition</span><span class="p">)</span> <span class="ow">in</span> <span class="n">defs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">symbol</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="n">base</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">expr</span><span class="o">.</span><span class="n">has</span><span class="p">(</span><span class="n">symbol</span><span class="p">):</span>
+                    <span class="n">replacements</span><span class="p">[</span><span class="n">symbol</span><span class="p">]</span> <span class="o">=</span> <span class="n">definition</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">occurrence</span> <span class="ow">in</span> <span class="n">expr</span><span class="o">.</span><span class="n">atoms</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">Indexed</span><span class="p">):</span>
+                    <span class="k">if</span> <span class="p">(</span>
+                        <span class="nb">str</span><span class="p">(</span><span class="n">occurrence</span><span class="o">.</span><span class="n">base</span><span class="p">)</span> <span class="o">==</span> <span class="n">base</span>
+                        <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">occurrence</span><span class="o">.</span><span class="n">indices</span><span class="p">)</span> <span class="o">==</span> <span class="n">rank</span>
+                    <span class="p">):</span>
+                        <span class="n">mapping</span> <span class="o">=</span> <span class="p">{</span>
+                            <span class="n">resolver</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">letters</span><span class="p">[</span><span class="n">k</span><span class="p">]):</span> <span class="n">occurrence</span><span class="o">.</span><span class="n">indices</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+                            <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">rank</span><span class="p">)</span>
+                        <span class="p">}</span>
+                        <span class="n">replacements</span><span class="p">[</span><span class="n">occurrence</span><span class="p">]</span> <span class="o">=</span> <span class="n">definition</span><span class="o">.</span><span class="n">xreplace</span><span class="p">(</span><span class="n">mapping</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">replacements</span><span class="p">:</span>
+            <span class="k">break</span>
+        <span class="n">expr</span> <span class="o">=</span> <span class="n">expr</span><span class="o">.</span><span class="n">xreplace</span><span class="p">(</span><span class="n">replacements</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">expr</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_free_indices</span><span class="p">(</span><span class="n">expr</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Return the free indices of ``expr``."""</span>
+    <span class="n">bound</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">limit</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">total</span> <span class="ow">in</span> <span class="n">expr</span><span class="o">.</span><span class="n">atoms</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">Sum</span><span class="p">)</span> <span class="k">for</span> <span class="n">limit</span> <span class="ow">in</span> <span class="n">total</span><span class="o">.</span><span class="n">limits</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">idx</span> <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="n">expr</span><span class="o">.</span><span class="n">atoms</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">Idx</span><span class="p">)</span> <span class="k">if</span> <span class="n">idx</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">bound</span><span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_check_balance</span><span class="p">(</span><span class="n">expr</span><span class="p">,</span> <span class="n">letters</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">line</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Ensure the free indices of ``expr`` match the declared subscripts."""</span>
+    <span class="n">expected</span> <span class="o">=</span> <span class="p">{</span><span class="n">resolver</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">letter</span><span class="p">)</span> <span class="k">for</span> <span class="n">letter</span> <span class="ow">in</span> <span class="n">letters</span><span class="p">}</span>
+    <span class="n">found</span> <span class="o">=</span> <span class="n">_free_indices</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">found</span> <span class="o">!=</span> <span class="n">expected</span><span class="p">:</span>
+        <span class="n">missing</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">idx</span><span class="p">)</span> <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="n">expected</span> <span class="o">-</span> <span class="n">found</span><span class="p">)</span>
+        <span class="n">extra</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">idx</span><span class="p">)</span> <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="n">found</span> <span class="o">-</span> <span class="n">expected</span><span class="p">)</span>
+        <span class="n">details</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+            <span class="n">details</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"missing subscripts "</span> <span class="o">+</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">missing</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">extra</span><span class="p">:</span>
+            <span class="n">details</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"unexpected free indices "</span> <span class="o">+</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">extra</span><span class="p">))</span>
+        <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"index mismatch in </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">: "</span> <span class="o">+</span> <span class="s2">"; "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">details</span><span class="p">),</span>
+            <span class="n">line</span><span class="p">,</span>
+            <span class="n">filename</span><span class="p">,</span>
+        <span class="p">)</span>
+
+
+<div class="viewcode-block" id="build_ir">
+<a class="viewcode-back" href="../../../model.html#thermodiff.model.build_ir">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">build_ir</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Build the symbolic representation of a parsed ``.model`` file.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    raw : RawModel</span>
+<span class="sd">        Result of :func:`thermodiff.model.parser.read_sections`.</span>
+<span class="sd">    filename : str, optional</span>
+<span class="sd">        File name used for error messages.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    ModelIR</span>
+<span class="sd">        The symbolic model ready to be differentiated.</span>
+<span class="sd">    """</span>
+    <span class="n">resolver</span> <span class="o">=</span> <span class="n">_Resolver</span><span class="p">(</span><span class="n">default_upper</span><span class="o">=</span><span class="n">thermovars</span><span class="o">.</span><span class="n">nc</span><span class="p">)</span>
+    <span class="n">dimensions</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="c1"># ``nc`` is provided by the runtime and is not an extra argument.</span>
+    <span class="n">resolver</span><span class="o">.</span><span class="n">add_scalar</span><span class="p">(</span><span class="s2">"nc"</span><span class="p">,</span> <span class="n">thermovars</span><span class="o">.</span><span class="n">nc</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">raw</span><span class="o">.</span><span class="n">target</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">raw</span><span class="o">.</span><span class="n">target</span> <span class="o">!=</span> <span class="s2">"fortran"</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"unsupported target </span><span class="si">{</span><span class="n">raw</span><span class="o">.</span><span class="n">target</span><span class="si">!r}</span><span class="s2">; only 'fortran' is supported"</span><span class="p">,</span>
+            <span class="kc">None</span><span class="p">,</span>
+            <span class="n">filename</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="n">variables</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">raw_decl</span> <span class="ow">in</span> <span class="n">raw</span><span class="o">.</span><span class="n">variables</span><span class="p">:</span>
+        <span class="n">declaration</span> <span class="o">=</span> <span class="n">_build_declaration</span><span class="p">(</span>
+            <span class="n">raw_decl</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">dimensions</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="s2">"variables"</span>
+        <span class="p">)</span>
+        <span class="n">variables</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">declaration</span><span class="p">)</span>
+
+    <span class="n">parameters</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">raw_decl</span> <span class="ow">in</span> <span class="n">raw</span><span class="o">.</span><span class="n">parameters</span><span class="p">:</span>
+        <span class="n">declaration</span> <span class="o">=</span> <span class="n">_build_declaration</span><span class="p">(</span>
+            <span class="n">raw_decl</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">dimensions</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="s2">"parameters"</span>
+        <span class="p">)</span>
+        <span class="n">_register_parameter</span><span class="p">(</span><span class="n">declaration</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
+        <span class="n">parameters</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">declaration</span><span class="p">)</span>
+
+    <span class="n">imported</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">use_text</span><span class="p">,</span> <span class="n">_line</span> <span class="ow">in</span> <span class="n">raw</span><span class="o">.</span><span class="n">uses</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_imported_names</span><span class="p">(</span><span class="n">use_text</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">resolver</span><span class="o">.</span><span class="n">scalars</span> <span class="ow">or</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">resolver</span><span class="o">.</span><span class="n">bases</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">resolver</span><span class="o">.</span><span class="n">add_scalar</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="n">name</span><span class="p">))</span>
+            <span class="n">imported</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="n">declared_variables</span> <span class="o">=</span> <span class="p">{</span><span class="n">declaration</span><span class="o">.</span><span class="n">base</span> <span class="k">for</span> <span class="n">declaration</span> <span class="ow">in</span> <span class="n">variables</span><span class="p">}</span>
+
+    <span class="n">defs</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">raw_def</span> <span class="ow">in</span> <span class="n">raw</span><span class="o">.</span><span class="n">expressions</span><span class="p">:</span>
+        <span class="n">base</span><span class="p">,</span> <span class="n">letters</span><span class="p">,</span> <span class="n">def_dims</span> <span class="o">=</span> <span class="n">split_decl_name</span><span class="p">(</span><span class="n">raw_def</span><span class="o">.</span><span class="n">lhs</span><span class="p">,</span> <span class="p">())</span>
+        <span class="k">if</span> <span class="n">base</span> <span class="ow">in</span> <span class="n">defs</span> <span class="ow">or</span> <span class="n">base</span> <span class="ow">in</span> <span class="n">resolver</span><span class="o">.</span><span class="n">scalars</span> <span class="ow">or</span> <span class="n">base</span> <span class="ow">in</span> <span class="n">resolver</span><span class="o">.</span><span class="n">bases</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">base</span><span class="si">!r}</span><span class="s2"> is defined more than once"</span><span class="p">,</span>
+                <span class="n">raw_def</span><span class="o">.</span><span class="n">line</span><span class="p">,</span>
+                <span class="n">filename</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="n">parser</span> <span class="o">=</span> <span class="n">ExpressionParser</span><span class="p">(</span>
+            <span class="n">raw_def</span><span class="o">.</span><span class="n">rhs</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">raw_def</span><span class="o">.</span><span class="n">line</span><span class="p">,</span> <span class="n">filename</span>
+        <span class="p">)</span>
+        <span class="n">expression</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse</span><span class="p">()</span>
+        <span class="n">expression</span> <span class="o">=</span> <span class="n">_inline</span><span class="p">(</span><span class="n">expression</span><span class="p">,</span> <span class="n">defs</span><span class="p">,</span> <span class="n">resolver</span><span class="p">)</span>
+        <span class="n">_check_balance</span><span class="p">(</span>
+            <span class="n">expression</span><span class="p">,</span> <span class="n">letters</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">raw_def</span><span class="o">.</span><span class="n">line</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="n">base</span>
+        <span class="p">)</span>
+        <span class="n">defs</span><span class="p">[</span><span class="n">base</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">letters</span><span class="p">),</span> <span class="n">letters</span><span class="p">,</span> <span class="n">expression</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">letters</span><span class="p">:</span>
+            <span class="n">resolver</span><span class="o">.</span><span class="n">add_scalar</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">(</span><span class="n">base</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">resolver</span><span class="o">.</span><span class="n">add_base</span><span class="p">(</span>
+                <span class="n">base</span><span class="p">,</span>
+                <span class="nb">len</span><span class="p">(</span><span class="n">letters</span><span class="p">),</span>
+                <span class="n">_indexed_base</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">letters</span><span class="p">),</span> <span class="n">def_dims</span><span class="p">,</span> <span class="n">resolver</span><span class="p">),</span>
+            <span class="p">)</span>
+
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">ExpressionParser</span><span class="p">(</span>
+        <span class="n">raw</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">rhs</span><span class="p">,</span> <span class="n">resolver</span><span class="p">,</span> <span class="n">raw</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">line</span><span class="p">,</span> <span class="n">filename</span>
+    <span class="p">)</span>
+    <span class="n">function</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse</span><span class="p">()</span>
+    <span class="n">function</span> <span class="o">=</span> <span class="n">_inline</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">defs</span><span class="p">,</span> <span class="n">resolver</span><span class="p">)</span>
+
+    <span class="n">leftovers</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span>
+        <span class="p">{</span>
+            <span class="nb">str</span><span class="p">(</span><span class="n">occurrence</span><span class="o">.</span><span class="n">base</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">occurrence</span> <span class="ow">in</span> <span class="n">function</span><span class="o">.</span><span class="n">atoms</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">Indexed</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">occurrence</span><span class="o">.</span><span class="n">base</span><span class="p">)</span> <span class="ow">in</span> <span class="n">defs</span>
+        <span class="p">}</span>
+        <span class="o">|</span> <span class="p">{</span>
+            <span class="nb">str</span><span class="p">(</span><span class="n">symbol</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">symbol</span> <span class="ow">in</span> <span class="n">function</span><span class="o">.</span><span class="n">atoms</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">symbol</span><span class="p">)</span> <span class="ow">in</span> <span class="n">defs</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">leftovers</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">ModelError</span><span class="p">(</span>
+            <span class="s2">"intermediate expressions were not fully substituted: "</span>
+            <span class="o">+</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">leftovers</span><span class="p">),</span>
+            <span class="n">raw</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">line</span><span class="p">,</span>
+            <span class="n">filename</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="n">model_name</span> <span class="o">=</span> <span class="p">(</span><span class="n">raw</span><span class="o">.</span><span class="n">model</span> <span class="ow">or</span> <span class="s2">"model"</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="n">warnings</span> <span class="o">=</span> <span class="n">_unused_warnings</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">parameters</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">ModelIR</span><span class="p">(</span>
+        <span class="n">model_name</span><span class="o">=</span><span class="n">model_name</span><span class="p">,</span>
+        <span class="n">uses</span><span class="o">=</span><span class="p">[</span><span class="n">use_text</span> <span class="k">for</span> <span class="n">use_text</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">raw</span><span class="o">.</span><span class="n">uses</span><span class="p">],</span>
+        <span class="n">imported</span><span class="o">=</span><span class="n">imported</span><span class="p">,</span>
+        <span class="n">dimensions</span><span class="o">=</span><span class="n">dimensions</span><span class="p">,</span>
+        <span class="n">variables</span><span class="o">=</span><span class="n">variables</span><span class="p">,</span>
+        <span class="n">parameters</span><span class="o">=</span><span class="n">parameters</span><span class="p">,</span>
+        <span class="n">declared_variables</span><span class="o">=</span><span class="n">declared_variables</span><span class="p">,</span>
+        <span class="n">function</span><span class="o">=</span><span class="n">function</span><span class="p">,</span>
+        <span class="n">indexes</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">resolver</span><span class="o">.</span><span class="n">pool</span><span class="o">.</span><span class="n">values</span><span class="p">()),</span>
+        <span class="n">warnings</span><span class="o">=</span><span class="n">warnings</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_unused_warnings</span><span class="p">(</span><span class="n">function</span><span class="p">,</span> <span class="n">parameters</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Return warning strings for declared but unused parameters."""</span>
+    <span class="n">used_symbols</span> <span class="o">=</span> <span class="p">{</span><span class="nb">str</span><span class="p">(</span><span class="n">symbol</span><span class="p">)</span> <span class="k">for</span> <span class="n">symbol</span> <span class="ow">in</span> <span class="n">function</span><span class="o">.</span><span class="n">atoms</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">Symbol</span><span class="p">)}</span>
+    <span class="n">used_bases</span> <span class="o">=</span> <span class="p">{</span><span class="nb">str</span><span class="p">(</span><span class="n">indexed</span><span class="o">.</span><span class="n">base</span><span class="p">)</span> <span class="k">for</span> <span class="n">indexed</span> <span class="ow">in</span> <span class="n">function</span><span class="o">.</span><span class="n">atoms</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">Indexed</span><span class="p">)}</span>
+    <span class="n">warnings</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">declaration</span> <span class="ow">in</span> <span class="n">parameters</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">declaration</span><span class="o">.</span><span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">present</span> <span class="o">=</span> <span class="n">declaration</span><span class="o">.</span><span class="n">base</span> <span class="ow">in</span> <span class="n">used_symbols</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">present</span> <span class="o">=</span> <span class="n">declaration</span><span class="o">.</span><span class="n">base</span> <span class="ow">in</span> <span class="n">used_bases</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">present</span><span class="p">:</span>
+            <span class="n">warnings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"parameter </span><span class="si">{</span><span class="n">declaration</span><span class="o">.</span><span class="n">base</span><span class="si">!r}</span><span class="s2"> is declared but never used"</span>
+            <span class="p">)</span>
+    <span class="k">return</span> <span class="n">warnings</span>
+</pre></div>
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Salvador Eduardo Brandolín
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer no-toc">
+      
+      
+      
+    </aside>
+  </div>
+</div><script src="../../../_static/documentation_options.js?v=72d88caf"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../../_static/copybutton.js?v=f281be69"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    </body>
+</html>
