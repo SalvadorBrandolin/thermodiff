@@ -60,6 +60,17 @@ def _build_parser():
             "several derivatives; keep the fully inlined expressions."
         ),
     )
+    parser.add_argument(
+        "--no-share",
+        dest="share",
+        action="store_false",
+        help=(
+            "do not compute shared summations and common scalar "
+            "sub-expressions a single time; every output is emitted from "
+            "its own fully inlined expressions (benchmark variant "
+            "'V1 none' together with --no-array-cse)."
+        ),
+    )
     return parser
 
 
@@ -95,6 +106,7 @@ def main(argv=None):
             derivatives=derivatives,
             optional_derivatives=args.optional_derivatives,
             array_cse=args.array_cse,
+            share=args.share,
         )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)

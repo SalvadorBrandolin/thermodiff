@@ -818,6 +818,8 @@ def to_fortran(
     module_symbols=None,
     optional_derivatives=False,
     array_cse=True,
+    share=True,
+    stats=None,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -861,6 +863,26 @@ def to_fortran(
         sub-expressions of rank up to two are materialised, because a
         larger temporary costs more than it saves.  Disable the pass to
         obtain the plain, fully inlined expressions.
+    share : bool, optional
+        When ``True`` (the default), summations and common scalar
+        sub-expressions shared by several outputs are computed a single
+        time as internal temporaries (:func:`_share_sums` and
+        :func:`_common_scalar_cse`).  Set it to ``False`` to disable both
+        sharing passes: every output is then emitted from its own fully
+        inlined expressions and repeated summations are re-evaluated per
+        output.  The benchmark variant "V1 none" is
+        ``array_cse=False, share=False``; "V2 partial" is
+        ``array_cse=False``; "V3 full" is ``array_cse=True``.  The flag
+        only changes the generated body: the signature, the declaration
+        block and the output order are identical for every setting.
+    stats : dict, optional
+        When given, it is filled in place with generation statistics:
+        ``operation_count`` (``sympy.count_ops`` summed over the final
+        output expressions and over the body of every shared temporary),
+        ``operation_count_tool`` (the exact tool/options used) and
+        ``n_temporaries`` (number of shared temporaries emitted).  The
+        count is a symbolic-operation count of the final expressions, not
+        a runtime estimate.
 
     Returns
     -------
@@ -1023,8 +1045,15 @@ def to_fortran(
         all_exprs, array_defs = _indexed_cse(all_exprs, namer, arrays)
     else:
         array_defs = []
-    residuals, sum_defs = _share_sums(all_exprs, namer, diff.indexes, arrays)
-    residuals, cse_defs = _common_scalar_cse(residuals, namer, arrays)
+    if share:
+        residuals, sum_defs = _share_sums(
+            all_exprs, namer, diff.indexes, arrays
+        )
+        residuals, cse_defs = _common_scalar_cse(residuals, namer, arrays)
+    else:
+        residuals = list(all_exprs)
+        sum_defs = []
+        cse_defs = []
     rendered = [
         (
             attr,
@@ -1036,6 +1065,15 @@ def to_fortran(
     ]
 
     definitions = array_defs + sum_defs + cse_defs
+    if stats is not None:
+        stats["operation_count"] = sum(
+            sp.count_ops(residual, visual=False) for residual in residuals
+        ) + sum(
+            sp.count_ops(definition["body"], visual=False)
+            for definition in definitions
+        )
+        stats["operation_count_tool"] = "sympy.count_ops(visual=False)"
+        stats["n_temporaries"] = len(definitions)
     out_names = {attr: out_name for attr, out_name, _, _ in rendered}
 
     temp_names = {
@@ -1088,6 +1126,12 @@ def to_fortran(
             str(limit[0])
             for definition in definitions
             for limit in definition["limits"]
+        }
+        | {
+            str(limit[0])
+            for _attr, _out, residual, _free in rendered
+            for total in residual.atoms(sp.Sum)
+            for limit in total.limits
         }
     )
 

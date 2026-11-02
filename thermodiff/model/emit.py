@@ -120,7 +120,12 @@ def build_diff(ir, derivatives=None):
 
 
 def emit_module(
-    ir, derivatives=None, diff=None, optional_derivatives=False, array_cse=True
+    ir,
+    derivatives=None,
+    diff=None,
+    optional_derivatives=False,
+    array_cse=True,
+    share=True,
 ):
     """Generate the Fortran module for a :class:`ModelIR`.
 
@@ -145,6 +150,11 @@ def emit_module(
         shared by several derivatives are materialised into array
         temporaries computed a single time.  Set it to ``False`` to keep
         the fully inlined expressions.
+    share : bool, optional
+        When ``True`` (the default), summations and common scalar
+        sub-expressions shared by several outputs are computed a single
+        time.  Set it to ``False`` to disable all sharing (the benchmark
+        variant "V1 none" is ``array_cse=False, share=False``).
 
     Returns
     -------
@@ -170,6 +180,7 @@ def emit_module(
         module_symbols=ir.imported,
         optional_derivatives=optional_derivatives,
         array_cse=array_cse,
+        share=share,
     )
 
     lines = [

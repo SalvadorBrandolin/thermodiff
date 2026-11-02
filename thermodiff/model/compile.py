@@ -13,6 +13,7 @@ def compile_model(
     derivatives=None,
     optional_derivatives=False,
     array_cse=True,
+    share=True,
 ):
     """Compile the contents of a ``.model`` file into a Fortran module.
 
@@ -36,6 +37,10 @@ def compile_model(
         When ``True`` (the default), index-dependent sub-expressions
         shared by several derivatives are materialised into array
         temporaries computed a single time.
+    share : bool, optional
+        When ``True`` (the default), summations and common scalar
+        sub-expressions shared by several outputs are computed a single
+        time.  Set it to ``False`` to disable all sharing.
 
     Returns
     -------
@@ -49,11 +54,16 @@ def compile_model(
         derivatives=derivatives,
         optional_derivatives=optional_derivatives,
         array_cse=array_cse,
+        share=share,
     )
 
 
 def compile_model_file(
-    path, derivatives=None, optional_derivatives=False, array_cse=True
+    path,
+    derivatives=None,
+    optional_derivatives=False,
+    array_cse=True,
+    share=True,
 ):
     """Compile a ``.model`` file into a Fortran module.
 
@@ -69,6 +79,9 @@ def compile_model_file(
     array_cse : bool, optional
         Materialise shared index-dependent sub-expressions.  See
         :func:`compile_model`.
+    share : bool, optional
+        Compute shared summations and scalar sub-expressions a single
+        time.  See :func:`compile_model`.
 
     Returns
     -------
@@ -83,4 +96,5 @@ def compile_model_file(
         derivatives=derivatives,
         optional_derivatives=optional_derivatives,
         array_cse=array_cse,
+        share=share,
     )
