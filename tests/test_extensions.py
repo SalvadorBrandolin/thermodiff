@@ -496,8 +496,6 @@ def test_hoisted_slot_index_never_clashes_with_an_argument():
 # sum_free_alpha, fuse_temps, nest_sums)
 # ---------------------------------------------------------------------------
 
-from model_harness import CHAIN_SETTINGS  # noqa: E402
-
 CHAIN_VARIANTS = ["c3", "c6", "c6l", "c6f", "c6n", "c6s"]
 
 
@@ -509,7 +507,7 @@ def test_chain_variant_matches_reference_rkpr(tmp_path, variant):
     reference, _ = _run_rkpr(ref_dir, EXTENDED_VARIANTS["a0"])
     var_dir = tmp_path / variant
     var_dir.mkdir()
-    values, _ = _run_rkpr(var_dir, CHAIN_SETTINGS[variant])
+    values, _ = _run_rkpr(var_dir, EXTENDED_VARIANTS[variant])
     rel = np.abs(values - reference) / np.maximum(np.abs(reference), 1e-8)
     assert rel.max() < 1e-11, (variant, rel.max())
 
@@ -533,7 +531,7 @@ def _double_loop_statements(code):
 def test_c6n_hessian_has_analytic_structure():
     """With every loop pass the W6 kernel has few O(nc^2) passes and no
     transcendental function inside a double loop except the a_ij matrix."""
-    code = compile_model(PR76_SYM, derivatives=W6, **CHAIN_SETTINGS["c6n"])
+    code = compile_model(PR76_SYM, derivatives=W6, **EXTENDED_VARIANTS["c6n"])
     inner = _double_loop_statements(code)
     sqrt_lines = [s for s in inner if "sqrt(" in s]
     assert len(sqrt_lines) == 1  # the a_ij pair matrix
@@ -543,8 +541,8 @@ def test_c6n_hessian_has_analytic_structure():
 
 
 def test_loop_passes_are_deterministic_and_off_by_default():
-    first = compile_model(PR76_SYM, derivatives="dn,dndn", **CHAIN_SETTINGS["c6n"])
-    second = compile_model(PR76_SYM, derivatives="dn,dndn", **CHAIN_SETTINGS["c6n"])
+    first = compile_model(PR76_SYM, derivatives="dn,dndn", **EXTENDED_VARIANTS["c6n"])
+    second = compile_model(PR76_SYM, derivatives="dn,dndn", **EXTENDED_VARIANTS["c6n"])
     assert first == second
     plain = compile_model(PR76_SYM, derivatives="dn,dndn")
     assert plain == compile_model(
@@ -623,7 +621,7 @@ def test_chain_review_regressions(model):
     text = _REVIEW_MODELS[model]
     ref, _ = mh.run(text, EXTENDED_VARIANTS["a0"], _REVIEW_INITS[model])
     for variant in ("c3", "c6n"):
-        values, _ = mh.run(text, CHAIN_SETTINGS[variant], _REVIEW_INITS[model])
+        values, _ = mh.run(text, EXTENDED_VARIANTS[variant], _REVIEW_INITS[model])
         assert np.all(np.isfinite(values)), (model, variant)
         rel = np.abs(values - ref) / np.maximum(np.abs(ref), 1e-8)
         assert rel.max() < 1e-11, (model, variant, rel.max())

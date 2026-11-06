@@ -84,6 +84,11 @@ _EXTRA_KEYS = (
     "sum_alpha",
     "array_pad",
     "hoist_invariants",
+    "chain_rule",
+    "hoist_loops",
+    "sum_free_alpha",
+    "fuse_temps",
+    "nest_sums",
 )
 
 #: Extended variants for the ablation / symmetry study (thesis chapter).
@@ -139,6 +144,32 @@ EXTENDED_VARIANTS = {
     "a10h": dict(
         array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
         sum_alpha=True, hoist_invariants=True,
+    ),
+    # chain-rule differentiation over summation nodes (structure of the
+    # hand-written analytic code)
+    "c3": dict(array_cse=True, share=True, hoist_invariants=True, chain_rule=True),
+    "c6": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True, chain_rule=True,
+    ),
+    "c6l": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
+    ),
+    "c6f": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
+        sum_free_alpha=True, fuse_temps=True,
+    ),
+    "c6n": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
+        sum_free_alpha=True, fuse_temps=True, nest_sums=True,
+    ),
+    "c6s": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
+        sum_free_alpha=True, fuse_temps=True, nest_sums=True, cse_backend="sympy",
     ),
 }
 for _key, _settings in EXTENDED_VARIANTS.items():

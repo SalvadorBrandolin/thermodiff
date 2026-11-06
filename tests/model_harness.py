@@ -75,36 +75,7 @@ def run(text, settings, inits=None, present=OUTS, derivs=W6, opt=True):
         subprocess.run(["./drive"], cwd=d, check=True)
         return np.loadtxt(d/"out.txt"), code
 
-#: Chain-rule variants of the study.  A later, optional commit registers
-#: them in ``bench_hooks.EXTENDED_VARIANTS``; until then this local copy is
-#: used.
-CHAIN_SETTINGS = {
-    "c3": dict(array_cse=True, share=True, hoist_invariants=True, chain_rule=True),
-    "c6": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
-        sum_alpha=True, hoist_invariants=True, chain_rule=True,
-    ),
-    "c6l": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
-        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
-    ),
-    "c6f": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
-        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
-        sum_free_alpha=True, fuse_temps=True,
-    ),
-    "c6n": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
-        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
-        sum_free_alpha=True, fuse_temps=True, nest_sums=True,
-    ),
-    "c6s": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
-        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
-        sum_free_alpha=True, fuse_temps=True, nest_sums=True, cse_backend="sympy",
-    ),
-}
-COMBOS = {k: CHAIN_SETTINGS[k] for k in ("c3","c6","c6l","c6f","c6n")}
+COMBOS = {k: EXTENDED_VARIANTS[k] for k in ("c3","c6","c6l","c6f","c6n")}
 EXTRA = {
   "chain_only": dict(array_cse=False, share=False, chain_rule=True),
   "chain_psym": dict(array_cse=True, share=True, param_symmetry=True, chain_rule=True),
