@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 import sympy as sp
 
+from thermodiff.bench_hooks import EXTENDED_VARIANTS
 from thermodiff.fortran import (
     _canonical_symmetric,
     _fold_symmetric_sums,
@@ -33,48 +34,6 @@ from thermodiff.model.parser import read_sections
 GFORTRAN = os.environ.get("FC") or shutil.which("gfortran")
 
 RKPR_PATH = os.path.join(os.path.dirname(__file__), "data", "rkpr.model")
-
-#: Codegen settings of the extended variants (a subset of the ablation
-#: study; each one changes a single setting relative to its neighbour).
-EXTENDED_VARIANTS = {
-    "a0": dict(array_cse=False, share=False),
-    "a1": dict(array_cse=False, share=True, scalar_cse=False),
-    "a2": dict(array_cse=False, share=True),
-    "a3": dict(array_cse=True, share=True),
-    "a4": dict(array_cse=True, share=True, hessian_symmetry=True),
-    "a5": dict(array_cse=True, share=True, param_symmetry=True),
-    "a6": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True
-    ),
-    "a7": dict(array_cse=True, share=True, cse_backend="sympy"),
-    "a8": dict(array_cse=False, share=False, scalar_cse=True),
-    "a9": dict(array_cse=True, share=True, sum_alpha=True),
-    "a10": dict(
-        array_cse=True,
-        share=True,
-        param_symmetry=True,
-        hessian_symmetry=True,
-        sum_alpha=True,
-    ),
-    "a3p": dict(array_cse=True, share=True, array_pad=8),
-    "a6p": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
-        array_pad=8,
-    ),
-    "a10p": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
-        sum_alpha=True, array_pad=8,
-    ),
-    "a3h": dict(array_cse=True, share=True, hoist_invariants=True),
-    "a6h": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
-        hoist_invariants=True,
-    ),
-    "a10h": dict(
-        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
-        sum_alpha=True, hoist_invariants=True,
-    ),
-}
 
 PR76_SYM = """
 model pr76

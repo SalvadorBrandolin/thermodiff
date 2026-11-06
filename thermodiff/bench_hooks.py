@@ -74,6 +74,82 @@ VARIANTS = {
     },
 }
 
+#: Optional codegen keys a variant may set (see ``to_fortran``).
+_EXTRA_KEYS = (
+    "share_sums",
+    "scalar_cse",
+    "param_symmetry",
+    "hessian_symmetry",
+    "cse_backend",
+    "sum_alpha",
+    "array_pad",
+    "hoist_invariants",
+)
+
+#: Extended variants for the ablation / symmetry study (thesis chapter).
+#: Each one changes a single setting relative to its neighbour.
+#:   a0  nothing                 (= v1)
+#:   a1  + share_sums
+#:   a2  + scalar_cse            (= v2)
+#:   a3  + array_cse             (= v3)
+#:   a4  a3 + hessian_symmetry
+#:   a5  a3 + param_symmetry
+#:   a6  a3 + both symmetries
+#:   a7  a3 with the SymPy CSE backend
+#:   a8  scalar_cse only (no share_sums, no array_cse)
+#:   a9  a3 + alpha-equivalent summation sharing
+#:   a10 a6 + alpha-equivalent summation sharing
+EXTENDED_VARIANTS = {
+    "a0": dict(array_cse=False, share=False),
+    "a1": dict(array_cse=False, share=True, scalar_cse=False),
+    "a2": dict(array_cse=False, share=True),
+    "a3": dict(array_cse=True, share=True),
+    "a4": dict(array_cse=True, share=True, hessian_symmetry=True),
+    "a5": dict(array_cse=True, share=True, param_symmetry=True),
+    "a6": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True
+    ),
+    "a7": dict(array_cse=True, share=True, cse_backend="sympy"),
+    "a8": dict(array_cse=False, share=False, scalar_cse=True),
+    # added after the first campaign: alpha-equivalent summation sharing
+    "a9": dict(array_cse=True, share=True, sum_alpha=True),
+    "a10": dict(
+        array_cse=True,
+        share=True,
+        param_symmetry=True,
+        hessian_symmetry=True,
+        sum_alpha=True,
+    ),
+    # added after the N >= 45 bimodality was found: padded rank-2 temporaries
+    "a3p": dict(array_cse=True, share=True, array_pad=8),
+    "a6p": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        array_pad=8,
+    ),
+    "a10p": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, array_pad=8,
+    ),
+    # added to close the RKPR regression: loop-invariant hoisting
+    "a3h": dict(array_cse=True, share=True, hoist_invariants=True),
+    "a6h": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        hoist_invariants=True,
+    ),
+    "a10h": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True,
+    ),
+}
+for _key, _settings in EXTENDED_VARIANTS.items():
+    VARIANTS[_key] = dict(
+        key=_key,
+        id=f"td_{_key}",
+        token=_key,
+        label=_key.upper(),
+        **_settings,
+    )
+
 #: Workload id -> ``derivatives=`` string (frozen interface contract).
 WORKLOADS = {
     "w0": "none",
@@ -244,6 +320,8 @@ def generate_workload(
         array_cse=settings["array_cse"],
         share=settings["share"],
         stats=stats,
+        symmetric_params=getattr(ir, "symmetric", ()),
+        **{key: settings[key] for key in _EXTRA_KEYS if key in settings},
     )
     emit_time_s = time.perf_counter() - phase
 
@@ -268,6 +346,7 @@ def generate_workload(
         "optional_derivatives": bool(optional_derivatives),
         "array_cse": settings["array_cse"],
         "share": settings["share"],
+        **{key: settings[key] for key in _EXTRA_KEYS if key in settings},
         "spliced_uses": list(ir.uses),
         "path": path,
         "generation_time_s": generation_time_s,
