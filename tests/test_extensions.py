@@ -27,6 +27,105 @@ from thermodiff.model.parser import read_sections
 
 GFORTRAN = os.environ.get("FC") or shutil.which("gfortran")
 
+PR76_SYM = """
+model pr76
+target fortran
+use yaeos__constants, only: R
+
+variables
+    n   nc
+    V
+    T
+
+parameters
+    Tc    nc
+    Pc    nc
+    w     nc
+    kij   nc nc
+    lij   nc nc
+
+expressions
+    kappa_i = 0.37464 + 1.54226*w_i - 0.26993*w_i^2
+    ac_i    = 0.45723553*R^2*Tc_i^2/Pc_i
+    b_i     = 0.07779607*R*Tc_i/Pc_i
+    alpha_i = (1 + kappa_i*(1 - sqrt(T/Tc_i)))^2
+    a_i     = ac_i*alpha_i
+    ntot    = sum_i n_i
+    bmix    = sum_i sum_j n_i*n_j*((b_i + b_j)/2.0)*(1.0 - lij_ij)/ntot
+    D       = sum_i sum_j n_i*n_j*sqrt(a_i*a_j)*(1.0 - kij_ij)
+    d1      = 1.0 + sqrt(2.0)
+    d2      = 1.0 - sqrt(2.0)
+    f       = log((V + d1*bmix)/(V + d2*bmix))/(bmix*(d1 - d2))
+    g       = R*log(1.0 - bmix/V)
+
+function
+    -ntot*g*T - D*f
+"""
+
+
+def _nested_binding_violations(expr):
+    violations = []
+    for outer in expr.atoms(sp.Sum):
+        outer_bound = {limit[0] for limit in outer.limits}
+        for inner in outer.function.atoms(sp.Sum):
+            if outer_bound & {limit[0] for limit in inner.limits}:
+                violations.append((outer, inner))
+    return violations
+
+
+def _free(expr):
+    bound = {lim[0] for s in expr.atoms(sp.Sum) for lim in s.limits}
+    return {i for i in expr.atoms(sp.Idx) if i not in bound}
+
+
+class TestAlphaRenaming:
+    def test_sum_i_no_longer_captures(self):
+        ir = build_ir(read_sections(PR76_SYM, "x"), "x")
+        assert _nested_binding_violations(ir.function) == []
+
+    def test_free_index_not_shadowed(self):
+        text = """
+model cap
+variables
+    n nc
+parameters
+    b nc
+expressions
+    ntot = sum_i n_i
+    x_i  = n_i*ntot*b_i
+function
+    sum_i x_i
+"""
+        ir = build_ir(read_sections(text, "x"), "x")
+        assert _nested_binding_violations(ir.function) == []
+        assert _free(ir.function) == set()
+
+    def test_definition_used_with_its_bound_letter(self):
+        # x_i = sum_j a_ij used as x_j: the bound j must be renamed.
+        text = """
+model cap2
+variables
+    n nc
+parameters
+    a nc nc
+expressions
+    x_i = sum_j a_ij*n_j
+function
+    sum_j n_j*x_j
+"""
+        ir = build_ir(read_sections(text, "x"), "x")
+        assert _nested_binding_violations(ir.function) == []
+        (total,) = [
+            s for s in ir.function.atoms(sp.Sum) if s.function.has(sp.Sum)
+        ]
+        inner = [s for s in total.function.atoms(sp.Sum)][0]
+        # the matrix keeps two distinct subscripts
+        (a_occ,) = [
+            o for o in inner.function.atoms(sp.Indexed) if str(o.base) == "a"
+        ]
+        assert a_occ.indices[0] != a_occ.indices[1]
+
+
 def test_array_cse_slots_avoid_symbols_case_insensitively():
     """Array CSE slot indices never coincide with a symbol, ignoring case."""
     i = sp.Idx("i")

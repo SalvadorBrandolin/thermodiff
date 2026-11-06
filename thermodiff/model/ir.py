@@ -272,29 +272,105 @@ def _register_parameter(declaration, resolver, filename):
         )
 
 
+def _bound_indices(expr):
+    """Return the summation indices bound anywhere inside ``expr``."""
+    return {
+        limit[0] for total in expr.atoms(sp.Sum) for limit in total.limits
+    }
+
+
+def _fresh_index(resolver, avoid):
+    """Return a new internal index whose letter is not used anywhere."""
+    for letter in "abcdefghopqrstuvwxyz" + "klmn":
+        if letter in resolver.pool:
+            continue
+        index = resolver.index(letter)
+        if index not in avoid:
+            return index
+    raise ModelError("ran out of index letters while renaming summations")
+
+
+def _alpha_rename(definition, avoid, resolver):
+    """Rename the bound indices of ``definition`` that clash with ``avoid``.
+
+    This is the usual capture-avoiding substitution: a summation index of
+    an inlined definition must not coincide with an index that is free at
+    the insertion point (the subscripts of the occurrence) nor with an
+    index bound by an enclosing summation.
+    """
+    clashes = sorted(_bound_indices(definition) & set(avoid), key=str)
+    if not clashes:
+        return definition
+    mapping = {}
+    taken = set(avoid) | definition.atoms(sp.Idx)
+    for index in clashes:
+        fresh = _fresh_index(resolver, taken)
+        taken.add(fresh)
+        mapping[index] = fresh
+    return definition.xreplace(mapping)
+
+
+def _substitute(expr, defs, resolver, enclosing):
+    """One capture-avoiding substitution pass over ``expr``.
+
+    ``enclosing`` is the set of indices bound by the summations that
+    contain ``expr``.  Returns ``(new_expr, changed)``.
+    """
+    if isinstance(expr, sp.Symbol):
+        entry = defs.get(str(expr))
+        if entry is not None and entry[0] == 0:
+            return _alpha_rename(entry[2], enclosing, resolver), True
+        return expr, False
+    if isinstance(expr, sp.Indexed):
+        entry = defs.get(str(expr.base))
+        if entry is not None and len(expr.indices) == entry[0]:
+            rank, letters, definition = entry
+            # Rename the definition's own bound indices away from the
+            # occurrence subscripts *before* mapping its free indices.
+            avoid = set(enclosing) | set(expr.indices)
+            definition = _alpha_rename(definition, avoid, resolver)
+            mapping = {
+                resolver.index(letters[k]): expr.indices[k]
+                for k in range(rank)
+            }
+            return definition.xreplace(mapping), True
+        return expr, False
+    if not expr.args:
+        return expr, False
+    if isinstance(expr, sp.Sum):
+        inner = set(enclosing) | {limit[0] for limit in expr.limits}
+        body, changed = _substitute(expr.function, defs, resolver, inner)
+        if not changed:
+            return expr, False
+        return sp.Sum(body, *expr.limits), True
+    changed = False
+    args = []
+    for arg in expr.args:
+        new, flag = _substitute(arg, defs, resolver, enclosing)
+        changed = changed or flag
+        args.append(new)
+    if not changed:
+        return expr, False
+    return expr.func(*args), True
+
+
 def _inline(expr, defs, resolver):
-    """Substitute every known intermediate definition into ``expr``."""
+    """Substitute every known intermediate definition into ``expr``.
+
+    The substitution is capture avoiding: bound summation indices of an
+    inlined definition are renamed (alpha conversion) whenever they clash
+    with an index bound by an enclosing summation or with the subscripts
+    of the occurrence.  Without the renaming, ``ntot = sum_i n_i`` inlined
+    into ``sum_i sum_j n_i*n_j/ntot`` would silently bind ``i`` twice.
+    """
     for _ in range(len(defs) + 1):
-        replacements = {}
-        for base, (rank, letters, definition) in defs.items():
-            if rank == 0:
-                symbol = sp.Symbol(base)
-                if expr.has(symbol):
-                    replacements[symbol] = definition
-            else:
-                for occurrence in expr.atoms(sp.Indexed):
-                    if (
-                        str(occurrence.base) == base
-                        and len(occurrence.indices) == rank
-                    ):
-                        mapping = {
-                            resolver.index(letters[k]): occurrence.indices[k]
-                            for k in range(rank)
-                        }
-                        replacements[occurrence] = definition.xreplace(mapping)
-        if not replacements:
+        # Indices already present anywhere in the host expression (free
+        # or bound) are avoided too, so that an inlined summation can never
+        # shadow a free index of its surroundings.
+        context = frozenset(expr.atoms(sp.Idx))
+        expr, changed = _substitute(expr, defs, resolver, context)
+        if not changed:
             break
-        expr = expr.xreplace(replacements)
     return expr
 
 

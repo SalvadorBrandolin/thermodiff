@@ -137,12 +137,13 @@ class TestSumLetterCapture:
         ir = build_ir(raw, "ok.model")
         assert _nested_binding_violations(ir.function) == []
 
-    def test_sum_i_sketch_would_capture(self):
-        # Documents the deviation from the plan sketch: inlining
-        # `ntot = sum_i n_i` into `sum_i sum_j ...` binds `i` twice.
+    def test_sum_i_sketch_no_longer_captures(self):
+        # Before the capture-avoiding inlining (alpha renaming of bound
+        # indices, thesis extension) `ntot = sum_i n_i` inlined into
+        # `sum_i sum_j ...` bound `i` twice.  It must not any more.
         raw = read_sections(_CAPTURE_MODEL_BAD, "bad.model")
         ir = build_ir(raw, "bad.model")
-        assert _nested_binding_violations(ir.function) != []
+        assert _nested_binding_violations(ir.function) == []
 
     def test_pr76_model_file_uses_sum_m(self):
         path = (
