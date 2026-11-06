@@ -19,13 +19,28 @@ import numpy as np
 import pytest
 import sympy as sp
 
-from thermodiff.fortran import _indexed_cse, _Namer
+from thermodiff.fortran import (
+    _canonical_symmetric,
+    _fold_symmetric_sums,
+    _indexed_cse,
+    _Namer,
+)
 from thermodiff.model import compile_model
 from thermodiff.model.errors import ModelError
 from thermodiff.model.ir import build_ir
 from thermodiff.model.parser import read_sections
 
 GFORTRAN = os.environ.get("FC") or shutil.which("gfortran")
+
+RKPR_PATH = os.path.join(os.path.dirname(__file__), "data", "rkpr.model")
+
+#: Codegen settings of the extended variants (a subset of the ablation
+#: study; each one changes a single setting relative to its neighbour).
+EXTENDED_VARIANTS = {
+    "a0": dict(array_cse=False, share=False),
+    "a3": dict(array_cse=True, share=True),
+    "a5": dict(array_cse=True, share=True, param_symmetry=True),
+}
 
 PR76_SYM = """
 model pr76
@@ -41,8 +56,8 @@ parameters
     Tc    nc
     Pc    nc
     w     nc
-    kij   nc nc
-    lij   nc nc
+    kij   nc nc symmetric
+    lij   nc nc symmetric
 
 expressions
     kappa_i = 0.37464 + 1.54226*w_i - 0.26993*w_i^2
@@ -124,6 +139,152 @@ function
             o for o in inner.function.atoms(sp.Indexed) if str(o.base) == "a"
         ]
         assert a_occ.indices[0] != a_occ.indices[1]
+
+
+class TestSymmetricAttribute:
+    def test_parsed(self):
+        ir = build_ir(read_sections(PR76_SYM, "x"), "x")
+        assert ir.symmetric == ["kij", "lij"]
+
+    def test_rejects_vector(self):
+        text = PR76_SYM.replace("w     nc", "w     nc symmetric")
+        with pytest.raises(ModelError):
+            build_ir(read_sections(text, "x"), "x")
+
+    def test_rejects_dimension_after_attribute(self):
+        text = PR76_SYM.replace(
+            "kij   nc nc symmetric", "kij   nc symmetric nc"
+        )
+        with pytest.raises(ModelError):
+            read_sections(text, "x")
+
+    def test_canonical_and_fold(self):
+        p, q = sp.Idx("p"), sp.Idx("q")
+        k = sp.IndexedBase("k")
+        x = sp.IndexedBase("x")
+        nc = sp.Symbol("nc")
+        body = x[p] * x[q] * (1 - k[q, p])
+        canon = _canonical_symmetric(body, ["k"])
+        assert canon == x[p] * x[q] * (1 - k[p, q])
+        folded = _fold_symmetric_sums(
+            sp.Sum(body, (q, 1, nc), (p, 1, nc)), ["k"]
+        )
+        assert folded != sp.Sum(body, (q, 1, nc), (p, 1, nc))
+        # a non-symmetric body is left untouched
+        plain = sp.Sum(x[p] * k[p, q], (q, 1, nc), (p, 1, nc))
+        assert _fold_symmetric_sums(plain, ["k"]) == plain
+
+
+def test_default_output_unchanged_by_symmetric_attribute():
+    """Declaring ``symmetric`` alone does not alter the generated code."""
+    plain = PR76_SYM.replace(" symmetric", "")
+    assert compile_model(PR76_SYM, derivatives="dn,dndn") == compile_model(
+        plain, derivatives="dn,dndn"
+    )
+
+
+# ---------------------------------------------------------------------------
+# numerical equivalence of every extended variant
+# ---------------------------------------------------------------------------
+
+W6 = "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"
+
+DRIVER = """
+module yaeos__constants
+   implicit none
+   real(8), parameter :: R = 0.0831446261815324d0
+end module yaeos__constants
+
+program drive
+   use pr76_mod
+   implicit none
+   integer :: nc, i, j, u
+   real(8), allocatable :: tc(:), pc(:), w(:), kij(:,:), lij(:,:), n(:)
+   real(8), allocatable :: dn(:), dnv(:), dnt(:), dnn(:,:)
+   real(8) :: v, t, f, fv, ft, fvv, ftt, ftv
+   integer :: ncs(2), m
+   ncs = [3, 7]
+   open(newunit=u, file='out.txt')
+   do m = 1, 2
+      nc = ncs(m)
+      allocate(tc(nc), pc(nc), w(nc), kij(nc,nc), lij(nc,nc), n(nc))
+      allocate(dn(nc), dnv(nc), dnt(nc), dnn(nc,nc))
+      do i = 1, nc
+         tc(i) = 190d0 + 37d0*i
+         pc(i) = 46d0 - 1.7d0*i
+         w(i) = 0.01d0 + 0.04d0*i
+         n(i) = 0.3d0 + 0.11d0*i
+      end do
+      do i = 1, nc
+         do j = 1, nc
+            kij(i,j) = 0.01d0*abs(i - mod(3*j + i, nc))
+         end do
+      end do
+      kij = 0.5d0*(kij + transpose(kij))
+      lij = 0.3d0*kij
+      do i = 1, nc
+         kij(i,i) = 0d0; lij(i,i) = 0d0
+      end do
+      v = 0.9d0*sum(n); t = 320d0
+      call pr76_derivs(nc=nc, V=v, T=t, Pc=pc, Tc=tc, kij=kij, lij=lij, &
+         n=n, w=w, f=f, dfdV=fv, dfdT=ft, dfdTdV=ftv, dfdV2=fvv, &
+         dfdT2=ftt, dfdn=dn, dfdndV=dnv, dfdndT=dnt, dfdndn=dnn)
+      write(u, '(es25.17)') f, fv, ft, ftv, fvv, ftt, dn, dnv, dnt, dnn
+      deallocate(tc, pc, w, kij, lij, n, dn, dnv, dnt, dnn)
+   end do
+   close(u)
+end program drive
+"""
+
+
+def _run_variant(tmp_path, settings):
+    code = compile_model(
+        PR76_SYM, derivatives=W6, optional_derivatives=True, **settings
+    )
+    work = tmp_path
+    (work / "drive.f90").write_text(
+        DRIVER.split("program drive")[0]
+        + code
+        + "\nprogram drive"
+        + DRIVER.split("program drive")[1]
+    )
+    subprocess.run(
+        [GFORTRAN, "-O0", "-ffree-line-length-0", "drive.f90", "-o", "drive"],
+        cwd=work,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["./drive"], cwd=work, check=True)
+    return np.loadtxt(work / "out.txt"), code
+
+
+@pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
+@pytest.mark.parametrize("variant", sorted(EXTENDED_VARIANTS))
+def test_variant_matches_reference(tmp_path, variant):
+    ref_dir = tmp_path / "ref"
+    ref_dir.mkdir()
+    reference, _ = _run_variant(ref_dir, EXTENDED_VARIANTS["a0"])
+    var_dir = tmp_path / variant
+    var_dir.mkdir()
+    values, code = _run_variant(var_dir, EXTENDED_VARIANTS[variant])
+    scale = np.maximum(np.abs(reference), 1e-300)
+    rel = np.abs(values - reference) / np.maximum(scale, 1e-8)
+    assert rel.max() < 1e-11, (variant, rel.max())
+    if EXTENDED_VARIANTS[variant].get("hessian_symmetry"):
+        assert "do j = i, nc" in code
+    if EXTENDED_VARIANTS[variant].get("param_symmetry"):
+        assert " + 1, nc" in code
+
+
+def test_aux_index_never_clashes_case_insensitively():
+    """Fortran is case insensitive: no loop index may be named like ``R``."""
+    import re
+
+    with open(RKPR_PATH) as fh:
+        text = fh.read()
+    code = compile_model(text, derivatives="dn,dndn", param_symmetry=True)
+    loop_vars = set(re.findall(r"do (\w+) = ", code))
+    assert "r" not in {v.lower() for v in loop_vars}
 
 
 def test_array_cse_slots_avoid_symbols_case_insensitively():

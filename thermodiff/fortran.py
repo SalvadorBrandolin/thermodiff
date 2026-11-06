@@ -670,6 +670,21 @@ def _render_definition(definition) -> list:
         lines.append(_INDENT * depth + f"do {idx} = 1, nc")
         depth += 1
 
+    mirror = definition.get("mirror", False) and len(free) == 2 and not (
+        definition["limits"]
+    )
+    if mirror:
+        # Symmetric rank-2 temporary: fill the upper triangle and mirror.
+        lines = [f"do {free[0]} = 1, nc", f"{_INDENT}do {free[1]} = {free[0]}, nc"]
+        body_s = _print_expr(definition["body"])
+        target_s = _print_expr(target)
+        transposed = _print_expr(sp.Indexed(target.base, free[1], free[0]))
+        lines.append(_INDENT * 2 + f"{target_s} = {body_s}")
+        lines.append(_INDENT * 2 + f"{transposed} = {target_s}")
+        lines.append(_INDENT + "end do")
+        lines.append("end do")
+        return lines
+
     target_s = _print_expr(target)
     limits = definition["limits"]
     if limits:
@@ -827,6 +842,86 @@ def _wrap_signature(sub_name, arg_names, limit=120):
     return lines
 
 
+# ---------------------------------------------------------------------------
+# Symmetry handling
+# ---------------------------------------------------------------------------
+
+
+def _canonical_symmetric(expr, symmetric_params):
+    """Sort the subscripts of every symmetric parameter occurrence.
+
+    For a parameter declared ``symmetric`` (``k(i,j) == k(j,i)``) the
+    occurrence ``k(q,p)`` is rewritten as ``k(p,q)``.  The rewrite is exact
+    and makes transposed occurrences syntactically identical, which lets
+    the common sub-expression passes merge them and lets
+    :func:`_fold_symmetric_sums` recognise symmetric summation bodies.
+    """
+    if not symmetric_params:
+        return expr
+    names = set(symmetric_params)
+    replacements = {}
+    for indexed in expr.atoms(sp.Indexed):
+        if str(indexed.base) not in names or len(indexed.indices) != 2:
+            continue
+        first, second = indexed.indices
+        ordered = sorted((first, second), key=sp.default_sort_key)
+        if list(ordered) != [first, second]:
+            replacements[indexed] = sp.Indexed(indexed.base, *ordered)
+    return expr.xreplace(replacements) if replacements else expr
+
+
+def _swap(expr, a, b, symmetric_params):
+    """Swap the indices ``a`` and ``b`` and re-canonicalise."""
+    swapped = expr.xreplace({a: b, b: a})
+    return _canonical_symmetric(swapped, symmetric_params)
+
+
+class _LoopStart(sp.Symbol):
+    """Lower bound ``outer + 1`` of a folded triangular loop.
+
+    It is an opaque symbol so that no common sub-expression pass can hoist
+    the bound out of the loop header; it prints as ``outer + 1``.
+    """
+
+    def __new__(cls, outer):
+        obj = super().__new__(cls, f"{outer} + 1")
+        obj.outer = outer
+        return obj
+
+
+def _fold_symmetric_sums(expr, symmetric_params):
+    """Fold double summations whose body is symmetric in its two indices.
+
+    ``sum_a sum_b F(a,b)`` with ``F(a,b) == F(b,a)`` is rewritten as
+    ``sum_a F(a,a) + 2 sum_a sum_{b>a} F(a,b)``, which halves the number of
+    evaluations of the body.  The symmetry is checked symbolically after
+    :func:`_canonical_symmetric`; when it cannot be proven the summation is
+    left untouched, so the rewrite is always exact.
+
+    The folded double sum is stored with its limits in *loop order*
+    (outer loop first), ``Sum(F, (a, 1, nc), (b, a + 1, nc))``, which is the
+    order in which the code generator emits the ``do`` loops.  The object is
+    only used for code generation, never evaluated by SymPy.
+    """
+    replacements = {}
+    for total in expr.atoms(sp.Sum):
+        if len(total.limits) != 2:
+            continue
+        (a, low_a, high_a), (b, low_b, high_b) = total.limits
+        if low_a != 1 or low_b != 1 or high_a != high_b:
+            continue
+        body = total.function
+        canon = _canonical_symmetric(body, symmetric_params)
+        if _swap(canon, a, b, symmetric_params) != canon:
+            continue
+        outer, inner = sorted((a, b), key=sp.default_sort_key)
+        diagonal = canon.xreplace({inner: outer})
+        replacements[total] = sp.Sum(diagonal, (outer, 1, high_a)) + sp.Integer(
+            2
+        ) * sp.Sum(canon, (outer, 1, high_a), (inner, _LoopStart(outer), high_a))
+    return expr.xreplace(replacements) if replacements else expr
+
+
 def to_fortran(
     diff,
     derivatives=None,
@@ -839,6 +934,8 @@ def to_fortran(
     array_cse=True,
     share=True,
     stats=None,
+    symmetric_params=(),
+    param_symmetry=False,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -902,6 +999,13 @@ def to_fortran(
         ``n_temporaries`` (number of shared temporaries emitted).  The
         count is a symbolic-operation count of the final expressions, not
         a runtime estimate.
+    symmetric_params : iterable of str, optional
+        Names of rank-2 parameters known to be symmetric (declared with the
+        ``symmetric`` attribute in a ``.model`` file).
+    param_symmetry : bool, optional
+        Exploit ``symmetric_params``: canonicalise their subscripts and
+        fold symmetric double summations into a triangular loop (see
+        :func:`_fold_symmetric_sums`).  Off by default.
 
     Returns
     -------
@@ -955,10 +1059,15 @@ def to_fortran(
             )
         )
 
+    symmetric_params = tuple(symmetric_params or ())
+
     prepared = []
     for attr, out_name, expr in outputs:
         expr = _kron_to_piecewise(expr)
         expr = expr.xreplace({nc: sp.Symbol("nc")})
+        if param_symmetry and symmetric_params:
+            expr = _canonical_symmetric(expr, symmetric_params)
+            expr = _fold_symmetric_sums(expr, symmetric_params)
         free_order = _order_free(_free_indices(expr), diff.indexes)
         prepared.append((attr, out_name, expr, free_order))
 
@@ -996,6 +1105,8 @@ def to_fortran(
             if name in index_names or name in base_names:
                 continue
             if sym in (T, V, P) or name == "nc":
+                continue
+            if isinstance(sym, _LoopStart):
                 continue
             if name in module_symbols or name in integer_args:
                 continue
@@ -1064,6 +1175,14 @@ def to_fortran(
         all_exprs, array_defs = _indexed_cse(all_exprs, namer, arrays)
     else:
         array_defs = []
+    if param_symmetry and symmetric_params:
+        for definition in array_defs:
+            free = definition["free"]
+            if len(free) != 2 or definition["limits"]:
+                continue
+            body = _canonical_symmetric(definition["body"], symmetric_params)
+            if _swap(body, free[0], free[1], symmetric_params) == body:
+                definition["mirror"] = True
     if share:
         residuals, sum_defs = _share_sums(
             all_exprs, namer, diff.indexes, arrays

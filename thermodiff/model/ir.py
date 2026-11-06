@@ -57,6 +57,7 @@ class Declaration:
     letters: tuple
     dims: tuple
     line: int
+    symmetric: bool = False
 
 
 @dataclass
@@ -73,6 +74,7 @@ class ModelIR:
     function: sp.Expr | None = None
     indexes: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
+    symmetric: list = field(default_factory=list)
 
 
 def split_decl_name(token, dims):
@@ -196,7 +198,21 @@ def _build_declaration(raw, resolver, dimensions, filename, kind):
             raw.line,
             filename,
         )
-    declaration = Declaration(base, rank, letters, dims, raw.line)
+    symmetric = "symmetric" in getattr(raw, "attributes", ())
+    if symmetric:
+        if kind != "parameters":
+            raise ModelError(
+                f"only parameters can be declared symmetric ({base!r})",
+                raw.line,
+                filename,
+            )
+        if rank != 2 or dims[0] != dims[1]:
+            raise ModelError(
+                f"symmetric parameter {base!r} must be a square rank-2 array",
+                raw.line,
+                filename,
+            )
+    declaration = Declaration(base, rank, letters, dims, raw.line, symmetric)
     if kind == "variables":
         _register_variable(declaration, resolver, filename)
     return declaration
@@ -520,6 +536,7 @@ def build_ir(raw, filename=None):
         function=function,
         indexes=list(resolver.pool.values()),
         warnings=warnings,
+        symmetric=[d.base for d in parameters if d.symmetric],
     )
 
 

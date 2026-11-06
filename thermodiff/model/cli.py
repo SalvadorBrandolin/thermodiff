@@ -71,6 +71,15 @@ def _build_parser():
             "'V1 none' together with --no-array-cse)."
         ),
     )
+    parser.add_argument(
+        "--param-symmetry",
+        action="store_true",
+        help=(
+            "exploit the parameters declared 'symmetric': canonicalise "
+            "their subscripts and fold symmetric double sums into "
+            "triangular loops."
+        ),
+    )
     return parser
 
 
@@ -107,6 +116,7 @@ def main(argv=None):
             optional_derivatives=args.optional_derivatives,
             array_cse=args.array_cse,
             share=args.share,
+            param_symmetry=args.param_symmetry,
         )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)

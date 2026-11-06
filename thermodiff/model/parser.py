@@ -98,6 +98,11 @@ class RawDecl:
     name: str
     dims: tuple
     line: int
+    attributes: tuple = ()
+
+
+#: Attribute keywords accepted after the dimensions of a declaration.
+DECL_ATTRIBUTES = ("symmetric",)
 
 
 @dataclass
@@ -291,7 +296,19 @@ def _parse_decl(logical, line_no, filename):
             f"invalid declaration name {name!r}", line_no, filename
         )
     dims = []
+    attributes = []
     for token in parts[1:]:
+        if token in DECL_ATTRIBUTES:
+            if token not in attributes:
+                attributes.append(token)
+            continue
+        if attributes:
+            raise ModelError(
+                f"dimension {token!r} after attribute in declaration of "
+                f"{name!r}",
+                line_no,
+                filename,
+            )
         if not _IDENT_RE.fullmatch(token):
             raise ModelError(
                 f"invalid dimension {token!r} in declaration of {name!r}",
@@ -299,7 +316,7 @@ def _parse_decl(logical, line_no, filename):
                 filename,
             )
         dims.append(token)
-    return RawDecl(name, tuple(dims), line_no)
+    return RawDecl(name, tuple(dims), line_no, tuple(attributes))
 
 
 def tokenize(text, line=None, filename=None):

@@ -14,6 +14,7 @@ def compile_model(
     optional_derivatives=False,
     array_cse=True,
     share=True,
+    **codegen,
 ):
     """Compile the contents of a ``.model`` file into a Fortran module.
 
@@ -55,6 +56,7 @@ def compile_model(
         optional_derivatives=optional_derivatives,
         array_cse=array_cse,
         share=share,
+        **codegen,
     )
 
 
@@ -64,6 +66,7 @@ def compile_model_file(
     optional_derivatives=False,
     array_cse=True,
     share=True,
+    **codegen,
 ):
     """Compile a ``.model`` file into a Fortran module.
 
@@ -97,4 +100,5 @@ def compile_model_file(
         optional_derivatives=optional_derivatives,
         array_cse=array_cse,
         share=share,
+        **codegen,
     )

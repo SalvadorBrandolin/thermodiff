@@ -128,6 +128,7 @@ def emit_module(
     optional_derivatives=False,
     array_cse=True,
     share=True,
+    **codegen,
 ):
     """Generate the Fortran module for a :class:`ModelIR`.
 
@@ -157,6 +158,10 @@ def emit_module(
         sub-expressions shared by several outputs are computed a single
         time.  Set it to ``False`` to disable all sharing (the benchmark
         variant "V1 none" is ``array_cse=False, share=False``).
+    **codegen
+        Extra options forwarded to :func:`thermodiff.fortran.to_fortran`
+        (``param_symmetry``, ``stats``).  The symmetric parameters declared
+        in the model are always forwarded.
 
     Returns
     -------
@@ -183,6 +188,8 @@ def emit_module(
         optional_derivatives=optional_derivatives,
         array_cse=array_cse,
         share=share,
+        symmetric_params=getattr(ir, "symmetric", ()),
+        **codegen,
     )
 
     lines = [
