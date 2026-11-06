@@ -585,7 +585,14 @@ def _indexed_cse(expressions, namer, arrays):
     """
     exprs = list(expressions)
     definitions = []
-    used = {str(symbol) for expr in exprs for symbol in expr.atoms(sp.Symbol)}
+    # Fortran is case insensitive: compare lower-cased names, so that an
+    # auxiliary index ``r`` never clashes with e.g. a module constant ``R``.
+    used = {
+        str(symbol).lower()
+        for expr in exprs
+        for symbol in expr.atoms(sp.Symbol)
+    }
+    used.update({str(b).lower() for expr in exprs for b in expr.atoms(sp.IndexedBase)})
     used.update({"nc", "res"})
     slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
 

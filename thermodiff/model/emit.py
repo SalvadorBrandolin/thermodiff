@@ -62,6 +62,8 @@ def _rename_indices(ir, derivatives):
     reserved = _reserved_names(ir, derivatives)
     mapping = {}
     used = set()
+    # Fortran is case insensitive.
+    reserved = {name.lower() for name in reserved}
     for index in sorted(ir.indexes, key=str):
         for candidate in _LOOP_NAMES:
             if candidate not in reserved and candidate not in used:
