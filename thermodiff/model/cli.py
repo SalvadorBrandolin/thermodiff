@@ -105,6 +105,11 @@ def _build_parser():
         help="share summations equal up to renaming of their bound indices.",
     )
     parser.add_argument(
+        "--hoist-invariants",
+        action="store_true",
+        help="move costly loop-invariant sub-expressions out of summations.",
+    )
+    parser.add_argument(
         "--cse-backend",
         choices=["thermodiff", "sympy"],
         default="thermodiff",
@@ -152,6 +157,7 @@ def main(argv=None):
             hessian_symmetry=args.hessian_symmetry,
             cse_backend=args.cse_backend,
             sum_alpha=args.sum_alpha,
+            hoist_invariants=args.hoist_invariants,
         )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)

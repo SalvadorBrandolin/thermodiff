@@ -65,6 +65,15 @@ EXTENDED_VARIANTS = {
         array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
         sum_alpha=True, array_pad=8,
     ),
+    "a3h": dict(array_cse=True, share=True, hoist_invariants=True),
+    "a6h": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        hoist_invariants=True,
+    ),
+    "a10h": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True,
+    ),
 }
 
 PR76_SYM = """
@@ -373,3 +382,151 @@ function
         ("x", "(T + 2*T)"),
         ("y", "3*T"),
     ]
+
+
+# ---------------------------------------------------------------------------
+# loop-invariant hoisting (hoist_invariants)
+# ---------------------------------------------------------------------------
+
+
+RKPR_DRIVER = """
+module yaeos__constants
+   implicit none
+   real(8), parameter :: R = 0.0831446261815324d0
+end module yaeos__constants
+
+program drive
+   use rkpr_mod
+   implicit none
+   integer :: nc, i, j, u, m, ncs(2)
+   real(8), allocatable :: tc(:), ac(:), b(:), k(:), d1(:), kij(:,:), lij(:,:), n(:)
+   real(8), allocatable :: dn(:), dnv(:), dnt(:), dnn(:,:)
+   real(8) :: v, t, f, fv, ft, fvv, ftt, ftv
+   ncs = [3, 7]
+   open(newunit=u, file='out.txt')
+   do m = 1, 2
+      nc = ncs(m)
+      allocate(tc(nc), ac(nc), b(nc), k(nc), d1(nc), kij(nc,nc), lij(nc,nc), n(nc))
+      allocate(dn(nc), dnv(nc), dnt(nc), dnn(nc,nc))
+      do i = 1, nc
+         tc(i) = 190d0 + 37d0*i
+         ac(i) = 2.5d0 + 0.8d0*i
+         b(i) = 0.03d0 + 0.006d0*i
+         k(i) = 1.9d0 + 0.13d0*i
+         d1(i) = 1.6d0 + 0.07d0*i
+         n(i) = 0.3d0 + 0.11d0*i
+      end do
+      do i = 1, nc
+         do j = 1, nc
+            kij(i,j) = 0.01d0*abs(i - mod(3*j + i, nc))
+         end do
+      end do
+      kij = 0.5d0*(kij + transpose(kij))
+      lij = 0.3d0*kij
+      v = 0.9d0*sum(n); t = 320d0
+      call rkpr_derivs(nc=nc, V=v, T=t, Tc=tc, ac=ac, b=b, k=k, delta1=d1, &
+         kij=kij, lij=lij, n=n, f=f, dfdV=fv, dfdT=ft, dfdTdV=ftv, dfdV2=fvv, &
+         dfdT2=ftt, dfdn=dn, dfdndV=dnv, dfdndT=dnt, dfdndn=dnn)
+      write(u, '(es25.17)') f, fv, ft, ftv, fvv, ftt, dn, dnv, dnt, dnn
+      deallocate(tc, ac, b, k, d1, kij, lij, n, dn, dnv, dnt, dnn)
+   end do
+   close(u)
+end program drive
+"""
+
+
+def _rkpr_text():
+    with open(RKPR_PATH) as fh:
+        return fh.read()
+
+
+def _run_rkpr(work, settings):
+    code = compile_model(
+        _rkpr_text(), derivatives=W6, optional_derivatives=True, **settings
+    )
+    head, tail = RKPR_DRIVER.split("program drive", 1)
+    (work / "drive.f90").write_text(head + code + "\nprogram drive" + tail)
+    subprocess.run(
+        [GFORTRAN, "-O0", "-ffree-line-length-0", "drive.f90", "-o", "drive"],
+        cwd=work, check=True, capture_output=True,
+    )
+    subprocess.run(["./drive"], cwd=work, check=True)
+    return np.loadtxt(work / "out.txt"), code
+
+
+@pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
+@pytest.mark.parametrize("variant", ["a3h", "a6h", "a10h"])
+def test_rkpr_hoisted_variant_matches_reference(tmp_path, variant):
+    ref_dir = tmp_path / "ref"
+    ref_dir.mkdir()
+    reference, _ = _run_rkpr(ref_dir, EXTENDED_VARIANTS["a0"])
+    var_dir = tmp_path / variant
+    var_dir.mkdir()
+    values, _ = _run_rkpr(var_dir, EXTENDED_VARIANTS[variant])
+    rel = np.abs(values - reference) / np.maximum(np.abs(reference), 1e-8)
+    assert rel.max() < 1e-11, (variant, rel.max())
+
+
+def _nested_loop_bodies(code):
+    """Statements located inside at least two nested ``do`` loops."""
+    depth = 0
+    inner = []
+    for line in code.splitlines():
+        stripped = line.strip().lower()
+        if stripped.startswith("do "):
+            depth += 1
+        elif stripped == "end do":
+            depth -= 1
+        elif depth >= 2:
+            inner.append(stripped)
+    return inner
+
+
+def test_hoisting_moves_rkpr_power_out_of_double_loop():
+    """RKPR W0 with folded symmetry: ``alpha**k`` leaves the double loop."""
+    settings = dict(EXTENDED_VARIANTS["a6"])
+    plain = compile_model(_rkpr_text(), derivatives="none", **settings)
+    hoisted = compile_model(
+        _rkpr_text(), derivatives="none", hoist_invariants=True, **settings
+    )
+    assert any("**k(" in s for s in _nested_loop_bodies(plain))
+    assert not any("**k(" in s for s in _nested_loop_bodies(hoisted))
+    # no division by a loop-invariant scalar remains inside a double loop
+    assert not any("/t" in s for s in _nested_loop_bodies(hoisted))
+
+
+def test_hoisting_is_deterministic_and_off_by_default():
+    text = _rkpr_text()
+    first = compile_model(text, derivatives="dn,dndn", **EXTENDED_VARIANTS["a6h"])
+    second = compile_model(text, derivatives="dn,dndn", **EXTENDED_VARIANTS["a6h"])
+    assert first == second
+    assert compile_model(text, derivatives="dn,dndn") == compile_model(
+        text, derivatives="dn,dndn", hoist_invariants=False
+    )
+
+
+def test_hoisted_slot_index_never_clashes_with_an_argument():
+    """A scalar argument ``P`` must not be reused as a hoisting loop index.
+
+    Regression found in review: the second hoisting call (on summation
+    bodies) did not see the scalar arguments that appear only outside sums.
+    """
+    import re
+
+    text = (
+        _rkpr_text()
+        .replace("    k       nc\n", "    k       nc\n    P\n")
+        .replace("    -ntot*g*T - D*f", "    -ntot*g*T - D*f + P*G")
+        .replace(
+            "    g       = R",
+            "    G       = sum_i sum_j n_i*n_j*log(Tc_i + ntot)\n    g       = R",
+        )
+    )
+    for settings in (dict(), dict(param_symmetry=True, hessian_symmetry=True)):
+        code = compile_model(
+            text, derivatives="dn,dndn", optional_derivatives=True,
+            hoist_invariants=True, **settings,
+        )
+        loop_vars = {v.lower() for v in re.findall(r"do (\w+) = ", code)}
+        args = {a.lower() for a in re.findall(r"intent\(in\) :: (\w+)", code)}
+        assert not loop_vars & args, loop_vars & args

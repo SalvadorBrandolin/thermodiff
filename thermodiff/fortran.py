@@ -692,6 +692,162 @@ def _indexed_cse(expressions, namer, arrays):
     return exprs, definitions
 
 
+def _is_expensive(expr) -> bool:
+    """Whether evaluating ``expr`` involves a costly operation.
+
+    A function call (``log``, ``exp``, ...), a power whose exponent is not a
+    positive integer (``sqrt``, a real exponent, a division) is costly; plain
+    sums and products of loads are not.
+    """
+    for sub in sp.preorder_traversal(expr):
+        if isinstance(sub, sp.Function) and not isinstance(sub, sp.Piecewise):
+            return True
+        if isinstance(sub, sp.Pow):
+            exponent = sub.exp
+            if not (exponent.is_Integer and exponent > 0):
+                return True
+    return False
+
+
+def _hoist_invariants(expressions, namer, arrays, sum_definitions=(), reserved=()):
+    """Move loop-invariant costly sub-expressions out of summation loops.
+
+    Inside ``Sum(body, (a, ...), (b, ...))`` a sub-expression of ``body``
+    whose indices do not include every bound index ``{a, b}`` is evaluated
+    more times than needed: ``alpha(a)**k(a)`` inside a double loop costs
+    ``nc**2`` powers instead of ``nc``.  This pass replaces every such
+    sub-expression that is costly (see :func:`_is_expensive`) by a temporary
+    indexed only by its own indices (a scalar when it has none), computed
+    once before the loop -- even when it appears a single time, which is
+    what :func:`_indexed_cse` would require it to be repeated for.
+
+    Products are split by index dependence first, so that in
+    ``sqrt(ac(q)*ac(s)*t(q)**k(q)*t(s)**k(s))`` the factor
+    ``ac(q)*t(q)**k(q)`` becomes one rank-1 temporary, shared (after index
+    canonicalisation) with ``ac(s)*t(s)**k(s)``.
+
+    The pass runs twice: on the expressions before :func:`_share_sums`
+    (``expressions``), and on the bodies of the summation temporaries it
+    produced (``sum_definitions``), where sub-expressions built on other
+    summations -- such as ``1/sum_l n(l)`` -- have become plain scalars.
+
+    The rewrite is exact: every replaced sub-expression is the body of its
+    temporary, evaluated over the same indices.
+
+    Returns
+    -------
+    residuals : list
+        ``expressions`` rewritten.
+    definitions : list of dict
+        Temporaries hoisted from ``expressions``.
+    sum_definitions : list of dict
+        ``sum_definitions`` rewritten, with the temporaries hoisted from
+        each body inserted right before it.
+    """
+    exprs = list(expressions)
+    sum_definitions = list(sum_definitions)
+    # ``reserved``: every name of the subroutine (arguments, outputs, module
+    # symbols); the slot indices of the temporaries must not clash with any
+    # of them, case-insensitively (Fortran).
+    used = {
+        str(symbol).lower()
+        for expr in exprs
+        for symbol in expr.atoms(sp.Symbol)
+    }
+    used.update({str(b).lower() for expr in exprs for b in expr.atoms(sp.IndexedBase)})
+    for definition in sum_definitions:
+        body = definition["body"]
+        used.update(str(symbol).lower() for symbol in body.atoms(sp.Symbol))
+        used.update(str(b).lower() for b in body.atoms(sp.IndexedBase))
+    used.update({str(name).lower() for name in arrays})
+    used.update(str(name).lower() for name in reserved)
+    used.update({"nc", "res"})
+    slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
+    definitions = []
+    temps = {}
+
+    def candidate(sub, bound):
+        if not isinstance(sub, sp.Expr) or sub.is_Atom:
+            return False
+        if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)):
+            return False
+        if sub.has(sp.Sum) or sub.has(sp.Piecewise):
+            return False
+        if sub.is_Relational or sub.is_Boolean:
+            return False
+        if any(isinstance(s, _LoopStart) for s in sub.atoms(sp.Symbol)):
+            return False
+        indices = set(_index_symbols(sub))
+        if len(indices) > _MAX_ARRAY_CSE_RANK or bound <= indices:
+            return False
+        return _is_expensive(sub)
+
+    def temporary(sub):
+        indices = _index_symbols(sub)
+        mapping = {index: slots[pos] for pos, index in enumerate(indices)}
+        canon = sub.xreplace(mapping)
+        if canon not in temps:
+            free = slots[: len(indices)]
+            target = _new_shared_temp(namer, free, arrays)
+            definitions.append(
+                {"target": target, "free": free, "limits": [], "body": canon}
+            )
+            temps[canon] = target
+        target = temps[canon]
+        if not indices:
+            return target
+        return sp.Indexed(target.base, *indices)
+
+    def rewrite(expr, bound):
+        if isinstance(expr, sp.Sum):
+            inner = {limit[0] for limit in expr.limits}
+            return expr.func(rewrite(expr.function, inner), *expr.limits)
+        if bound is None:
+            if not expr.args or not expr.has(sp.Sum):
+                return expr
+            return expr.func(*[rewrite(arg, None) for arg in expr.args])
+        if candidate(expr, bound):
+            return temporary(expr)
+        if not expr.args or isinstance(expr, (sp.Indexed, sp.Piecewise)):
+            if isinstance(expr, sp.Piecewise) and expr.has(sp.Sum):
+                return expr.func(*[rewrite(arg, bound) for arg in expr.args])
+            return expr
+        if isinstance(expr, (sp.Mul, sp.Add)):
+            groups = {}
+            rest = []
+            for arg in expr.args:
+                indices = frozenset(_index_symbols(arg))
+                if bound <= indices or arg.has(sp.Sum) or arg.is_Number:
+                    rest.append(rewrite(arg, bound))
+                else:
+                    groups.setdefault(indices, []).append(arg)
+            new_args = list(rest)
+            for indices in sorted(groups, key=lambda s: sorted(map(str, s))):
+                members = groups[indices]
+                combined = expr.func(*members)
+                if len(members) > 1 and candidate(combined, bound):
+                    new_args.append(temporary(combined))
+                else:
+                    new_args.extend(rewrite(arg, bound) for arg in members)
+            return expr.func(*new_args)
+        if isinstance(expr, sp.Basic) and not isinstance(expr, sp.Expr):
+            return expr
+        return expr.func(*[rewrite(arg, bound) for arg in expr.args])
+
+    exprs = [rewrite(expr, None) for expr in exprs]
+    hoisted = definitions
+    definitions = []
+    rewritten = []
+    for definition in sum_definitions:
+        if definition["limits"]:
+            bound = {limit[0] for limit in definition["limits"]}
+            definition = dict(definition, body=rewrite(definition["body"], bound))
+            rewritten.extend(definitions)
+            definitions.clear()
+        rewritten.append(definition)
+    return exprs, hoisted, rewritten
+
+
 def _render_definition(definition) -> list:
     """Render the statements that fill one shared temporary."""
     target = definition["target"]
@@ -953,6 +1109,7 @@ def _fold_symmetric_sums(expr, symmetric_params):
         ) * sp.Sum(canon, (outer, 1, high_a), (inner, _LoopStart(outer), high_a))
     return expr.xreplace(replacements) if replacements else expr
 
+
 # ---------------------------------------------------------------------------
 # SymPy CSE backend
 # ---------------------------------------------------------------------------
@@ -1023,6 +1180,7 @@ def to_fortran(
     cse_backend="thermodiff",
     sum_alpha=False,
     array_pad=0,
+    hoist_invariants=False,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -1112,6 +1270,10 @@ def to_fortran(
         Extra rows added to the leading dimension of rank-2 array
         temporaries (``t(nc + pad, nc)``).  Zero (the default) keeps
         ``t(nc, nc)``.
+    hoist_invariants : bool, optional
+        Move costly sub-expressions that do not depend on every bound index
+        of their summation out of the loop, into temporaries of lower rank
+        (see :func:`_hoist_invariants`).  Off by default.
 
     Returns
     -------
@@ -1295,6 +1457,17 @@ def to_fortran(
             body = _canonical_symmetric(definition["body"], symmetric_params)
             if _swap(body, free[0], free[1], symmetric_params) == body:
                 definition["mirror"] = True
+    reserved = set(module_symbols) | set(integer_args) | {
+        out_name for _, out_name, _, _ in prepared
+    }
+    for expr in all_exprs:
+        reserved.update(str(sym) for sym in expr.atoms(sp.Symbol))
+        reserved.update(str(b) for b in expr.atoms(sp.IndexedBase))
+    if hoist_invariants:
+        all_exprs, hoist_defs, _ = _hoist_invariants(
+            all_exprs, namer, arrays, reserved=reserved
+        )
+        array_defs = array_defs + hoist_defs
     if share_sums:
         residuals, sum_defs = _share_sums(
             all_exprs, namer, diff.indexes, arrays, alpha=sum_alpha
@@ -1302,6 +1475,10 @@ def to_fortran(
     else:
         residuals = list(all_exprs)
         sum_defs = []
+    if hoist_invariants and sum_defs:
+        _, _, sum_defs = _hoist_invariants(
+            [], namer, arrays, sum_defs, reserved=reserved
+        )
     if scalar_cse:
         if cse_backend == "sympy":
             residuals, cse_defs = _sympy_scalar_cse(residuals, namer, arrays)
