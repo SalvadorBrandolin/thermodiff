@@ -424,6 +424,41 @@ class TestDriverScript:
         aggregate = json.loads((out_root / "manifest.json").read_text())
         assert len(aggregate["files"]) == 2
 
+    def test_fresh_process_generations_are_byte_identical(self, tmp_path):
+        """Hash-seed variation must not alter emitted Fortran bytes."""
+        script = os.path.join(
+            SESSION_ROOT, "scripts", "generate-symbolic-variants.py"
+        )
+        workloads = (
+            "w0", "w1", "w2", "w3", "w4", "w5a", "w5b", "w5c",
+            "w5d", "w6",
+        )
+        # Generate every one of the 30 variant/workload combinations in two
+        # fresh processes, with distinct seeds. All output stays under tmp_path.
+        for variant in VARIANT_ORDER:
+            for workload in workloads:
+                generated_bytes = []
+                for seed in ("11", "29"):
+                    out_root = tmp_path / f"seed-{seed}" / variant / workload
+                    env = dict(os.environ, PYTHONHASHSEED=seed)
+                    result = subprocess.run(
+                        [
+                            sys.executable, script, "--variants", variant,
+                            "--workloads", workload, "--out-root",
+                            str(out_root),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    assert result.returncode == 0, result.stderr
+                    files = list(out_root.rglob("*.f90"))
+                    assert len(files) == 1
+                    generated_bytes.append(files[0].read_bytes())
+                assert generated_bytes[0] == generated_bytes[1], (
+                    variant, workload
+                )
+
 
 # ---------------------------------------------------------------------------
 # Independent PR76 reference evaluation and finite differences

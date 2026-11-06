@@ -287,7 +287,9 @@ def _expand_sums(expr: sp.Expr, namer: _Namer):
     while True:
         innermost = [
             total
-            for total in residual.atoms(sp.Sum)
+            for total in sorted(
+                residual.atoms(sp.Sum), key=sp.default_sort_key
+            )
             if not total.function.atoms(sp.Sum)
         ]
         if not innermost:
@@ -426,7 +428,9 @@ def _share_sums(expressions, namer, indexes, arrays):
         innermost = []
         seen = set()
         for expr in exprs:
-            for total in expr.atoms(sp.Sum):
+            for total in sorted(
+                expr.atoms(sp.Sum), key=sp.default_sort_key
+            ):
                 if total.function.atoms(sp.Sum) or total in seen:
                     continue
                 seen.add(total)
@@ -484,10 +488,17 @@ def _common_scalar_cse(expressions, namer, arrays):
                 if _free_indices(sub):
                     continue
                 counts[sub] = counts.get(sub, 0) + 1
-        repeated = [sub for sub, count in counts.items() if count > 1]
+        repeated = [
+            sub for sub, count in counts.items() if count > 1
+        ]
         if not repeated:
             break
-        best = max(repeated, key=lambda sub: (counts[sub], sp.count_ops(sub)))
+        best = max(
+            repeated,
+            key=lambda sub: (
+                counts[sub], sp.count_ops(sub), sp.default_sort_key(sub)
+            ),
+        )
         target = _new_shared_temp(namer, [], arrays)
         definitions.append(
             {
@@ -600,7 +611,8 @@ def _indexed_cse(expressions, namer, arrays):
                 sizes[canon] = len(indices)
         best = None
         best_key = None
-        for canon, count in counts.items():
+        for canon in sorted(counts, key=sp.default_sort_key):
+            count = counts[canon]
             if count < 2:
                 continue
             ops = sp.count_ops(canon)
