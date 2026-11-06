@@ -1022,6 +1022,7 @@ def to_fortran(
     hessian_symmetry=False,
     cse_backend="thermodiff",
     sum_alpha=False,
+    array_pad=0,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -1107,6 +1108,10 @@ def to_fortran(
         Share summations that are equal up to the names of their bound
         indices (alpha equivalence), not only syntactically identical ones.
         Off by default.
+    array_pad : int, optional
+        Extra rows added to the leading dimension of rank-2 array
+        temporaries (``t(nc + pad, nc)``).  Zero (the default) keeps
+        ``t(nc, nc)``.
 
     Returns
     -------
@@ -1416,6 +1421,10 @@ def to_fortran(
         lines.append(_INDENT + line)
     for rank in sorted(set(arrays.values())):
         dims = ", ".join(["nc"] * rank)
+        if array_pad and rank >= 2:
+            # padded leading dimension: avoids cache-set aliasing between the
+            # many (nc, nc) temporaries for some values of nc
+            dims = ", ".join([f"nc + {int(array_pad)}"] + ["nc"] * (rank - 1))
         names = [
             f"{name}({dims})"
             for name in sorted(arrays)

@@ -56,6 +56,15 @@ EXTENDED_VARIANTS = {
         hessian_symmetry=True,
         sum_alpha=True,
     ),
+    "a3p": dict(array_cse=True, share=True, array_pad=8),
+    "a6p": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        array_pad=8,
+    ),
+    "a10p": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, array_pad=8,
+    ),
 }
 
 PR76_SYM = """
