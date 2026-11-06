@@ -1181,6 +1181,7 @@ def to_fortran(
     sum_alpha=False,
     array_pad=0,
     hoist_invariants=False,
+    chain_rule=False,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -1274,6 +1275,11 @@ def to_fortran(
         Move costly sub-expressions that do not depend on every bound index
         of their summation out of the loop, into temporaries of lower rank
         (see :func:`_hoist_invariants`).  Off by default.
+    chain_rule : bool, optional
+        Differentiate by the chain rule over the summation nodes of the
+        function, as a hand-written implementation does (see
+        :mod:`thermodiff.chain`).  Falls back to the plain derivatives when
+        the function does not fit the pattern.  Off by default.
 
     Returns
     -------
@@ -1317,13 +1323,30 @@ def to_fortran(
 
     resolver = _PlaceholderResolver(strict=strict)
 
-    outputs = [("value", base, resolver.resolve(diff.expression))]
+    structured = None
+    if chain_rule:
+        from thermodiff.chain import chain_rule_derivatives
+
+        structured = chain_rule_derivatives(
+            diff.expression,
+            selected,
+            diff.indexes,
+            symmetric_params=tuple(symmetric_params or ()),
+        )
+
+    def _derivative(attr):
+        if structured is not None:
+            return structured[attr]
+        return getattr(diff, attr)
+
+    value_expr = structured["value"] if structured is not None else diff.expression
+    outputs = [("value", base, resolver.resolve(value_expr))]
     for attr in selected:
         outputs.append(
             (
                 attr,
                 "d" + base + _DERIV_SUFFIX[attr],
-                resolver.resolve(getattr(diff, attr)),
+                resolver.resolve(_derivative(attr)),
             )
         )
 
@@ -1334,6 +1357,13 @@ def to_fortran(
     if scalar_cse is None:
         scalar_cse = share
     symmetric_params = tuple(symmetric_params or ())
+    if structured is not None:
+        # symmetric pair functions behave as symmetric parameters
+        symmetric_params = symmetric_params + tuple(
+            name
+            for name, _, rank, sym in structured.get("_component_defs", ())
+            if rank == 2 and sym
+        )
 
     prepared = []
     for attr, out_name, expr in outputs:
@@ -1346,6 +1376,16 @@ def to_fortran(
         prepared.append((attr, out_name, expr, free_order))
 
     all_exprs = [expr for _, _, expr, _ in prepared]
+    component_defs = []
+    if structured is not None:
+        for comp in structured.get("_component_defs", ()):
+            comp_name, comp_body, comp_rank, comp_sym = comp
+            comp_body = comp_body.xreplace({nc: sp.Symbol("nc")})
+            if param_symmetry and symmetric_params:
+                comp_body = _canonical_symmetric(comp_body, symmetric_params)
+            component_defs.append((comp_name, comp_body, comp_rank, comp_sym))
+    component_names = {c[0] for c in component_defs}
+    scan_exprs = all_exprs + [c[1] for c in component_defs]
     placeholder_names = set(resolver.ranks)
 
     # ---- gather parameters --------------------------------------------
@@ -1355,12 +1395,12 @@ def to_fortran(
     n_name = str(n)
     uses_n = any(
         n_name in {str(base_) for base_ in expr.atoms(sp.IndexedBase)}
-        for expr in all_exprs
+        for expr in scan_exprs
     )
 
     index_syms = set()
     indexed_bases = set()
-    for expr in all_exprs:
+    for expr in scan_exprs:
         for indexed in expr.atoms(sp.Indexed):
             index_syms.update(indexed.indices)
         for total in expr.atoms(sp.Sum):
@@ -1373,7 +1413,7 @@ def to_fortran(
     base_names = {str(base_) for base_ in indexed_bases}
 
     param_scalars = set()
-    for expr in all_exprs:
+    for expr in scan_exprs:
         for sym in expr.atoms(sp.Symbol):
             name = str(sym)
             if name in index_names or name in base_names:
@@ -1387,7 +1427,7 @@ def to_fortran(
             param_scalars.add(name)
 
     array_ranks = {}
-    for expr in all_exprs:
+    for expr in scan_exprs:
         for indexed in expr.atoms(sp.Indexed):
             base_name = str(indexed.base)
             rank = len(indexed.indices)
@@ -1395,7 +1435,9 @@ def to_fortran(
     param_arrays = {
         base_name: rank
         for base_name, rank in array_ranks.items()
-        if base_name != n_name and base_name not in placeholder_names
+        if base_name != n_name
+        and base_name not in placeholder_names
+        and base_name not in component_names
     }
     if uses_n:
         param_arrays[n_name] = 1
@@ -1407,7 +1449,7 @@ def to_fortran(
         uses_n
         or bool(param_arrays)
         or any(free for _, _, _, free in prepared)
-        or any(sp.Symbol("nc") in expr.atoms(sp.Symbol) for expr in all_exprs)
+        or any(sp.Symbol("nc") in expr.atoms(sp.Symbol) for expr in scan_exprs)
     )
 
     # ---- input declarations -------------------------------------------
@@ -1417,7 +1459,7 @@ def to_fortran(
     if integer_args:
         inputs.append("integer, intent(in) :: " + ", ".join(integer_args))
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
-        if any(expr.has(var) for expr in all_exprs):
+        if any(expr.has(var) for expr in scan_exprs):
             inputs.append(f"real(8), intent(in) :: {label}")
     for param in params:
         inputs.append(f"real(8), intent(in) :: {param}")
@@ -1445,6 +1487,23 @@ def to_fortran(
     # ---- body ----------------------------------------------------------
     namer = _Namer()
     arrays = {}
+    component_array_defs = []
+    if component_defs:
+        from thermodiff.chain import COMPONENT_SLOT, PAIR_SLOTS
+
+        for comp_name, comp_body, comp_rank, comp_sym in component_defs:
+            arrays[comp_name] = comp_rank
+            free_ = [COMPONENT_SLOT] if comp_rank == 1 else list(PAIR_SLOTS)
+            base_ = sp.IndexedBase(comp_name, shape=(nc,) * comp_rank)
+            component_array_defs.append(
+                {
+                    "target": sp.Indexed(base_, *free_),
+                    "free": free_,
+                    "limits": [],
+                    "body": comp_body,
+                    "mirror": bool(comp_sym and param_symmetry),
+                }
+            )
     if array_cse:
         all_exprs, array_defs = _indexed_cse(all_exprs, namer, arrays)
     else:
@@ -1496,7 +1555,7 @@ def to_fortran(
         for (attr, out_name, _, _), residual in zip(prepared, residuals)
     ]
 
-    definitions = array_defs + sum_defs + cse_defs
+    definitions = component_array_defs + array_defs + sum_defs + cse_defs
     if stats is not None:
         stats["operation_count"] = sum(
             sp.count_ops(residual, visual=False) for residual in residuals
@@ -1577,7 +1636,7 @@ def to_fortran(
         arg_names.append("nc")
     arg_names.extend(integer_args)
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
-        if any(expr.has(var) for expr in all_exprs):
+        if any(expr.has(var) for expr in scan_exprs):
             arg_names.append(label)
     arg_names.extend(params)
     arg_names.extend(sorted(param_arrays))

@@ -489,3 +489,113 @@ def test_hoisted_slot_index_never_clashes_with_an_argument():
         loop_vars = {v.lower() for v in re.findall(r"do (\w+) = ", code)}
         args = {a.lower() for a in re.findall(r"intent\(in\) :: (\w+)", code)}
         assert not loop_vars & args, loop_vars & args
+
+
+# ---------------------------------------------------------------------------
+# chain-rule differentiation (chain_rule)
+# ---------------------------------------------------------------------------
+
+from model_harness import CHAIN_SETTINGS  # noqa: E402
+
+CHAIN_VARIANTS = ["c3", "c6"]
+
+
+@pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
+@pytest.mark.parametrize("variant", CHAIN_VARIANTS)
+def test_chain_variant_matches_reference_rkpr(tmp_path, variant):
+    ref_dir = tmp_path / "ref"
+    ref_dir.mkdir()
+    reference, _ = _run_rkpr(ref_dir, EXTENDED_VARIANTS["a0"])
+    var_dir = tmp_path / variant
+    var_dir.mkdir()
+    values, _ = _run_rkpr(var_dir, CHAIN_SETTINGS[variant])
+    rel = np.abs(values - reference) / np.maximum(np.abs(reference), 1e-8)
+    assert rel.max() < 1e-11, (variant, rel.max())
+
+
+def test_chain_rule_nodes_of_pr76():
+    """PR76 has three summation nodes: sum n, the b rule and the a rule."""
+    from thermodiff.chain import factor_sums, summation_nodes
+    from thermodiff.model.emit import _rename_indices
+
+    ir = build_ir(read_sections(PR76_SYM, "pr76"), "pr76")
+    function, _ = _rename_indices(ir, ["dni"])
+    outer, nodes = summation_nodes(factor_sums(function))
+    assert len(nodes) == 3
+    assert not outer.has(sp.Sum)
+
+
+# regression tests for the issues found by the independent review of the
+# chain-rule path (V-dependent per-component factors, zero component
+# functions, T only inside abstracted arrays, name clashes)
+
+_REVIEW_MODELS = {
+    "tv_factor": """
+model tv
+variables
+    n nc
+    V
+    T
+parameters
+    Tc nc
+    b nc
+expressions
+    alpha_i = exp(1 - T/Tc_i)
+function
+    sum_i n_i*alpha_i*log(1 - b_i/V) + (sum_i n_i)*log(V)*T
+""",
+    "zero_comp": """
+model zc
+variables
+    n nc
+    V
+    T
+parameters
+    Tc nc
+    ac nc
+    kij nc nc symmetric
+expressions
+    a_i = ac_i*(1 + 0.5*(1 - sqrt(T/Tc_i)))^2
+function
+    sum_i sum_j n_i*n_j*a_i*a_j*(1 - kij_ij)/V + T*(sum_m n_m)*0.001
+""",
+    "names": """
+model nm
+variables
+    n nc
+    V
+    T
+parameters
+    Tc nc
+    S0
+    ia nc
+    cmp0 nc
+    mat1 nc nc
+    kij nc nc symmetric
+expressions
+    a_i = (1 + 0.5*(1 - sqrt(T/Tc_i)))^2
+    ntot = sum_m n_m
+    D = sum_i sum_j n_i*n_j*sqrt(a_i*a_j)*(1 - kij_ij)
+function
+    -ntot*log(1 - 0.1*ntot/V)*T - D/(V + S0) + (sum_m n_m*ia_m + sum_m n_m*cmp0_m + sum_m sum_l n_m*n_l*mat1_ml/ntot)*T
+""",
+}
+_REVIEW_INITS = {
+    "tv_factor": {"n": "0.3d0+0.11d0*i", "Tc": "190d0+37d0*i", "b": "0.02d0+0.003d0*i", "V": "2d0*sum(x_n)"},
+    "zero_comp": {"n": "0.3d0+0.11d0*i", "Tc": "190d0+37d0*i", "ac": "merge(0d0, 1d0+0.1d0*i, i == 2)"},
+    "names": {"n": "0.3d0+0.11d0*i", "Tc": "190d0+37d0*i", "kij": "0.01d0*(i+j)*merge(0d0,1d0,i==j)"},
+}
+
+
+@pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
+@pytest.mark.parametrize("model", sorted(_REVIEW_MODELS))
+def test_chain_review_regressions(model):
+    import model_harness as mh
+
+    text = _REVIEW_MODELS[model]
+    ref, _ = mh.run(text, EXTENDED_VARIANTS["a0"], _REVIEW_INITS[model])
+    for variant in ("c3", "c6"):
+        values, _ = mh.run(text, CHAIN_SETTINGS[variant], _REVIEW_INITS[model])
+        assert np.all(np.isfinite(values)), (model, variant)
+        rel = np.abs(values - ref) / np.maximum(np.abs(ref), 1e-8)
+        assert rel.max() < 1e-11, (model, variant, rel.max())
