@@ -84,11 +84,32 @@ CHAIN_SETTINGS = {
         array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
         sum_alpha=True, hoist_invariants=True, chain_rule=True,
     ),
+    "c6l": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
+    ),
+    "c6f": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
+        sum_free_alpha=True, fuse_temps=True,
+    ),
+    "c6n": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
+        sum_free_alpha=True, fuse_temps=True, nest_sums=True,
+    ),
+    "c6s": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True,
+        sum_alpha=True, hoist_invariants=True, chain_rule=True, hoist_loops=True,
+        sum_free_alpha=True, fuse_temps=True, nest_sums=True, cse_backend="sympy",
+    ),
 }
-COMBOS = {k: CHAIN_SETTINGS[k] for k in ("c3","c6")}
+COMBOS = {k: CHAIN_SETTINGS[k] for k in ("c3","c6","c6l","c6f","c6n")}
 EXTRA = {
   "chain_only": dict(array_cse=False, share=False, chain_rule=True),
   "chain_psym": dict(array_cse=True, share=True, param_symmetry=True, chain_rule=True),
+  "chain_fuse_nohess": dict(array_cse=True, share=True, chain_rule=True, hoist_loops=True, sum_free_alpha=True, fuse_temps=True, nest_sums=True),
+  "c6n_nohoist": dict(array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True, sum_alpha=True, chain_rule=True, hoist_loops=True, sum_free_alpha=True, fuse_temps=True, nest_sums=True),
 }
 
 def compare(text, inits=None, variants=None, present=OUTS, label=""):

@@ -492,12 +492,13 @@ def test_hoisted_slot_index_never_clashes_with_an_argument():
 
 
 # ---------------------------------------------------------------------------
-# chain-rule differentiation (chain_rule)
+# chain-rule differentiation and loop passes (chain_rule, hoist_loops,
+# sum_free_alpha, fuse_temps, nest_sums)
 # ---------------------------------------------------------------------------
 
 from model_harness import CHAIN_SETTINGS  # noqa: E402
 
-CHAIN_VARIANTS = ["c3", "c6"]
+CHAIN_VARIANTS = ["c3", "c6", "c6l", "c6f", "c6n", "c6s"]
 
 
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
@@ -523,6 +524,33 @@ def test_chain_rule_nodes_of_pr76():
     outer, nodes = summation_nodes(factor_sums(function))
     assert len(nodes) == 3
     assert not outer.has(sp.Sum)
+
+
+def _double_loop_statements(code):
+    return _nested_loop_bodies(code)
+
+
+def test_c6n_hessian_has_analytic_structure():
+    """With every loop pass the W6 kernel has few O(nc^2) passes and no
+    transcendental function inside a double loop except the a_ij matrix."""
+    code = compile_model(PR76_SYM, derivatives=W6, **CHAIN_SETTINGS["c6n"])
+    inner = _double_loop_statements(code)
+    sqrt_lines = [s for s in inner if "sqrt(" in s]
+    assert len(sqrt_lines) == 1  # the a_ij pair matrix
+    assert not any("log(" in s or "exp(" in s for s in inner)
+    hess = [s for s in inner if s.startswith("res =")]
+    assert hess, "Hessian loop not found"
+
+
+def test_loop_passes_are_deterministic_and_off_by_default():
+    first = compile_model(PR76_SYM, derivatives="dn,dndn", **CHAIN_SETTINGS["c6n"])
+    second = compile_model(PR76_SYM, derivatives="dn,dndn", **CHAIN_SETTINGS["c6n"])
+    assert first == second
+    plain = compile_model(PR76_SYM, derivatives="dn,dndn")
+    assert plain == compile_model(
+        PR76_SYM, derivatives="dn,dndn", chain_rule=False, hoist_loops=False,
+        sum_free_alpha=False, fuse_temps=False, nest_sums=False,
+    )
 
 
 # regression tests for the issues found by the independent review of the
@@ -594,7 +622,7 @@ def test_chain_review_regressions(model):
 
     text = _REVIEW_MODELS[model]
     ref, _ = mh.run(text, EXTENDED_VARIANTS["a0"], _REVIEW_INITS[model])
-    for variant in ("c3", "c6"):
+    for variant in ("c3", "c6n"):
         values, _ = mh.run(text, CHAIN_SETTINGS[variant], _REVIEW_INITS[model])
         assert np.all(np.isfinite(values)), (model, variant)
         rel = np.abs(values - ref) / np.maximum(np.abs(ref), 1e-8)

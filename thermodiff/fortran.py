@@ -419,7 +419,24 @@ def _alpha_key(total):
     return total.xreplace(mapping)
 
 
-def _share_sums(expressions, namer, indexes, arrays, alpha=False):
+def _free_alpha_key(total, indexes, symmetric_params=()):
+    """Canonical form of a summation modulo renaming of all its indices.
+
+    Bound indices are renamed by position, free indices by their order, so
+    that ``sum_k x(i,k)`` and ``sum_l x(j,l)`` get the same key.
+    """
+    free = _order_free(_free_indices(total), indexes)
+    mapping = {index: sp.Idx(f"_free{pos}") for pos, index in enumerate(free)}
+    key = _alpha_key(total.xreplace(mapping))
+    if symmetric_params:
+        key = _canonical_symmetric(key, symmetric_params)
+    return key, free
+
+
+def _share_sums(
+    expressions, namer, indexes, arrays, alpha=False, free_alpha=False,
+    symmetric_params=(),
+):
     """Replace every ``Sum`` by a temporary that is computed once.
 
     Identical summations reused by several outputs are evaluated a single
@@ -463,7 +480,19 @@ def _share_sums(expressions, namer, indexes, arrays, alpha=False):
         replacements = {}
         by_key = {}
         for total in innermost:
-            if alpha:
+            if free_alpha:
+                key, free_here = _free_alpha_key(total, indexes, symmetric_params)
+                if key in by_key:
+                    # equal up to the names of its bound and free indices:
+                    # reuse the temporary, indexed by this sum's free indices
+                    target_, _ = by_key[key]
+                    replacements[total] = (
+                        sp.Indexed(target_.base, *free_here)
+                        if free_here
+                        else target_
+                    )
+                    continue
+            elif alpha:
                 key = _alpha_key(total)
                 if key in by_key:
                     # alpha-equivalent to a summation already hoisted
@@ -480,7 +509,12 @@ def _share_sums(expressions, namer, indexes, arrays, alpha=False):
                 }
             )
             replacements[total] = target
-            if alpha:
+            if free_alpha:
+                by_key[_free_alpha_key(total, indexes, symmetric_params)[0]] = (
+                    target,
+                    free,
+                )
+            elif alpha:
                 by_key[_alpha_key(total)] = target
         exprs = [expr.xreplace(replacements) for expr in exprs]
     return exprs, definitions
@@ -848,6 +882,271 @@ def _hoist_invariants(expressions, namer, arrays, sum_definitions=(), reserved=(
     return exprs, hoisted, rewritten
 
 
+def _nest_double_sums(staged, indexes, symmetric_params=()):
+    """Rewrite double sums as dot products with existing vector sums.
+
+    ``sum_k sum_l n(k)*n(l)*m(k,l)`` equals ``sum_k n(k)*v(k)`` with
+    ``v(k) = sum_l n(l)*m(k,l)``.  When some output already needs that
+    vector -- the composition gradient does -- the nested form lets
+    :func:`_share_sums` compute ``v`` once and the double sum becomes an
+    O(nc) dot product.  Double sums whose inner sum matches no vector sum
+    are left untouched (they may still be folded into a triangle).
+    """
+    def key_of(total):
+        free = _order_free(_free_indices(total), indexes)
+        mapping = {index: sp.Idx(f"_free{pos}") for pos, index in enumerate(free)}
+        renamed = _alpha_key(total.xreplace(mapping))
+        if symmetric_params:
+            renamed = _canonical_symmetric(renamed, symmetric_params)
+        return renamed
+
+    vectors = set()
+    for _, _, expr in staged:
+        for total in expr.atoms(sp.Sum):
+            if len(total.limits) == 1 and _free_indices(total):
+                vectors.add(key_of(total))
+    if not vectors:
+        return staged
+
+    def nest(total):
+        if len(total.limits) != 2 or not isinstance(total.function, sp.Mul):
+            return None
+        (a, la, ha), (b, lb, hb) = total.limits
+        if (la, ha) != (lb, hb):
+            return None
+        for outer, inner_idx, lims in ((a, b, (la, ha)), (b, a, (lb, hb))):
+            outer_f = [f for f in total.function.args
+                       if f.atoms(sp.Idx) <= {outer} and f.atoms(sp.Idx)]
+            rest = [f for f in total.function.args if f not in outer_f]
+            if not outer_f or not rest:
+                continue
+            inner = sp.Sum(sp.Mul(*rest), (inner_idx, *lims))
+            if key_of(inner) in vectors:
+                return sp.Sum(sp.Mul(*outer_f) * inner, (outer, *lims))
+        return None
+
+    result = []
+    for attr, out_name, expr in staged:
+        replacements = {}
+        for total in expr.atoms(sp.Sum):
+            nested = nest(total)
+            if nested is not None:
+                replacements[total] = nested
+        result.append((attr, out_name, expr.xreplace(replacements) if replacements else expr))
+    return result
+
+
+def _fuse_temporaries(array_defs, exprs):
+    """Inline cheap rank-2 array temporaries read only inside summations.
+
+    The indexed CSE materialises ``t(p,q) = n(q)*m(p,q)`` when the product
+    appears several times; when every use is inside the body of a
+    summation, storing the matrix and reading it back costs more than the
+    multiplication it saves, and it hides from :func:`_share_sums` that
+    ``sum_k n(k)*m(i,k)`` and ``sum_k n(k)*m(k,l)`` are the same vector.
+    Such a temporary is removed and its body substituted into the sums.
+    Runs before :func:`_share_sums`.
+    """
+    def refs(expr, name):
+        return [x for x in expr.atoms(sp.Indexed) if str(x.base) == name]
+
+    def outside_sums(expr, name):
+        if isinstance(expr, sp.Sum):
+            return False
+        if isinstance(expr, sp.Indexed):
+            return str(expr.base) == name
+        return any(outside_sums(arg, name) for arg in getattr(expr, "args", ()))
+
+    def read_weight(exprs_, name):
+        """How many times each element is read: diagonal reads count 0,
+        a triangular (folded) summation 1/2, a full summation 1."""
+        weight = 0.0
+        for e in exprs_:
+            for total in e.atoms(sp.Sum):
+                inner_refs = [x for x in refs(total.function, name)]
+                if not inner_refs or total.function.atoms(sp.Sum):
+                    continue
+                if all(len(set(x.indices)) < len(x.indices) for x in inner_refs):
+                    continue
+                folded = any(isinstance(lim[1], _LoopStart) for lim in total.limits)
+                weight += 0.5 if folded else 1.0
+        return weight
+
+    exprs = list(exprs)
+    removed = set()
+    changed = True
+    while changed:
+        changed = False
+        for definition in list(array_defs):
+            free = definition["free"]
+            if len(free) != 2 or definition["limits"]:
+                continue
+            body = definition["body"]
+            name = _temp_name(definition["target"])
+            if any(outside_sums(e, name) for e in exprs):
+                continue
+            cheap = not _is_expensive(body) and sp.count_ops(body) <= 8
+            if not cheap and read_weight(exprs, name) > 1:
+                # costly body read more than once per element: keep it
+                continue
+            other = [d for d in array_defs
+                     if d is not definition and refs(d["body"], name)]
+            if any(len(set(x.indices)) == len(x.indices)
+                   for d in other for x in refs(d["body"], name)):
+                # another temporary reads it off the diagonal: keep it
+                continue
+            def inline(expr):
+                mapping = {x: body.xreplace(dict(zip(free, x.indices)))
+                           for x in refs(expr, name)}
+                return expr.xreplace(mapping) if mapping else expr
+            exprs = [inline(e) for e in exprs]
+            for d in other:
+                d["body"] = inline(d["body"])
+            array_defs.remove(definition)
+            removed.add(name)
+            changed = True
+    return array_defs, exprs, removed
+
+
+def _collect_terms(expr):
+    """Group the terms of a sum by their index-dependent factors.
+
+    ``a*x(i) + b*x(i)*y(j) + c*x(i) + d`` becomes
+    ``(a + c)*x(i) + b*x(i)*y(j) + d``: the coefficients, free of indices,
+    can then be computed once outside the loops.
+    """
+    if not isinstance(expr, sp.Add):
+        return expr
+    groups = {}
+    for term in expr.args:
+        factors = term.args if isinstance(term, sp.Mul) else (term,)
+        coef = [f for f in factors if not f.atoms(sp.Idx)]
+        mono = [f for f in factors if f.atoms(sp.Idx)]
+        key = sp.Mul(*mono)
+        groups.setdefault(key, []).append(sp.Mul(*coef))
+    if len(groups) == len(expr.args):
+        return expr
+    return sp.Add(*[
+        sp.Add(*groups[key]) * key
+        for key in sorted(groups, key=sp.default_sort_key)
+    ])
+
+
+def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
+    """Move loop invariants out of the loops over free indices.
+
+    :func:`_hoist_invariants` handles the summation loops.  The loops over
+    the *free* indices of a temporary or of an output -- the double loop of
+    the composition Hessian, the loop of a rank-2 temporary -- also contain
+    invariants: in ``dfdndn(i, j) = c1*x(i)*y(j) + c2*m(i, j) + ...`` the
+    scalar coefficients ``c1``, ``c2`` do not depend on ``i`` or ``j``, and
+    a factor ``g(i)`` does not depend on the inner index ``j``.
+
+    The terms of every loop body are first grouped by their index-dependent
+    factors (:func:`_collect_terms`).  Then every index-free compound
+    sub-expression becomes a scalar temporary, and every costly
+    sub-expression that depends on a strict subset of the loop indices
+    becomes a temporary of that rank, computed once before the loop.
+
+    Parameters
+    ----------
+    definitions : list of dict
+        Temporaries in dependency order; the ones with free indices are
+        rewritten and the new temporaries are inserted right before them.
+    outputs : list of (expr, free_order)
+        Output residuals; their new temporaries go after all definitions.
+
+    Returns
+    -------
+    definitions : list of dict
+    outputs : list of sympy expressions
+    """
+    used = {"nc", "res"} | {str(x).lower() for x in reserved}
+    for definition in definitions:
+        used |= {str(x).lower() for x in definition["body"].atoms(sp.Symbol)}
+        used |= {str(x).lower() for x in definition["body"].atoms(sp.IndexedBase)}
+        used |= {str(x).lower() for x in definition["free"]}
+    for expr, _ in outputs:
+        used |= {str(x).lower() for x in expr.atoms(sp.Symbol)}
+    used |= {str(name).lower() for name in arrays}
+    slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
+    temps = {}
+    pending = []
+
+    def make(sub):
+        indices = _index_symbols(sub)
+        mapping = {index: slots[pos] for pos, index in enumerate(indices)}
+        canon = sub.xreplace(mapping)
+        if canon not in temps:
+            free = slots[: len(indices)]
+            target = _new_shared_temp(namer, free, arrays)
+            pending.append({"target": target, "free": free, "limits": [], "body": canon})
+            temps[canon] = target
+        target = temps[canon]
+        return target if not indices else sp.Indexed(target.base, *indices)
+
+    def candidate(sub, bound):
+        if not isinstance(sub, sp.Expr) or sub.is_Atom or sub.is_Number:
+            return False
+        if isinstance(sub, (sp.Indexed, sp.Sum)) or sub.has(sp.Sum):
+            return False
+        if sub.has(sp.Piecewise) or sub.is_Relational or sub.is_Boolean:
+            return False
+        if any(isinstance(x, _LoopStart) for x in sub.atoms(sp.Symbol)):
+            return False
+        indices = set(_index_symbols(sub))
+        if indices >= bound or len(indices) > _MAX_ARRAY_CSE_RANK:
+            return False
+        if not indices:
+            return True
+        return _is_expensive(sub) or sp.count_ops(sub) >= 3
+
+    def rewrite(sub, bound):
+        if candidate(sub, bound):
+            return make(sub)
+        if not getattr(sub, "args", ()) or isinstance(sub, (sp.Indexed, sp.Idx)):
+            return sub
+        if isinstance(sub, sp.Sum) or isinstance(sub, sp.Piecewise):
+            return sub
+        if isinstance(sub, (sp.Mul, sp.Add)):
+            groups = {}
+            rest = []
+            for arg in sub.args:
+                key = frozenset(_index_symbols(arg))
+                if key >= bound or arg.has(sp.Sum) or arg.is_Number or arg.has(sp.Piecewise):
+                    rest.append(rewrite(arg, bound))
+                else:
+                    groups.setdefault(key, []).append(arg)
+            new = list(rest)
+            for key in sorted(groups, key=lambda x: sorted(map(str, x))):
+                members = groups[key]
+                combined = sub.func(*members)
+                if len(members) > 1 and candidate(combined, bound):
+                    new.append(make(combined))
+                else:
+                    new.extend(rewrite(arg, bound) for arg in members)
+            return sub.func(*new)
+        return sub.func(*[rewrite(arg, bound) for arg in sub.args])
+
+    new_definitions = []
+    for definition in definitions:
+        bound = set(definition["free"]) | {lim[0] for lim in definition["limits"]}
+        if bound and not definition.get("mirror_of"):
+            body = _collect_terms(definition["body"])
+            definition = dict(definition, body=rewrite(body, bound))
+            new_definitions.extend(pending)
+            pending.clear()
+        new_definitions.append(definition)
+    new_outputs = []
+    for expr, free in outputs:
+        if free:
+            expr = rewrite(_collect_terms(expr), set(free))
+        new_outputs.append(expr)
+    new_definitions.extend(pending)
+    pending.clear()
+    return new_definitions, new_outputs
+
+
 def _render_definition(definition) -> list:
     """Render the statements that fill one shared temporary."""
     target = definition["target"]
@@ -1182,6 +1481,10 @@ def to_fortran(
     array_pad=0,
     hoist_invariants=False,
     chain_rule=False,
+    hoist_loops=False,
+    sum_free_alpha=False,
+    fuse_temps=False,
+    nest_sums=False,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -1280,6 +1583,21 @@ def to_fortran(
         function, as a hand-written implementation does (see
         :mod:`thermodiff.chain`).  Falls back to the plain derivatives when
         the function does not fit the pattern.  Off by default.
+    hoist_loops : bool, optional
+        Group the terms of every loop body over free indices by their
+        index-dependent factors and compute the loop invariants once (see
+        :func:`_hoist_loop_invariants`).  Off by default.
+    sum_free_alpha : bool, optional
+        Share summations equal up to the names of their bound *and free*
+        indices (``sum_k x(i,k)`` and ``sum_l x(j,l)``).  Off by default.
+    fuse_temps : bool, optional
+        Do not materialise cheap rank-2 array temporaries that are only
+        read inside summations: their body is inserted into the summation
+        (see :func:`_fuse_temporaries`).  Off by default.
+    nest_sums : bool, optional
+        Rewrite double sums as dot products with vector sums that other
+        outputs already need (see :func:`_nest_double_sums`).  Off by
+        default.
 
     Returns
     -------
@@ -1365,12 +1683,18 @@ def to_fortran(
             if rank == 2 and sym
         )
 
-    prepared = []
+    staged = []
     for attr, out_name, expr in outputs:
         expr = _kron_to_piecewise(expr)
         expr = expr.xreplace({nc: sp.Symbol("nc")})
         if param_symmetry and symmetric_params:
             expr = _canonical_symmetric(expr, symmetric_params)
+        staged.append((attr, out_name, expr))
+    if nest_sums:
+        staged = _nest_double_sums(staged, diff.indexes, symmetric_params)
+    prepared = []
+    for attr, out_name, expr in staged:
+        if param_symmetry and symmetric_params:
             expr = _fold_symmetric_sums(expr, symmetric_params)
         free_order = _order_free(_free_indices(expr), diff.indexes)
         prepared.append((attr, out_name, expr, free_order))
@@ -1522,6 +1846,14 @@ def to_fortran(
     for expr in all_exprs:
         reserved.update(str(sym) for sym in expr.atoms(sp.Symbol))
         reserved.update(str(b) for b in expr.atoms(sp.IndexedBase))
+    if fuse_temps:
+        n_comp = len(component_array_defs)
+        pool = component_array_defs + array_defs
+        pool, all_exprs, fused = _fuse_temporaries(pool, all_exprs)
+        component_array_defs = [d for d in pool if d in component_array_defs]
+        array_defs = [d for d in pool if d not in component_array_defs]
+        for name in fused:
+            arrays.pop(name, None)
     if hoist_invariants:
         all_exprs, hoist_defs, _ = _hoist_invariants(
             all_exprs, namer, arrays, reserved=reserved
@@ -1529,7 +1861,13 @@ def to_fortran(
         array_defs = array_defs + hoist_defs
     if share_sums:
         residuals, sum_defs = _share_sums(
-            all_exprs, namer, diff.indexes, arrays, alpha=sum_alpha
+            all_exprs,
+            namer,
+            diff.indexes,
+            arrays,
+            alpha=sum_alpha,
+            free_alpha=sum_free_alpha,
+            symmetric_params=symmetric_params if param_symmetry else (),
         )
     else:
         residuals = list(all_exprs)
@@ -1556,6 +1894,19 @@ def to_fortran(
     ]
 
     definitions = component_array_defs + array_defs + sum_defs + cse_defs
+    if hoist_loops:
+        definitions, new_residuals = _hoist_loop_invariants(
+            definitions,
+            [(residual, free) for _, _, residual, free in rendered],
+            namer,
+            arrays,
+            reserved=reserved,
+        )
+        rendered = [
+            (attr, out_name, residual, free)
+            for (attr, out_name, _, free), residual in zip(rendered, new_residuals)
+        ]
+        residuals = new_residuals
     if stats is not None:
         stats["operation_count"] = sum(
             sp.count_ops(residual, visual=False) for residual in residuals
