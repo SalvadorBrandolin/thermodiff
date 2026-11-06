@@ -80,6 +80,11 @@ def _build_parser():
             "triangular loops."
         ),
     )
+    parser.add_argument(
+        "--hessian-symmetry",
+        action="store_true",
+        help="compute only the upper triangle of dfdndn and mirror it.",
+    )
     return parser
 
 
@@ -117,6 +122,7 @@ def main(argv=None):
             array_cse=args.array_cse,
             share=args.share,
             param_symmetry=args.param_symmetry,
+            hessian_symmetry=args.hessian_symmetry,
         )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)

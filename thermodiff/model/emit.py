@@ -160,8 +160,8 @@ def emit_module(
         variant "V1 none" is ``array_cse=False, share=False``).
     **codegen
         Extra options forwarded to :func:`thermodiff.fortran.to_fortran`
-        (``param_symmetry``, ``stats``).  The symmetric parameters declared
-        in the model are always forwarded.
+        (``param_symmetry``, ``hessian_symmetry``, ``stats``).  The
+        symmetric parameters declared in the model are always forwarded.
 
     Returns
     -------

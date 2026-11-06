@@ -338,17 +338,25 @@ def _declare_output(name: str, rank: int, optional: bool = False) -> str:
     return f"{attributes} :: {name}({dims})"
 
 
-def _render_output(name: str, expr: sp.Expr, free_order: list, namer) -> list:
-    """Render the statements that compute a single output."""
+def _render_output(
+    name: str, expr: sp.Expr, free_order: list, namer, mirror=False
+) -> list:
+    """Render the statements that compute a single output.
+
+    With ``mirror=True`` (rank-2 outputs known to be symmetric) only the
+    upper triangle is computed and every value is stored twice.
+    """
     statements, residual = _expand_sums(expr, namer)
     residual = residual.xreplace(
         {idx: sp.Symbol(str(idx)) for idx in free_order}
     )
 
+    mirror = mirror and len(free_order) == 2
     lines = []
     depth = 0
-    for idx in free_order:
-        lines.append(_INDENT * depth + f"do {idx} = 1, nc")
+    for position, idx in enumerate(free_order):
+        low = str(free_order[0]) if (mirror and position == 1) else "1"
+        lines.append(_INDENT * depth + f"do {idx} = {low}, nc")
         depth += 1
 
     for statement in statements:
@@ -360,6 +368,9 @@ def _render_output(name: str, expr: sp.Expr, free_order: list, namer) -> list:
     if free_order:
         subscript = ", ".join(str(idx) for idx in free_order)
         lines.append(_INDENT * depth + f"{name}({subscript}) = res")
+        if mirror:
+            transposed = ", ".join(str(idx) for idx in reversed(free_order))
+            lines.append(_INDENT * depth + f"{name}({transposed}) = res")
     else:
         lines.append(_INDENT * depth + f"{name} = res")
 
@@ -936,6 +947,7 @@ def to_fortran(
     stats=None,
     symmetric_params=(),
     param_symmetry=False,
+    hessian_symmetry=False,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -1006,6 +1018,10 @@ def to_fortran(
         Exploit ``symmetric_params``: canonicalise their subscripts and
         fold symmetric double summations into a triangular loop (see
         :func:`_fold_symmetric_sums`).  Off by default.
+    hessian_symmetry : bool, optional
+        Compute only the upper triangle of the composition Hessian
+        ``dfdndn`` (``j >= i``) and mirror it.  Exact by Schwarz' theorem.
+        Off by default.
 
     Returns
     -------
@@ -1238,14 +1254,18 @@ def to_fortran(
             condition = ""
         body.extend(_guarded(_render_definition(definition), condition))
         body.append("")
-    for _attr, out_name, expr, free_order in rendered:
+    for attr, out_name, expr, free_order in rendered:
         if optional_derivatives:
             condition = f"present({out_name})"
         else:
             condition = ""
+        mirror = hessian_symmetry and attr == "dnidnj"
         body.extend(
             _guarded(
-                _render_output(out_name, expr, free_order, namer), condition
+                _render_output(
+                    out_name, expr, free_order, namer, mirror=mirror
+                ),
+                condition,
             )
         )
         body.append("")

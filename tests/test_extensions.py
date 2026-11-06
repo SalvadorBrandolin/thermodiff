@@ -39,7 +39,11 @@ RKPR_PATH = os.path.join(os.path.dirname(__file__), "data", "rkpr.model")
 EXTENDED_VARIANTS = {
     "a0": dict(array_cse=False, share=False),
     "a3": dict(array_cse=True, share=True),
+    "a4": dict(array_cse=True, share=True, hessian_symmetry=True),
     "a5": dict(array_cse=True, share=True, param_symmetry=True),
+    "a6": dict(
+        array_cse=True, share=True, param_symmetry=True, hessian_symmetry=True
+    ),
 }
 
 PR76_SYM = """
