@@ -72,6 +72,20 @@ def _build_parser():
         ),
     )
     parser.add_argument(
+        "--no-share-sums",
+        dest="share_sums",
+        action="store_false",
+        default=None,
+        help="disable only the shared-summation pass (ablation).",
+    )
+    parser.add_argument(
+        "--no-scalar-cse",
+        dest="scalar_cse",
+        action="store_false",
+        default=None,
+        help="disable only the scalar common sub-expression pass (ablation).",
+    )
+    parser.add_argument(
         "--param-symmetry",
         action="store_true",
         help=(
@@ -84,6 +98,17 @@ def _build_parser():
         "--hessian-symmetry",
         action="store_true",
         help="compute only the upper triangle of dfdndn and mirror it.",
+    )
+    parser.add_argument(
+        "--sum-alpha",
+        action="store_true",
+        help="share summations equal up to renaming of their bound indices.",
+    )
+    parser.add_argument(
+        "--cse-backend",
+        choices=["thermodiff", "sympy"],
+        default="thermodiff",
+        help="algorithm of the scalar common sub-expression pass.",
     )
     return parser
 
@@ -121,8 +146,12 @@ def main(argv=None):
             optional_derivatives=args.optional_derivatives,
             array_cse=args.array_cse,
             share=args.share,
+            share_sums=args.share_sums,
+            scalar_cse=args.scalar_cse,
             param_symmetry=args.param_symmetry,
             hessian_symmetry=args.hessian_symmetry,
+            cse_backend=args.cse_backend,
+            sum_alpha=args.sum_alpha,
         )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)

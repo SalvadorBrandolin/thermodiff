@@ -407,7 +407,19 @@ def _new_shared_temp(namer, free_order, arrays):
     return sp.Indexed(base, *free_order)
 
 
-def _share_sums(expressions, namer, indexes, arrays):
+def _alpha_key(total):
+    """Canonical form of a summation modulo renaming of its bound indices.
+
+    Two summations that differ only in the names of their dummy indices
+    (``sum_l x(i,l)`` and ``sum_m x(i,m)``) get the same key.
+    """
+    mapping = {}
+    for position, limit in enumerate(total.limits):
+        mapping[limit[0]] = sp.Idx(f"_bound{position}")
+    return total.xreplace(mapping)
+
+
+def _share_sums(expressions, namer, indexes, arrays, alpha=False):
     """Replace every ``Sum`` by a temporary that is computed once.
 
     Identical summations reused by several outputs are evaluated a single
@@ -449,7 +461,14 @@ def _share_sums(expressions, namer, indexes, arrays):
         if not innermost:
             break
         replacements = {}
+        by_key = {}
         for total in innermost:
+            if alpha:
+                key = _alpha_key(total)
+                if key in by_key:
+                    # alpha-equivalent to a summation already hoisted
+                    replacements[total] = by_key[key]
+                    continue
             free = _order_free(_free_indices(total), indexes)
             target = _new_shared_temp(namer, free, arrays)
             definitions.append(
@@ -461,6 +480,8 @@ def _share_sums(expressions, namer, indexes, arrays):
                 }
             )
             replacements[total] = target
+            if alpha:
+                by_key[_alpha_key(total)] = target
         exprs = [expr.xreplace(replacements) for expr in exprs]
     return exprs, definitions
 
@@ -496,7 +517,7 @@ def _common_scalar_cse(expressions, namer, arrays):
             for sub in sp.preorder_traversal(expr):
                 if not isinstance(sub, sp.Expr) or sub.is_Atom:
                     continue
-                if _free_indices(sub):
+                if _free_indices(sub) or sub.has(sp.Sum):
                     continue
                 counts[sub] = counts.get(sub, 0) + 1
         repeated = [
@@ -932,6 +953,55 @@ def _fold_symmetric_sums(expr, symmetric_params):
         ) * sp.Sum(canon, (outer, 1, high_a), (inner, _LoopStart(outer), high_a))
     return expr.xreplace(replacements) if replacements else expr
 
+# ---------------------------------------------------------------------------
+# SymPy CSE backend
+# ---------------------------------------------------------------------------
+
+
+def _sympy_scalar_cse(expressions, namer, arrays):
+    """Scalar common sub-expression elimination with :func:`sympy.cse`.
+
+    Drop-in alternative to :func:`_common_scalar_cse` used to compare the
+    greedy thermodiff pass against SymPy's own algorithm.  ``sympy.cse`` is
+    unaware of index scopes, so every replacement that depends on an index
+    (or contains a summation) is substituted back; only index-free scalar
+    temporaries are kept.
+    """
+    exprs = list(expressions)
+    if not exprs:
+        return exprs, []
+    replacements, reduced = sp.cse(
+        exprs,
+        symbols=sp.numbered_symbols("cse_tmp_"),
+        order="canonical",
+        optimizations=None,
+    )
+    inlined = {}
+    kept = []
+    for symbol, value in replacements:
+        value = value.xreplace(inlined)
+        if value.atoms(sp.Idx) or value.has(sp.Sum):
+            inlined[symbol] = value
+            continue
+        kept.append((symbol, value))
+    renames = {}
+    definitions = []
+    for symbol, value in kept:
+        target = _new_shared_temp(namer, [], arrays)
+        renames[symbol] = target
+        definitions.append(
+            {
+                "target": target,
+                "free": [],
+                "limits": [],
+                "body": value.xreplace(renames),
+            }
+        )
+    reduced = [
+        expr.xreplace(inlined).xreplace(renames) for expr in reduced
+    ]
+    return reduced, definitions
+
 
 def to_fortran(
     diff,
@@ -945,9 +1015,13 @@ def to_fortran(
     array_cse=True,
     share=True,
     stats=None,
+    share_sums=None,
+    scalar_cse=None,
     symmetric_params=(),
     param_symmetry=False,
     hessian_symmetry=False,
+    cse_backend="thermodiff",
+    sum_alpha=False,
 ):
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
@@ -1011,6 +1085,11 @@ def to_fortran(
         ``n_temporaries`` (number of shared temporaries emitted).  The
         count is a symbolic-operation count of the final expressions, not
         a runtime estimate.
+    share_sums, scalar_cse : bool, optional
+        Fine-grained control of the two passes enabled by ``share``:
+        :func:`_share_sums` and the scalar common sub-expression pass.
+        ``None`` (the default) inherits the value of ``share``.  Used by the
+        ablation study.
     symmetric_params : iterable of str, optional
         Names of rank-2 parameters known to be symmetric (declared with the
         ``symmetric`` attribute in a ``.model`` file).
@@ -1021,6 +1100,12 @@ def to_fortran(
     hessian_symmetry : bool, optional
         Compute only the upper triangle of the composition Hessian
         ``dfdndn`` (``j >= i``) and mirror it.  Exact by Schwarz' theorem.
+        Off by default.
+    cse_backend : {"thermodiff", "sympy"}, optional
+        Algorithm of the scalar common sub-expression pass.
+    sum_alpha : bool, optional
+        Share summations that are equal up to the names of their bound
+        indices (alpha equivalence), not only syntactically identical ones.
         Off by default.
 
     Returns
@@ -1075,6 +1160,12 @@ def to_fortran(
             )
         )
 
+    if cse_backend not in ("thermodiff", "sympy"):
+        raise ValueError(f"unknown cse_backend {cse_backend!r}")
+    if share_sums is None:
+        share_sums = share
+    if scalar_cse is None:
+        scalar_cse = share
     symmetric_params = tuple(symmetric_params or ())
 
     prepared = []
@@ -1199,14 +1290,19 @@ def to_fortran(
             body = _canonical_symmetric(definition["body"], symmetric_params)
             if _swap(body, free[0], free[1], symmetric_params) == body:
                 definition["mirror"] = True
-    if share:
+    if share_sums:
         residuals, sum_defs = _share_sums(
-            all_exprs, namer, diff.indexes, arrays
+            all_exprs, namer, diff.indexes, arrays, alpha=sum_alpha
         )
-        residuals, cse_defs = _common_scalar_cse(residuals, namer, arrays)
     else:
         residuals = list(all_exprs)
         sum_defs = []
+    if scalar_cse:
+        if cse_backend == "sympy":
+            residuals, cse_defs = _sympy_scalar_cse(residuals, namer, arrays)
+        else:
+            residuals, cse_defs = _common_scalar_cse(residuals, namer, arrays)
+    else:
         cse_defs = []
     rendered = [
         (
