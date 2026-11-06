@@ -259,7 +259,10 @@ def read_sections(text, filename=None):
             if pending_line is None:
                 pending_line = number
             pending.append(line)
-            if _balanced(line) and not line.endswith("\\"):
+            # Balance is checked on the accumulated logical line, not only
+            # on the current physical line (a closing parenthesis on a
+            # continuation line used to leave the entry open).
+            if _balanced(" ".join(pending)) and not line.endswith("\\"):
                 flush()
             continue
 
@@ -267,7 +270,7 @@ def read_sections(text, filename=None):
         if pending_line is None:
             pending_line = number
         pending.append(line)
-        if _balanced(line) and not line.endswith("\\"):
+        if _balanced(" ".join(pending)) and not line.endswith("\\"):
             flush()
 
     flush()
