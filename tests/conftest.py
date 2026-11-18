@@ -6,10 +6,8 @@ import pytest
 
 from thermodiff.bench_hooks import generate_workload, variant_settings
 
-#: Session root (this repository is <root>/thermodiff).
-SESSION_ROOT = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
+#: Root of the test fixtures (``models/`` and ``scripts/``).
+SESSION_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 #: Canonical PR76 model of the benchmark (protocol section 2.3).
 PR76_MODEL = os.path.join(SESSION_ROOT, "models", "pr76", "pr76.model")

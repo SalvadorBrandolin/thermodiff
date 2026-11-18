@@ -148,7 +148,7 @@ class TestSumLetterCapture:
     def test_pr76_model_file_uses_sum_m(self):
         path = (
             __file__.split("/tests/")[0]
-            + "/../models/pr76/pr76.model"
+            + "/tests/data/models/pr76/pr76.model"
         )
         with open(path, "r", encoding="utf-8") as handle:
             text = handle.read()

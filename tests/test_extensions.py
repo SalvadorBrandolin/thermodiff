@@ -277,7 +277,7 @@ def test_aux_index_never_clashes_case_insensitively():
     """Fortran is case insensitive: no loop index may be named like ``R``."""
     import re
 
-    with open(os.path.join(os.path.dirname(__file__), "../../models/rkpr/rkpr.model")) as fh:
+    with open(os.path.join(os.path.dirname(__file__), "data/models/rkpr/rkpr.model")) as fh:
         text = fh.read()
     code = compile_model(text, derivatives="dn,dndn", param_symmetry=True)
     loop_vars = set(re.findall(r"do (\w+) = ", code))
@@ -307,7 +307,7 @@ function
 # loop-invariant hoisting (hoist_invariants)
 # ---------------------------------------------------------------------------
 
-RKPR_PATH = os.path.join(os.path.dirname(__file__), "../../models/rkpr/rkpr.model")
+RKPR_PATH = os.path.join(os.path.dirname(__file__), "data/models/rkpr/rkpr.model")
 
 RKPR_DRIVER = """
 module yaeos__constants
@@ -624,7 +624,7 @@ def test_chain_review_regressions(model):
 
 # The kernels measured in the campaigns must regenerate byte for byte: any
 # change of the generator that alters them has to be behind a new option.
-_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
+_ROOT = os.path.join(os.path.dirname(__file__), "data")
 _MEASURED = [
     ("pr76", "models/pr76/pr76_sym.model", v, w)
     for v in ("a3", "a6", "a10", "a6h", "a10h", "c6n", "c6m")
@@ -677,7 +677,7 @@ function
 # ``positive`` attribute of the language
 # ---------------------------------------------------------------------------
 
-_ROOT_MODELS = os.path.join(os.path.dirname(__file__), "..", "..", "models")
+_ROOT_MODELS = os.path.join(os.path.dirname(__file__), "data", "models")
 _NOOPT_VARIANTS = ["it13", "it14", "it15", "it16", "it17", "it18", "it19", "it20", "it21",
                    "it22"]
 
