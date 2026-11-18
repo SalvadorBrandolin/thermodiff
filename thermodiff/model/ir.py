@@ -58,6 +58,7 @@ class Declaration:
     dims: tuple
     line: int
     symmetric: bool = False
+    positive: bool = False
 
 
 @dataclass
@@ -124,6 +125,24 @@ def _imported_names(use_text):
         rest = rest[1:]
     names = [name.strip() for name in rest.split(",")]
     return [name for name in names if name]
+
+
+def _rename_use(use_text, renamed):
+    """Rewrite ``mod, only: R`` as ``mod, only: R_use => R``."""
+    lowered = use_text.lower()
+    marker = lowered.find("only")
+    if marker < 0:
+        return use_text
+    head = use_text[: marker + len("only")]
+    rest = use_text[marker + len("only"):].lstrip()
+    if rest.startswith(":"):
+        rest = rest[1:]
+    names = [name.strip() for name in rest.split(",") if name.strip()]
+    items = [
+        f"{renamed[name]} => {name}" if name in renamed else name
+        for name in names
+    ]
+    return head + ": " + ", ".join(items)
 
 
 class _Resolver:
@@ -206,28 +225,40 @@ def _build_declaration(raw, resolver, dimensions, filename, kind):
                 raw.line,
                 filename,
             )
-        if rank != 2 or dims[0] != dims[1]:
+        if rank < 2 or any(dim != dims[0] for dim in dims):
             raise ModelError(
-                f"symmetric parameter {base!r} must be a square rank-2 array",
+                f"symmetric parameter {base!r} must be an array of rank >= 2 "
+                "with equal dimensions (fully symmetric in its subscripts)",
                 raw.line,
                 filename,
             )
-    declaration = Declaration(base, rank, letters, dims, raw.line, symmetric)
+    positive = "positive" in getattr(raw, "attributes", ())
+    if positive and kind != "parameters":
+        raise ModelError(
+            f"only parameters can be declared positive ({base!r})",
+            raw.line,
+            filename,
+        )
+    declaration = Declaration(base, rank, letters, dims, raw.line, symmetric, positive)
     if kind == "variables":
         _register_variable(declaration, resolver, filename)
     return declaration
 
 
-def _indexed_base(name, rank, dims, resolver):
+def _indexed_base(name, rank, dims, resolver, positive=False):
     """Create an :class:`sympy.IndexedBase` with a well defined shape.
 
     A shape is required so that the Fortran printer can inspect bare
-    indexed objects without raising.
+    indexed objects without raising.  A parameter declared ``positive``
+    carries that assumption, so that e.g. ``sqrt(e_i*e_j)`` becomes
+    ``sqrt(e_i)*sqrt(e_j)``.
     """
     if dims:
         shape = tuple(resolver.scalars[dim] for dim in dims)
     else:
         shape = (resolver.default_upper,) * rank
+    if positive:
+        return sp.IndexedBase(name, shape=shape, positive=True)
     return sp.IndexedBase(name, shape=shape)
 
 
@@ -279,12 +310,16 @@ def _register_parameter(declaration, resolver, filename):
             filename,
         )
     if declaration.rank == 0:
-        resolver.add_scalar(base, sp.Symbol(base))
+        if declaration.positive:
+            resolver.add_scalar(base, sp.Symbol(base, positive=True))
+        else:
+            resolver.add_scalar(base, sp.Symbol(base))
     else:
         resolver.add_base(
             base,
             declaration.rank,
-            _indexed_base(base, declaration.rank, declaration.dims, resolver),
+            _indexed_base(base, declaration.rank, declaration.dims, resolver,
+                          positive=declaration.positive),
         )
 
 
@@ -525,9 +560,31 @@ def build_ir(raw, filename=None):
     model_name = (raw.model or "model").strip()
     warnings = _unused_warnings(function, parameters)
 
+    # Fortran is case insensitive: an imported symbol (``R``) and a model
+    # name that differs only in case (a parameter ``r``) would clash.  The
+    # imported symbol is renamed through the use statement (``R_use => R``).
+    uses = [use_text for use_text, _ in raw.uses]
+    local = {d.base.lower() for d in list(variables) + list(parameters)}
+    local |= {name.lower() for name in dimensions}
+    taken = local | {name.lower() for name in imported}
+    renamed = {}
+    for name in imported:
+        if name.lower() in local:
+            alias = f"{name}_use"
+            while alias.lower() in taken:
+                alias += "_"
+            taken.add(alias.lower())
+            renamed[name] = alias
+    if renamed:
+        function = function.xreplace(
+            {sp.Symbol(old): sp.Symbol(new) for old, new in renamed.items()}
+        )
+        uses = [_rename_use(text, renamed) for text in uses]
+        imported = [renamed.get(name, name) for name in imported]
+
     return ModelIR(
         model_name=model_name,
-        uses=[use_text for use_text, _ in raw.uses],
+        uses=uses,
         imported=imported,
         dimensions=dimensions,
         variables=variables,
