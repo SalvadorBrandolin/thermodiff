@@ -42,6 +42,8 @@ def driver(code, inits, present, ncs=(3,7)):
                 body.append(f"allocate(x_{a}(nc)); do i=1,nc; x_{a}(i) = {inits.get(a, '0.5d0+0.13d0*i+0.02d0*i*i')}; end do")
             elif r == 2:
                 body.append(f"allocate(x_{a}(nc,nc)); do i=1,nc; do j=1,nc; x_{a}(i,j) = {inits.get(a, '0.01d0*(i+j)+0.003d0*i*j')}; end do; end do")
+            elif r == 3:
+                body.append(f"allocate(x_{a}(nc,nc,nc)); do i=1,nc; do j=1,nc; do k=1,nc; x_{a}(i,j,k) = {inits.get(a, '0.002d0*(i+j+k)+0.0004d0*i*j*k')}; end do; end do; end do")
             else:
                 body.append(f"x_{a} = {inits.get(a,'0.7d0')}")
         if "V" in ins: body.append(f"x_V = {inits.get('V','0.9d0*sum(x_n)')}")
@@ -60,7 +62,7 @@ def driver(code, inits, present, ncs=(3,7)):
         for o in OUTS:
             if o in args and ranks[o]: body.append(f"deallocate(y_{o})")
     return ("module yaeos__constants\n implicit none\n real(8), parameter :: R = 0.0831446261815324d0\nend module\n"
-            + code + f"\nprogram drive\n use {mod}\n implicit none\n integer :: nc,i,j,u\n" + "\n".join(decl)
+            + code + f"\nprogram drive\n use {mod}\n implicit none\n integer :: nc,i,j,k,u\n" + "\n".join(decl)
             + "\nopen(newunit=u,file='out.txt')\n" + "\n".join(body) + "\nclose(u)\nend program\n")
 
 def run(text, settings, inits=None, present=OUTS, derivs=W6, opt=True):
