@@ -289,6 +289,78 @@ class TestSharing:
             for expr in residuals
         )
 
+    @staticmethod
+    def _pinned_cse_expressions():
+        ac = sp.IndexedBase("ac", shape=(sp.Symbol("nc", integer=True),))
+        pair = sp.sqrt(ac[k] * ac[l])
+        root = sp.sqrt(n[k] ** 2 + 1)
+        logn = sp.log(n[k] + ac[k])
+        return [
+            pair * T + root * V,
+            pair * V + root + logn,
+            pair + logn * T,
+            root * logn + 3,
+        ]
+
+    @staticmethod
+    def _describe_cse(residuals, definitions, arrays):
+        return (
+            [str(expr) for expr in residuals],
+            [
+                (
+                    str(item["target"]),
+                    [str(index) for index in item["free"]],
+                    str(item["body"]),
+                )
+                for item in definitions
+            ],
+            arrays,
+        )
+
+    def test_indexed_cse_output_is_pinned(self):
+        arrays = {}
+        residuals, definitions = _indexed_cse(
+            self._pinned_cse_expressions(), _Namer(), arrays
+        )
+        assert self._describe_cse(residuals, definitions, arrays) == (
+            [
+                "T*t2[k, l] + V*t1[k]",
+                "V*t2[k, l] + t1[k] + t3[k]",
+                "T*t3[k] + t2[k, l]",
+                "t1[k]*t3[k] + 3",
+            ],
+            [
+                ("t1[p]", ["p"], "sqrt(n[p]**2 + 1)"),
+                ("t2[p, q]", ["p", "q"], "sqrt(ac[p]*ac[q])"),
+                ("t3[p]", ["p"], "log(ac[p] + n[p])"),
+            ],
+            {"t1": 1, "t2": 2, "t3": 1},
+        )
+
+    def test_indexed_cse_output_is_pinned_with_counted(self):
+        # Only positions 1 and 2 are counted, but every position is
+        # rewritten once a shared factor has been chosen.
+        arrays = {}
+        residuals, definitions = _indexed_cse(
+            self._pinned_cse_expressions(),
+            _Namer(),
+            arrays,
+            counted=[False, True, True, False],
+        )
+        assert self._describe_cse(residuals, definitions, arrays) == (
+            [
+                "T*t1[k, l] + V*sqrt(n[k]**2 + 1)",
+                "V*t1[k, l] + sqrt(n[k]**2 + 1) + t2[k]",
+                "T*t2[k] + t1[k, l]",
+                "sqrt(n[k]**2 + 1)*t2[k] + 3",
+            ],
+            [
+                ("t1[p, q]", ["p", "q"], "sqrt(ac[p]*ac[q])"),
+                ("t2[p]", ["p"], "log(ac[p] + n[p])"),
+            ],
+            {"t1": 2, "t2": 1},
+        )
+
     def test_indexed_cse_skips_rank_three(self):
         # A rank three temporary is ``nc**3`` entries; benchmarks show it
         # costs more than it saves, so it must never be created.
