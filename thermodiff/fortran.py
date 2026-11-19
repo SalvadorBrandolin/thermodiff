@@ -156,9 +156,7 @@ def _free_indices(expr: sp.Expr, memo: dict | None = None) -> set:
     """
     if memo is None:
         bound = {
-            limit[0]
-            for total in expr.atoms(sp.Sum)
-            for limit in total.limits
+            limit[0] for total in expr.atoms(sp.Sum) for limit in total.limits
         }
         return {idx for idx in expr.atoms(sp.Idx) if idx not in bound}
     _fill_index_memo(expr, memo)
