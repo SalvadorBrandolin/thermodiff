@@ -24,6 +24,7 @@ from thermodiff.fortran import (
     _index_set,
     _Namer,
     _common_scalar_cse,
+    _free_indices,
     _indexed_cse,
 )
 
@@ -233,6 +234,33 @@ class TestOptions:
         assert "if (present(dfdT)) then" in code
 
 
+class TestFreeIndices:
+    """Free-index detection on hand-built expressions."""
+
+    NC = sp.Symbol("nc", integer=True)
+
+    def test_free_and_bound_indices(self):
+        total = sp.Sum(n[k], (k, 1, self.NC))
+        assert _free_indices(n[k] + 1) == {k}
+        assert _free_indices(total + 1) == set()
+        assert _free_indices(sp.Sum(n[k] * n[l], (k, 1, self.NC))) == {l}
+
+    def test_nested_sums(self):
+        inner = sp.Sum(n[l], (l, 1, self.NC))
+        nested = sp.Sum(n[k] * inner, (k, 1, self.NC))
+        assert _free_indices(nested) == set()
+
+    def test_idx_under_sum_limit_stays_free(self):
+        assert _free_indices(sp.Sum(n[k], (k, 1, l))) == {l}
+
+    def test_bound_index_is_bound_everywhere(self):
+        # ``k`` is a summation index somewhere, so it is not reported
+        # as free even where it appears outside that sum.
+        first = sp.Sum(n[k], (k, 1, self.NC))
+        second = sp.Sum(n[k] * n[l], (k, 1, self.NC))
+        assert _free_indices(n[k] * first + n[l] * second) == {l}
+
+
 class TestSharing:
     """Shared summations and common sub-expressions."""
 
@@ -253,6 +281,37 @@ class TestSharing:
         assert len(definitions) == 1
         target = definitions[0]["target"]
         assert all(target in expr.free_symbols for expr in residuals)
+
+    def test_common_scalars_pinned_order(self):
+        namer = _Namer()
+        arrays = {}
+        a, b, c = sp.symbols("a b c")
+        inner = sp.exp(a * b)
+        shared = sp.sqrt(a * b + c)
+        exprs = [
+            inner * T + shared,
+            inner * V + shared,
+            inner + shared * T,
+            shared * inner * c,
+            sp.log(inner) + shared**2,
+        ]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert [str(expr) for expr in residuals] == [
+            "T*t2 + t3",
+            "V*t2 + t3",
+            "T*t3 + t2",
+            "c*t2*t3",
+            "c + t1 + log(t2)",
+        ]
+        assert [
+            (str(item["target"]), str(item["body"])) for item in definitions
+        ] == [
+            ("t1", "a*b"),
+            ("t2", "exp(t1)"),
+            ("t3", "sqrt(c + t1)"),
+        ]
+        assert [str(name) for name in namer.created] == ["t1", "t2", "t3"]
+        assert arrays == {}
 
     def test_index_dependent_terms_are_not_hoisted(self):
         namer = _Namer()
