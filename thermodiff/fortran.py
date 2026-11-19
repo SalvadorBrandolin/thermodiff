@@ -693,11 +693,13 @@ def _common_scalar_cse(expressions, namer, arrays):
     """
     exprs = list(expressions)
     definitions = []
-    index_memo = {}
-    eligible_memo = {}
+    own_entries = functools.partial(
+        _own_scalar_candidate, index_memo={}, eligible_memo={}
+    )
+    entries_memo = {}
     rank_memo = {}
     while True:
-        counts = _count_scalar_candidates(exprs, index_memo, eligible_memo)
+        counts = _count_scalar_candidates(exprs, own_entries, entries_memo)
         repeated = [sub for sub, count in counts.items() if count > 1]
         if not repeated:
             break
@@ -732,19 +734,28 @@ def _is_scalar_candidate(
     return eligible_memo[sub]
 
 
+def _own_scalar_candidate(
+    sub: sp.Basic, index_memo: dict, eligible_memo: dict
+) -> tuple:
+    """Return ``(sub,)`` when ``sub`` is a scalar candidate, else ``()``."""
+    if _is_scalar_candidate(sub, index_memo, eligible_memo):
+        return (sub,)
+    return ()
+
+
 def _count_scalar_candidates(
-    exprs: list, index_memo: dict, eligible_memo: dict
+    exprs: list, own_entries, entries_memo: dict
 ) -> dict:
     """Count the occurrences of every hoistable sub-expression.
 
     The dict keeps the order in which candidates are first met in a
     pre-order walk of ``exprs``, which fixes the tie-break of the caller.
+    ``entries_memo`` is the per-call memo of :func:`_preorder_entries`.
     """
     counts = {}
     for expr in exprs:
-        for sub in sp.preorder_traversal(expr):
-            if _is_scalar_candidate(sub, index_memo, eligible_memo):
-                counts[sub] = counts.get(sub, 0) + 1
+        for sub in _preorder_entries(expr, own_entries, entries_memo):
+            counts[sub] = counts.get(sub, 0) + 1
     return counts
 
 
