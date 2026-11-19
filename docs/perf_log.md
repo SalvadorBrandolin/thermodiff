@@ -199,6 +199,12 @@ Machine state for every row: campaign running (pid 352450), see Wave 1 interim.
 | 8172049 | 1.7a step 2 | candidate eligibility and rank cache per call in `_common_scalar_cse` | medium pcsaft/e2/w5d | 57.236 (daa02c8) | 34.933 | −38.97 % | emit (32.9 s); diff 1.99 s | Reps 36.999 (max) / 34.962 (median) / 34.933 (min). Net vs daa02c8: −38.92 % (median). **Step 2 is +5.24 % (min) / +4.33 % (median) vs step 1 in the same block**, not explained; ranges overlap only partly. Not profiled separately. |
 | 76e633c | 1.7a (tests + black) | none (test and style commit) | medium pcsaft/e2/w5d | 34.933 (8172049) | not measured | n/a | n/a | Spec: no timing for a test and black commit; timing equals 8172049. |
 | 8172049 | 1.7a steps 1+2 (cumulative vs same-block base) | `_free_indices` memo + candidate caches | slow pcsaft/e3/w6 | 168.040 (daa02c8, same block) | 107.155 | **−36.23 %** | emit (88.92 s, was 149.95 s, −40.7 %); diff 17.96 → 18.11 s (+0.8 %) | 1 rep. Δ > 5 %, so no repeat. Parse 0.127 s. Cumulative vs the logged baseline 192.705 s (401daf6 re-measure): −44.39 %; vs 193.238 s: −44.55 %. |
+| 1802312 | 1.9a | memo of pre-order entries per subtree in `_indexed_cse` | medium pcsaft/e2/w5d | 34.915 (3936fac) | 23.016 | −34.08 % | emit (20.9 s, was 32.8 s); diff 1.99 s | Reps 27.768 (max) / 23.016 (min) / 23.144 (median). Rep 1 carries the cold `diff` (7.40 s). Campaign running. |
+| c3c4e3a | 1.9b | memo of pre-order candidates per subtree in `_common_scalar_cse` | medium pcsaft/e2/w5d | 23.016 (1802312) | 18.854 | −18.09 % | emit (16.7 s); diff 2.02 s | Reps 23.082 (max) / 18.854 (min) / 18.861 (median). Step vs 1802312 median: −18.51 %. |
+| c3c4e3a | 1.9a+b (cumulative) | pre-order memo in both CSE passes | medium pcsaft/e2/w5d | 34.915 (3936fac) | 18.854 | −46.00 % | emit (32.8 → 16.7 s, −49.0 %) | Median vs median: 35.340 → 18.861 (−46.63 %). Drift check: 3936fac min vs 8172049 min (T1.P2, same code) −0.05 %. |
+| c3c4e3a | 1.9a+b | pre-order memo in both CSE passes | slow pcsaft/e3/w6 | 106.591 (3936fac) | 64.529 | −39.46 % | emit (88.5 → 45.7 s, −48.4 %); diff 17.97 → 18.70 s (+4.1 %) | 1 rep, same block. Δ > 5 %, so no repeat. Peak RSS 114.6 → 137.9 MiB (two runs each, see Wave 1 after T1.9). Drift: 106.591 vs 107.155 (8172049, T1.P2) −0.53 %. |
+| c3c4e3a | 1.9a+b | pre-order memo in both CSE passes | p32 pcsaft/p32/w6 | 90.473 (3936fac) | 76.246 | −15.72 % | emit (72.3 → 57.2 s, −20.9 %); diff 18.09 → 18.94 s (+4.7 %) | 1 rep, same block. Δ > 5 %, so no repeat. Profile run 4cf3866 unprofiled sample: 74.939 s (−1.7 % vs c3c4e3a). |
+| c3c4e3a | 1.1 + 1.2a–c + 1.7a + 1.9 (cumulative) | cumulative vs Wave 0 baseline | slow pcsaft/e3/w6 | 192.705 (401daf6 re-measure) | 64.529 | −66.51 % | emit (158.1 → 45.7 s, −71.1 %); diff 34.44 → 18.70 s (−45.7 %) | Against the logged 193.238 s: −66.61 %. Emit still 71 % of the case. |
 
 ## Wave 1 interim
 
@@ -468,3 +474,175 @@ timed row; it is recorded only for the next step.
   fff7914). It is a per-call key cache and its benefit is on the p32 rank key
   (`count_ops`), which this medium case does not exercise. The difference is not
   resolved by one block and was not profiled.
+
+## Wave 1 after T1.9
+
+Task T1.P3. Commits measured: 3936fac (base, same code as 76e633c), 1802312
+(T1.9a, pre-order memo in `_indexed_cse`), c3c4e3a (T1.9b, in
+`_common_scalar_cse`). 4cf3866 changes only `fortran.py` type hints, a
+`Callable` import and docstrings (`git diff c3c4e3a 4cf3866`); it was not
+timed separately and was profiled as head. Serial, `taskset -c 0-4,6-10`,
+`PYTHONHASHSEED=0`, one process per repetition set, `bench.py` and
+`tools/profile_case.py` as in "How to measure". Scratch and logs are not
+committed (`.orchestration/scratch/T1.P3/`, `.orchestration/logs/T1.P3-*`).
+
+Machine state (`uptime`, and the campaign process `campaign.py`, pid 352450,
+`--campaign met5`, another project): medium block start 04:12, load 1.21 /
+2.09 / 3.23; slow block 04:16, load 2.12 / 2.12 / 2.97; p32 block 04:19, load
+2.17 / 2.12 / 2.82; RSS block 04:21, load 2.19 / 2.12 / 2.70; profile block
+04:24, load 2.07 / 2.08 / 2.58. The campaign was running for the whole window
+with affinity `0-4,6-10`, and its CPU use was 0.0 % at every block start.
+**Campaign running, so the absolute times are flagged.** Drift against the
+T1.P2 block (same protocol, same 3936fac code): medium −0.05 %, slow −0.53 %.
+Raw data: `.orchestration/logs/T1.P3-*.jsonl`.
+
+### Medium pcsaft e2 w5d, 3 repetitions per commit (total s)
+
+| commit | rep 1 | rep 2 | rep 3 | min | median | max | diff (min rep) | emit (min rep) |
+|--------|-------|-------|-------|-----|--------|-----|----------------|----------------|
+| 3936fac | 37.281 | 34.915 | 35.340 | 34.915 | 35.340 | 37.281 | 1.994 | 32.831 |
+| 1802312 | 27.768 | 23.016 | 23.144 | 23.016 | 23.144 | 27.768 | 1.993 | 20.932 |
+| c3c4e3a | 23.082 | 18.861 | 18.854 | 18.854 | 18.861 | 23.082 | 2.016 | 16.746 |
+
+| step | Δ % (min) | Δ % (median) | note |
+|------|-----------|--------------|------|
+| 3936fac → 1802312 (T1.9a) | −34.08 % | −34.51 % | emit 32.8 → 20.9 s |
+| 1802312 → c3c4e3a (T1.9b) | −18.09 % | −18.51 % | emit 20.9 → 16.7 s |
+| 3936fac → c3c4e3a (cumulative) | −46.00 % | −46.63 % | emit −49.0 %; diff unchanged |
+
+Diff is 2.0 s in every commit and emit is the dominant phase throughout.
+
+### Slow pcsaft e3 w6 and p32 pcsaft p32 w6, 1 repetition each (phases, s)
+
+| case | commit | parse | diff | emit | total | Δ total |
+|------|--------|-------|------|------|-------|---------|
+| slow e3 w6 | 3936fac | 0.128 | 17.966 | 88.498 | 106.591 | |
+| slow e3 w6 | c3c4e3a | 0.127 | 18.704 | 45.697 | 64.529 | −39.46 % |
+| p32 w6 | 3936fac | 0.128 | 18.087 | 72.257 | 90.473 | |
+| p32 w6 | c3c4e3a | 0.128 | 18.943 | 57.175 | 76.246 | −15.72 % |
+
+Cumulative slow case against the Wave 0 baseline (401daf6 re-measure
+192.705 s; logged 193.238 s): 64.529 s, **−66.51 %** (−66.61 % against the
+logged value). Emit −71.1 %, diff −45.7 %. The slow emit phase (71 % of the
+case) and the p32 emit phase (75 %) still dominate.
+
+### Peak RSS (fresh process, one generation, `ru_maxrss`)
+
+| case | commit | run 1 (KiB) | run 2 (KiB) | peak (MiB, run 1) |
+|------|--------|-------------|-------------|-------------------|
+| slow e3 w6 | 3936fac | 117 384 | 117 328 | 114.6 |
+| slow e3 w6 | c3c4e3a | 141 240 | 140 852 | 137.9 |
+
+Δ RSS +20.3 % (run 1) and +20.0 % (run 2). The two runs agree within 0.3 %.
+The T1.9 reviewer note in `.orchestration/STATE.md` reported "RSS +2 %". That
+does not match this measurement (two runs per commit, +20 %). The cause is
+not profiled; the per-subtree memos of T1.9 are the likely source (hypothesis,
+not verified).
+
+### Profile at 4cf3866 (cProfile, separate runs, not used for timings)
+
+Raw profiles (not committed): `.orchestration/scratch/T1.P3/slow-4cf3866.prof`,
+`.orchestration/scratch/T1.P3/p32w6-4cf3866.prof`. Share is cumtime / profiled
+total of `generate_workload`. Tables from `.orchestration/scratch/T1.P3/analyze.py`
+and `specific.py`. Unprofiled sample in the same runs (parse / diff / emit /
+generation): slow 0.128 / 18.352 / 46.181 / 64.661 s; p32 0.127 / 17.630 /
+57.181 / 74.939 s.
+
+#### Slow pcsaft e3 w6: top 15 thermodiff functions by cumtime (profiled total 225.98 s)
+
+| # | function (file:line) | ncalls | cumtime (s) | % of profiled total | tottime (s) |
+|---|----------------------|--------|-------------|---------------------|-------------|
+| 1 | `generate_workload (thermodiff/bench_hooks.py:1097)` | 1 | 225.98 | 100.00 % | 0.00 |
+| 2 | `to_fortran (thermodiff/fortran.py:4173)` | 1 | 207.21 | 91.69 % | 0.03 |
+| 3 | `_indexed_cse (thermodiff/fortran.py:972)` | 1 | 55.93 | 24.75 % | 0.17 |
+| 4 | `_common_scalar_cse (thermodiff/fortran.py:672)` | 1 | 32.25 | 14.27 % | 0.00 |
+| 5 | `build_diff (thermodiff/model/emit.py:80)` | 1 | 18.33 | 8.11 % | 0.00 |
+| 6 | `__init__ (thermodiff/diffplz.py:140)` | 1 | 18.18 | 8.05 % | 0.00 |
+| 7 | `_compute (thermodiff/diffplz.py:170)` | 15 | 18.15 | 8.03 % | 0.00 |
+| 8 | `diff_ni (thermodiff/diffplz.py:221)` | 4 | 16.61 | 7.35 % | 0.00 |
+| 9 | `_share_sums (thermodiff/fortran.py:561)` | 1 | 15.95 | 7.06 % | 0.00 |
+| 10 | `resolve (thermodiff/fortran.py:229)` | 10 | 12.15 | 5.38 % | 0.00 |
+| 11 | `_free_indices (thermodiff/fortran.py:138)` | 21 348 | 9.64 | 4.27 % | 0.02 |
+| 12 | `handle_free_kronecker (thermodiff/core/kronecker_handling.py:234)` | 32 | 9.01 | 3.99 % | 0.00 |
+| 13 | `diff_dnidnj (thermodiff/diffplz.py:251)` | 1 | 8.03 | 3.55 % | 0.00 |
+| 14 | `_preorder_entries (thermodiff/fortran.py:785)` | 1 590 | 7.31 | 3.23 % | 0.44 |
+| 15 | `_count_scalar_candidates (thermodiff/fortran.py:747)` | 140 | 6.67 | 2.95 % | 0.21 |
+
+#### p32 w6: top 15 thermodiff functions by cumtime (profiled total 250.79 s)
+
+| # | function (file:line) | ncalls | cumtime (s) | % of profiled total | tottime (s) |
+|---|----------------------|--------|-------------|---------------------|-------------|
+| 1 | `generate_workload (thermodiff/bench_hooks.py:1097)` | 1 | 250.79 | 100.00 % | 0.00 |
+| 2 | `to_fortran (thermodiff/fortran.py:4173)` | 1 | 230.26 | 91.81 % | 0.04 |
+| 3 | `_common_scalar_cse (thermodiff/fortran.py:672)` | 1 | 61.90 | 24.68 % | 0.01 |
+| 4 | `<lambda> (thermodiff/fortran.py:709)` (rank key of `max`) | 105 523 | 29.94 | 11.94 % | 0.05 |
+| 5 | `_candidate_rank (thermodiff/fortran.py:765)` | 105 523 | 29.88 | 11.91 % | 0.06 |
+| 6 | `chain_rule_derivatives (thermodiff/chain.py:1046)` | 1 | 29.49 | 11.76 % | 0.00 |
+| 7 | `assemble (thermodiff/chain.py:1357)` | 1 | 27.29 | 10.88 % | 0.00 |
+| 8 | `_nest_double_sums (thermodiff/fortran.py:1339)` | 1 | 21.60 | 8.61 % | 0.00 |
+| 9 | `__init__ (thermodiff/diffplz.py:140)` | 11 | 20.33 | 8.11 % | 0.00 |
+| 10 | `_compute (thermodiff/diffplz.py:170)` | 141 | 20.30 | 8.09 % | 0.00 |
+| 11 | `build_diff (thermodiff/model/emit.py:80)` | 1 | 20.09 | 8.01 % | 0.00 |
+| 12 | `_indexed_cse (thermodiff/fortran.py:972)` | 1 | 18.34 | 7.31 % | 0.05 |
+| 13 | `diff_ni (thermodiff/diffplz.py:221)` | 38 | 17.23 | 6.87 % | 0.00 |
+| 14 | `_count_scalar_candidates (thermodiff/fortran.py:747)` | 217 | 15.98 | 6.37 % | 0.37 |
+| 15 | `_preorder_entries (thermodiff/fortran.py:785)` | 2 280 | 15.22 | 6.07 % | 0.47 |
+
+Rows 4 and 5 are nested (the rank key calls `_candidate_rank`), and rows 6
+and 7 are nested too, so they must not be added. `to_fortran` runs the
+pipeline once (p32 uses `scalar_chain="estimate"`, as in T1.P1).
+
+#### Specific functions (cumtime, % of profiled total, ncalls)
+
+`__next__` (sympy `preorder_traversal`) and `atoms` contain their callers and
+overlap with the CSE rows, so they must not be added.
+
+| function | slow ncalls | slow cum (s) | slow % | p32 ncalls | p32 cum (s) | p32 % |
+|----------|-------------|--------------|--------|------------|-------------|-------|
+| `_indexed_cse` | 1 | 55.93 | 24.75 | 1 | 18.34 | 7.31 |
+| `_common_scalar_cse` | 1 | 32.25 | 14.27 | 1 | 61.90 | 24.68 |
+| `_preorder_entries` | 1 590 | 7.31 | 3.23 | 2 280 | 15.22 | 6.07 |
+| `xreplace` (all callers) | 234 253 | 102.65 | 45.42 | 623 845 | 56.23 | 22.42 |
+| `_share_sums` | 1 | 15.95 | 7.06 | 1 | 5.20 | 2.08 |
+| `count_ops` | 2 744 | 4.89 | 2.16 | 10 410 | 28.61 | 11.41 |
+| `default_sort_key` | 60 326 | 1.07 | 0.47 | 113 591 | 1.87 | 0.75 |
+| `build_diff` (emit.py) | 1 | 18.33 | 8.11 | 1 | 20.09 | 8.01 |
+| `DiffPlz.__init__` | 1 | 18.18 | 8.05 | 11 | 20.33 | 8.11 |
+| `chain_rule_derivatives` | 0 | — | — | 1 | 29.49 | 11.76 |
+| `resolve` (fortran.py) | 10 | 12.15 | 5.38 | 10 | 6.96 | 2.78 |
+| `resolve` (chain.py) | 0 | — | — | 10 | 3.30 | 1.31 |
+| `_canonical_symmetric` | 100 | 6.50 | 2.88 | 309 | 3.82 | 1.52 |
+| `_fold_symmetric_sums` | 10 | 6.59 | 2.91 | 10 | 2.65 | 1.06 |
+| `_free_indices` (fortran.py) | 21 348 | 9.64 | 4.27 | 25 392 | 6.76 | 2.69 |
+| `_count_scalar_candidates` | 140 | 6.67 | 2.95 | 217 | 15.98 | 6.37 |
+| `_candidate_rank` | 22 675 | 4.28 | 1.89 | 105 523 | 29.88 | 11.91 |
+| `_is_scalar_candidate` | 21 823 | 5.04 | 2.23 | 24 610 | 13.54 | 5.40 |
+| `_hoistable_entries` / `_cached_hoistable` | absent / 13 144 | — / 0.27 | — / 0.12 | absent / 5 350 | — / 0.11 | — / 0.05 |
+| `__next__` (sympy traversal, all callers) | 30 385 579 | 82.29 | 36.42 | 27 766 249 | 71.46 | 28.49 |
+| `atoms` (sympy basic, all callers) | 115 445 | 99.88 | 44.20 | 459 915 | 87.27 | 34.80 |
+| `handle_sum_kronecker` | 4 | 4.94 | 2.18 | 38 | 5.45 | 2.17 |
+
+### Hotspots after T1.9 (top 5 per profile, thermodiff rows, % of profiled total)
+
+Slow pcsaft e3 w6: 1. `_indexed_cse` 24.75 %; 2. `_common_scalar_cse` 14.27 %;
+3. `build_diff` 8.11 %; 4. `DiffPlz.__init__` 8.05 %; 5. `_compute` 8.03 % (the
+diff/emit wrappers). Sympy `xreplace` is 45.42 % and `atoms` 44.20 % in the
+same profile (all callers, overlapping).
+
+p32 w6: 1. `_common_scalar_cse` 24.68 %; 2. rank key `<lambda>` 11.94 %
+(`_candidate_rank` 11.91 %, of which `count_ops` 11.41 %); 3.
+`chain_rule_derivatives` 11.76 % (`assemble` 10.88 %); 4. `_nest_double_sums`
+8.61 %; 5. `DiffPlz.__init__` 8.11 %.
+
+### Observations for the next wave
+
+- `_hoistable_entries` is gone from both profiles; `_free_indices` is 4.3 %
+  (slow) and 2.7 % (p32).
+- p32: the candidate rank (`count_ops` through `_candidate_rank`) is 11.9 %
+  of the profile. Step 2 of T1.7a cached it per call only, so it is the next
+  candidate for a cross-call cache (not implemented here).
+- `chain.py` is 11.8 % of p32 (T1.P2 reported 8.7 %; the share grows because
+  the total falls). It is now above the 5 % threshold that kept lane C on
+  hold. `_nest_double_sums` (8.6 %) is visible in p32 for the first time.
+- Emit is still the largest phase in both cases (71 % slow, 75 % p32).
+- Peak RSS +20 % at c3c4e3a must be explained before the next memo task.
