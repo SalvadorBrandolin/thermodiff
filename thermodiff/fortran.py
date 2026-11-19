@@ -763,6 +763,24 @@ def _canonical_form(sub, indices: list, slots: list):
     return sub.xreplace(mapping)
 
 
+def _cached_hoistable(sub, index_memo: dict, cache: dict) -> bool:
+    """:func:`_is_hoistable` memoised in the per-call ``cache``."""
+    if sub not in cache:
+        cache[sub] = _is_hoistable(sub, index_memo)
+    return cache[sub]
+
+
+def _cached_canonical(sub, indices: list, slots: list, cache: dict):
+    """:func:`_canonical_form` memoised in the per-call ``cache``.
+
+    The result depends on ``slots``, so ``cache`` must not outlive the
+    call that fixed them.
+    """
+    if sub not in cache:
+        cache[sub] = _canonical_form(sub, indices, slots)
+    return cache[sub]
+
+
 def _indexed_cse(
     expressions, namer, arrays, expensive_twice=False, counted=None
 ):
@@ -821,6 +839,8 @@ def _indexed_cse(
     slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
 
     index_memo = {}
+    hoistable_cache = {}
+    canonical_cache = {}
 
     while True:
         counts = {}
@@ -829,12 +849,12 @@ def _indexed_cse(
             if counted is not None and not counted[position]:
                 continue
             for sub in sp.preorder_traversal(expr):
-                if not _is_hoistable(sub, index_memo):
+                if not _cached_hoistable(sub, index_memo, hoistable_cache):
                     continue
                 indices = _sorted_indices(sub, index_memo)
                 if len(indices) > _MAX_ARRAY_CSE_RANK:
                     continue
-                canon = _canonical_form(sub, indices, slots)
+                canon = _cached_canonical(sub, indices, slots, canonical_cache)
                 counts[canon] = counts.get(canon, 0) + 1
                 sizes[canon] = len(indices)
         best = None
@@ -873,12 +893,12 @@ def _indexed_cse(
         replacements = {}
         for expr in exprs:
             for sub in sp.preorder_traversal(expr):
-                if not _is_hoistable(sub, index_memo):
+                if not _cached_hoistable(sub, index_memo, hoistable_cache):
                     continue
                 indices = _sorted_indices(sub, index_memo)
                 if len(indices) != rank:
                     continue
-                canon = _canonical_form(sub, indices, slots)
+                canon = _cached_canonical(sub, indices, slots, canonical_cache)
                 if canon == best:
                     replacements[sub] = sp.Indexed(base, *indices)
         exprs = [expr.xreplace(replacements) for expr in exprs]
