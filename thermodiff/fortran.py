@@ -97,16 +97,73 @@ def _sanitize(name: str) -> str:
     return clean
 
 
-def _free_indices(expr: sp.Expr) -> set:
+#: Memo entry of :func:`_free_indices`: the ``Idx`` atoms of a subtree and
+#: the summation variables of every ``Sum`` inside it.
+_IndexInfo = tuple[frozenset, frozenset]
+
+
+def _node_index_info(node: sp.Basic, memo: dict) -> _IndexInfo:
+    """Combine the memoised index info of the children of ``node``."""
+    indices = set()
+    bound = set()
+    for child in node.args:
+        child_indices, child_bound = memo[child]
+        indices |= child_indices
+        bound |= child_bound
+    if isinstance(node, sp.Idx):
+        indices.add(node)
+    if isinstance(node, sp.Sum):
+        bound.update(limit[0] for limit in node.limits)
+    return frozenset(indices), frozenset(bound)
+
+
+def _fill_index_memo(expr: sp.Basic, memo: dict) -> None:
+    """Memoise the index info of every subtree of ``expr``, bottom-up."""
+    stack = [expr]
+    while stack:
+        node = stack[-1]
+        if node in memo:
+            stack.pop()
+            continue
+        pending = [child for child in node.args if child not in memo]
+        if pending:
+            stack.extend(pending)
+            continue
+        memo[node] = _node_index_info(node, memo)
+        stack.pop()
+
+
+def _free_indices(expr: sp.Expr, memo: dict | None = None) -> set:
     """Return the indices that are free in ``expr``.
 
     An index is free when it is not the summation index of any
     :class:`sympy.Sum` inside ``expr``.
+
+    Parameters
+    ----------
+    expr : sympy expression
+        Expression to inspect.
+    memo : dict, optional
+        Per-call cache shared by the queries of one pass.  It maps every
+        visited subtree to its ``Idx`` atoms and summation variables, so
+        shared subtrees are walked once.  Without it every call walks
+        ``expr`` from scratch.
+
+    Returns
+    -------
+    set
+        A new set with the free indices.
     """
-    bound = {
-        limit[0] for total in expr.atoms(sp.Sum) for limit in total.limits
-    }
-    return {idx for idx in expr.atoms(sp.Idx) if idx not in bound}
+    if memo is None:
+        bound = {
+            limit[0]
+            for total in expr.atoms(sp.Sum)
+            for limit in total.limits
+        }
+        return {idx for idx in expr.atoms(sp.Idx) if idx not in bound}
+    _fill_index_memo(expr, memo)
+    indices, bound = memo[expr]
+    return set(indices - bound)
 
 
 def _order_free(free: set, indexes) -> list:
@@ -637,13 +694,14 @@ def _common_scalar_cse(expressions, namer, arrays):
     """
     exprs = list(expressions)
     definitions = []
+    index_memo = {}
     while True:
         counts = {}
         for expr in exprs:
             for sub in sp.preorder_traversal(expr):
                 if not isinstance(sub, sp.Expr) or sub.is_Atom:
                     continue
-                if _free_indices(sub) or sub.has(sp.Sum):
+                if _free_indices(sub, index_memo) or sub.has(sp.Sum):
                     continue
                 counts[sub] = counts.get(sub, 0) + 1
         repeated = [sub for sub, count in counts.items() if count > 1]
