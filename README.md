@@ -12,8 +12,26 @@ While the package currently focuses on core, simple utility functions, suggestio
 
 ## Installation
 
+Install the package from PyPI:
+
 ```shell
 pip install thermodiff
+```
+
+Releases are published from the upstream repository
+[SalvadorBrandolin/thermodiff](https://github.com/SalvadorBrandolin/thermodiff).
+
+To install the optional graphical front-end (see below):
+
+```shell
+pip install 'thermodiff[gui]'
+```
+
+For development, install from a clone of the repository in editable mode
+together with the development requirements:
+
+```shell
+pip install -e . -r requirements-dev.txt
 ```
 
 ## Graphical front-end
