@@ -193,6 +193,12 @@ Machine state for every row: campaign running (pid 352450), see Wave 1 interim.
 | ca6ddc4 | 1.2c | reuse counting-phase entries in `_indexed_cse` | medium pcsaft/e2/w5d | 66.181 (fe7a992) | 53.946 | −18.49 % | emit (51.9 s) | Reps 53.946 / 54.215 (median) / 55.932 (max). Net vs 0fd074d: −3.58 %; net vs 401daf6: −18.49 %. Repeat block: 54.718 min (−17.55 % vs the repeat of fe7a992, 66.362). |
 | ca6ddc4 | 1.2a–c | `_indexed_cse` memo, caches, reuse (cumulative) | slow pcsaft/e3/w6 | 179.667 (813f9a5) | 168.774 | −6.06 % | emit (149.5 s); diff 18.54 → 19.14 s (+3.2 %) | 1 rep. Δ > 5 %, so no repeat. The unprofiled first call inside the profile run gave 166.669 s (diff 17.49, emit 149.05), a second sample. |
 | ca6ddc4 | 1.1 + 1.2a–c (cumulative) | cumulative vs baseline | slow pcsaft/e3/w6 | 192.705 (401daf6) | 168.774 | −12.42 % | emit (149.5 s); diff 34.44 → 19.14 s (−44.4 %) | Against the logged baseline 193.238 s: −12.66 %. Emit −5.46 %. |
+| daa02c8 | 1.7a base (drift) | none, re-measure of the ca6ddc4 code | medium pcsaft/e2/w5d | 53.946 (ca6ddc4, T1.P1) | 57.236 | +6.09 % | emit (55.1 s) | Reps 59.748 (max) / 57.242 (median) / 57.236 (min). Same code as ca6ddc4, so the +6 % is machine drift between sessions (campaign pid 352450 still running). Compare rows within this block only. |
+| daa02c8 | 1.7a base (drift) | none, re-measure of the ca6ddc4 code | slow pcsaft/e3/w6 | 168.774 (ca6ddc4, T1.P1) | 168.040 | −0.43 % | emit (149.95 s); diff 17.96 s | 1 rep, same block as 8172049 (the campaign-condition check of T1.P2 spec item 2 was done: this is the same-block base). |
+| fff7914 | 1.7a step 1 | `_free_indices` memo per call in `_common_scalar_cse` | medium pcsaft/e2/w5d | 57.236 (daa02c8) | 33.195 | −42.00 % | emit (31.1 s, was 55.1 s); diff 2.01 → 1.98 s | Reps 35.756 (max) / 33.510 (median) / 33.195 (min). Δ vs daa02c8 median: −41.46 %. |
+| 8172049 | 1.7a step 2 | candidate eligibility and rank cache per call in `_common_scalar_cse` | medium pcsaft/e2/w5d | 57.236 (daa02c8) | 34.933 | −38.97 % | emit (32.9 s); diff 1.99 s | Reps 36.999 (max) / 34.962 (median) / 34.933 (min). Net vs daa02c8: −38.92 % (median). **Step 2 is +5.24 % (min) / +4.33 % (median) vs step 1 in the same block**, not explained; ranges overlap only partly. Not profiled separately. |
+| 76e633c | 1.7a (tests + black) | none (test and style commit) | medium pcsaft/e2/w5d | 34.933 (8172049) | not measured | n/a | n/a | Spec: no timing for a test and black commit; timing equals 8172049. |
+| 8172049 | 1.7a steps 1+2 (cumulative vs same-block base) | `_free_indices` memo + candidate caches | slow pcsaft/e3/w6 | 168.040 (daa02c8, same block) | 107.155 | **−36.23 %** | emit (88.92 s, was 149.95 s, −40.7 %); diff 17.96 → 18.11 s (+0.8 %) | 1 rep. Δ > 5 %, so no repeat. Parse 0.127 s. Cumulative vs the logged baseline 192.705 s (401daf6 re-measure): −44.39 %; vs 193.238 s: −44.55 %. |
 
 ## Wave 1 interim
 
@@ -273,3 +279,192 @@ The `chain.py` rows are nested (`assemble` is inside `chain_rule_derivatives`),
 so they must not be added. The whole chain.py share is at most about 5.5 %, and
 `_print_expr` is 0.09 %. `_free_indices` (35 %) and `_common_scalar_cse` (55 %)
 dominate this case too.
+
+## Wave 1 after T1.7a
+
+Task T1.P2. Commits measured: daa02c8 (same code as ca6ddc4, drift check),
+fff7914 (T1.7a step 1), 8172049 (T1.7a step 2). 76e633c is test and style only
+and was not timed. Serial, `taskset -c 0-4,6-10`, `PYTHONHASHSEED=0`, one
+process per repetition set, `bench.py` and `tools/profile_case.py` as in "How to
+measure". The machine was run with the same protocol as the earlier waves.
+
+Machine state (`uptime`): medium block start 03:01, load 1.58 / 2.08 / 3.17.
+Slow block start 03:08, load 2.05 / 2.07 / 2.79. Profile block start 03:10,
+load 2.01 / 2.04 / 2.70. Campaign: `campaign.py` (pid 352450, `--campaign met5`,
+another project) still running for the whole window, affinity `0-4,6-10`, CPU
+use 0.0 % at the start. **Campaign running, so the absolute times are flagged.**
+Raw data: `.orchestration/logs/T1.P2-*.jsonl` (not committed).
+
+### Medium pcsaft e2 w5d, 3 repetitions per commit (total s)
+
+| commit | rep 1 | rep 2 | rep 3 | min | median | max | diff (min rep) | emit (min rep) |
+|--------|-------|-------|-------|-----|--------|-----|----------------|----------------|
+| daa02c8 | 59.748 | 57.242 | 57.236 | 57.236 | 57.242 | 59.748 | 2.005 | 55.139 |
+| fff7914 | 35.756 | 33.510 | 33.195 | 33.195 | 33.510 | 35.756 | 1.977 | 31.129 |
+| 8172049 | 36.999 | 34.933 | 34.962 | 34.933 | 34.962 | 36.999 | 1.992 | 32.852 |
+
+Speed-up per commit (min and median of the same block):
+
+| step | Δ % (min) | Δ % (median) | note |
+|------|-----------|--------------|------|
+| daa02c8 → fff7914 (T1.7a step 1) | −42.00 % | −41.46 % | emit 55.1 → 31.1 s |
+| daa02c8 → 8172049 (steps 1+2) | −38.97 % | −38.92 % | emit 55.1 → 32.9 s |
+| fff7914 → 8172049 (step 2 alone) | +5.24 % | +4.33 % | not explained; step 2 looks slower on the medium case |
+
+The cold first repetition costs about 2.5 s more in `diff` (7.1 s vs 2.0 s), as
+in the earlier waves.
+
+### Slow pcsaft e3 w6, 1 repetition
+
+| commit | parse | diff | emit | total (s) |
+|--------|-------|------|------|-----------|
+| daa02c8 (same block) | 0.128 | 17.958 | 149.953 | 168.040 |
+| 8172049 | 0.127 | 18.106 | 88.921 | 107.155 |
+
+Δ 8172049 vs daa02c8 (same block): **−36.23 %**; emit −40.7 %, diff +0.8 %. The
+daa02c8 value matches ca6ddc4 (168.774 s, −0.43 %), so the campaign conditions
+did not change. The block was repeated for daa02c8 because the change is large.
+Cumulative vs baseline: −44.39 % against 192.705 s (401daf6 re-measure) and
+−44.55 % against the logged 193.238 s. Emit is still 83 % of the slow case.
+
+### Profile at 76e633c (cProfile, separate runs, not used for timings)
+
+Raw profiles (not committed):
+`.orchestration/scratch/T1.P2/slow-76e633c.prof` and
+`.orchestration/scratch/T1.P2/p32w6-76e633c.prof`. Share is cumtime / profiled
+total of `generate`. Tables computed with `.orchestration/scratch/T1.P2/analyze.py`.
+
+#### Slow pcsaft e3 w6: top 15 thermodiff functions by cumtime (profiled total 468.21 s)
+
+| # | function (file:line) | ncalls | cumtime (s) | % of profiled total | tottime (s) |
+|---|----------------------|--------|-------------|---------------------|-------------|
+| 1 | `generate_workload (thermodiff/bench_hooks.py:1097)` | 1 | 468.21 | 100.00 % | 0.00 |
+| 2 | `to_fortran (thermodiff/fortran.py:4082)` | 1 | 449.51 | 96.00 % | 0.03 |
+| 3 | `_indexed_cse (thermodiff/fortran.py:892)` | 1 | 239.05 | 51.06 % | 0.20 |
+| 4 | `_hoistable_entries (thermodiff/fortran.py:868)` | 190 | 184.29 | 39.36 % | 6.65 |
+| 5 | `_cached_hoistable (thermodiff/fortran.py:850)` | 21 875 122 | 107.44 | 22.95 % | 11.60 |
+| 6 | `_common_scalar_cse (thermodiff/fortran.py:670)` | 1 | 91.27 | 19.49 % | 0.00 |
+| 7 | `_count_scalar_candidates (thermodiff/fortran.py:734)` | 140 | 65.52 | 13.99 % | 3.29 |
+| 8 | `_is_scalar_candidate (thermodiff/fortran.py:720)` | 9 790 204 | 35.51 | 7.58 % | 4.93 |
+| 9 | `build_diff (thermodiff/model/emit.py:80)` | 1 | 18.26 | 3.90 % | 0.00 |
+| 10 | `__init__ (thermodiff/diffplz.py:140)` | 1 | 18.12 | 3.87 % | 0.00 |
+| 11 | `_compute (thermodiff/diffplz.py:170)` | 15 | 18.09 | 3.86 % | 0.00 |
+| 12 | `diff_ni (thermodiff/diffplz.py:221)` | 4 | 16.55 | 3.53 % | 0.00 |
+| 13 | `_share_sums (thermodiff/fortran.py:559)` | 1 | 16.05 | 3.43 % | 0.00 |
+| 14 | `resolve (thermodiff/fortran.py:227)` | 10 | 12.05 | 2.57 % | — |
+| 15 | `_free_indices (thermodiff/fortran.py:136)` | 21 348 | 9.74 | 2.08 % | 0.02 |
+
+#### p32 w6: top 15 thermodiff functions by cumtime (profiled total 337.85 s)
+
+| # | function (file:line) | ncalls | cumtime (s) | % of profiled total | tottime (s) |
+|---|----------------------|--------|-------------|---------------------|-------------|
+| 1 | `generate_workload (thermodiff/bench_hooks.py:1097)` | 1 | 337.85 | 100.00 % | 0.00 |
+| 2 | `to_fortran (thermodiff/fortran.py:4082)` | 1 | 317.44 | 93.96 % | 0.03 |
+| 3 | `_common_scalar_cse (thermodiff/fortran.py:670)` | 1 | 96.28 | 28.50 % | 0.01 |
+| 4 | `_indexed_cse (thermodiff/fortran.py:892)` | 1 | 71.52 | 21.17 % | 0.05 |
+| 5 | `_hoistable_entries (thermodiff/fortran.py:868)` | 110 | 53.20 | 15.75 % | 1.93 |
+| 6 | `_count_scalar_candidates (thermodiff/fortran.py:734)` | 217 | 50.25 | 14.87 % | 2.22 |
+| 7 | `_is_scalar_candidate (thermodiff/fortran.py:720)` | 5 521 462 | 32.97 | 9.76 % | 3.02 |
+| 8 | `<lambda> (thermodiff/fortran.py:705)` (rank key of `max`) | 105 523 | 30.11 | 8.91 % | 0.05 |
+| 9 | `_candidate_rank (thermodiff/fortran.py:750)` | 105 523 | 30.05 | 8.89 % | 0.08 |
+| 10 | `_cached_hoistable (thermodiff/fortran.py:850)` | 6 509 909 | 29.94 | 8.86 % | 3.44 |
+| 11 | `chain_rule_derivatives (thermodiff/chain.py:1046)` | 1 | 29.47 | 8.72 % | 0.00 |
+| 12 | `assemble (thermodiff/chain.py:1357)` | 1 | 27.29 | 8.08 % | 0.00 |
+| 13 | `_nest_double_sums (thermodiff/fortran.py:1248)` | 1 | 21.44 | 6.34 % | 0.00 |
+| 14 | `__init__ (thermodiff/diffplz.py:140)` | 11 | 20.20 | 5.98 % | 0.00 |
+| 15 | `_compute (thermodiff/diffplz.py:170)` | 141 | 20.17 | 5.97 % | 0.00 |
+
+The `chain.py` rows (`chain_rule_derivatives`, `assemble`) are 8.7 % and 8.1 % in
+p32. The baseline said `chain.py` was 5.5 % at ca6ddc4, so the share grew
+because the CSE total fell.
+
+#### Specific functions (cumtime, % of profiled total, ncalls)
+
+| function | slow ncalls | slow cum (s) | slow % | p32 ncalls | p32 cum (s) | p32 % |
+|----------|-------------|--------------|--------|------------|-------------|-------|
+| `_common_scalar_cse` | 1 | 91.27 | 19.49 | 1 | 96.28 | 28.50 |
+| `_free_indices` | 21 348 | 9.74 | 2.08 | 25 392 | 6.86 | 2.03 |
+| `_indexed_cse` | 1 | 239.05 | 51.06 | 1 | 71.52 | 21.17 |
+| `_hoistable_entries` | 190 | 184.29 | 39.36 | 110 | 53.20 | 15.75 |
+| `_cached_hoistable` | 21 875 122 | 107.44 | 22.95 | 6 509 909 | 29.94 | 8.86 |
+| `xreplace` (all callers) | 234 253 | 103.43 | 22.09 | 623 917 | 56.24 | 16.65 |
+| `_share_sums` | 1 | 16.05 | 3.43 | 1 | 5.07 | 1.50 |
+| `count_ops` | 2 930 | 4.94 | 1.06 | 10 475 | 28.38 | 8.40 |
+| `default_sort_key` | 60 512 | 1.07 | 0.23 | 113 666 | 1.99 | 0.59 |
+| `preorder_traversal` (`__next__`, all callers) | 62 052 495 | 175.10 | 37.40 | 39 799 900 | 104.26 | 30.86 |
+
+The `preorder_traversal` and `_cached_hoistable` cumtimes contain each other
+(the traversal loop calls the predicate), so they must not be added.
+`_free_indices` went from 1 853 883 calls (aae26e2 and ca6ddc4, about 40 % of
+the profile) to 21 348 calls (slow) and 25 392 calls (p32). `atoms` is still
+called directly by `to_fortran` (35.3 s, 7.5 % of the slow profile); that is
+outside the CSE passes.
+
+#### Greedy iterations (from the call counts; each pass ends with one counting pass that finds no candidate)
+
+| pass | slow pcsaft e3 w6 | p32 w6 |
+|------|-------------------|--------|
+| `_common_scalar_cse` temporaries created (`_new_shared_temp` calls from this caller) | 139 | 216 |
+| `_common_scalar_cse` counting passes (`_count_scalar_candidates` calls) | 140 | 217 |
+| `_common_scalar_cse` `xreplace` calls (= temporaries × 10 expressions) | 1 390 | 2 160 |
+| `_indexed_cse` array temporaries (`_new_shared_temp` calls from this caller) | 18 | 10 |
+| `_indexed_cse` counting passes (`_hoistable_entries` calls = passes × 10 expressions) | 190 | 110 |
+| `_share_sums` temporaries (not a greedy loop) | 107 | 41 |
+| `_common_scalar_cse` and `to_fortran` calls | 1 | 1 |
+
+The expression count of 10 per pass is derived from the call counts. Both runs
+use one pipeline (no double `to_fortran`).
+
+#### tottime split inside `_common_scalar_cse` (cumtime of the callees, caller→callee edges)
+
+| component | slow (s) | slow % of `_common_scalar_cse` | p32 (s) | p32 % |
+|-----------|----------|--------------------------------|---------|-------|
+| traversal and eligibility (`_count_scalar_candidates`: `preorder_traversal` + `_is_scalar_candidate`) | 65.52 | 71.8 | 50.25 | 52.2 |
+| of which `preorder_traversal` (`__next__`) | 25.84 | 28.3 | 13.72 | 14.2 |
+| of which `_is_scalar_candidate` (eligibility memo, `_free_indices`, `sp.Sum` test) | 35.51 | 38.9 | 32.97 | 34.2 |
+| `xreplace` | 21.37 | 23.4 | 15.88 | 16.5 |
+| key computation (`max` with key = `_candidate_rank`: `count_ops` + `default_sort_key`) | 4.38 | 4.8 | 30.14 | 31.3 |
+| self time, `_new_shared_temp`, dict and list operations | ~0 | ~0 | ~0 | ~0 |
+
+The key is cheap on the slow case (22 675 rank calls) and expensive on p32
+(105 523 rank calls, about 94 % of it in `count_ops`).
+
+#### Edges of `_cached_hoistable` (slow) and `__eq__`
+
+`_cached_hoistable` (107.44 s cumtime, 11.6 s tottime) spends 72.02 s in sympy
+`Basic.__eq__` (7 721 713 calls from the dict probes of the per-call cache). On
+p32 it spends 17.40 s there. The probe cost is structural equality, not hashing.
+In the whole slow profile `Basic.__eq__` is 112.98 s (24.1 %) and `__hash__` is
+11.6 s. This is the main cost left in `_hoistable_entries`.
+
+### Hotspots after T1.7a (top 3 per profile, % of profiled total)
+
+Slow pcsaft e3 w6:
+1. `_indexed_cse` 51.06 % (`_hoistable_entries` 39.36 %, of which the
+   `_cached_hoistable` probes 22.95 %, with `Basic.__eq__` the largest part).
+2. `xreplace` (all callers) 22.09 %; `_common_scalar_cse` 19.49 % (of which
+   `_count_scalar_candidates` 13.99 %).
+3. `_is_scalar_candidate` 7.58 % (`_free_indices` is now 2.08 %).
+
+p32 w6:
+1. `_common_scalar_cse` 28.50 % (rank key `_candidate_rank` 8.89 %, of which
+   `count_ops` 8.40 % of the profile).
+2. `_indexed_cse` 21.17 % (`_hoistable_entries` 15.75 %).
+3. `xreplace` (all callers) 16.65 %; `_is_scalar_candidate` 9.76 %.
+
+### Unprofiled p32 sample (extra, from the profile run)
+
+`tools/profile_case.py` ran one unprofiled generation before the profile:
+parse 0.127, diff 18.256, emit 72.383, generation 90.766 s (ca6ddc4 in T1.P1:
+127.637 s, −28.9 %). This is one sample inside a different run and is not a
+timed row; it is recorded only for the next step.
+
+### Observations for the next wave
+
+- `_free_indices` is no longer a hotspot (2 % in both cases).
+- The per-node cache probes in `_hoistable_entries` (`Basic.__eq__`) and the
+  `xreplace` passes of `_indexed_cse` and `_common_scalar_cse` are now the cost.
+- Step 2 (8172049) did not show a gain on the medium case (+4.3 % median vs
+  fff7914). It is a per-call key cache and its benefit is on the p32 rank key
+  (`count_ops`), which this medium case does not exercise. The difference is not
+  resolved by one block and was not profiled.
