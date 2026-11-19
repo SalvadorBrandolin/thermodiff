@@ -705,10 +705,7 @@ def _common_scalar_cse(expressions, namer, arrays):
         repeated = [sub for sub, count in counts.items() if count > 1]
         if not repeated:
             break
-        best = max(
-            repeated,
-            key=lambda sub: (counts[sub], *_candidate_rank(sub, rank_memo)),
-        )
+        best = _best_scalar_candidate(repeated, counts, rank_memo)
         target = _new_shared_temp(namer, [], arrays)
         definitions.append(
             {
@@ -726,6 +723,20 @@ def _common_scalar_cse(expressions, namer, arrays):
             if best in candidates:
                 exprs[position] = expr.xreplace(rule)
     return exprs, definitions
+
+
+def _best_scalar_candidate(
+    repeated: list, counts: dict, rank_memo: dict
+) -> sp.Expr:
+    """Pick the candidate with the highest ``(count, count_ops, sort key)``.
+
+    Only the candidates with the maximum count can win, so the rank is
+    evaluated for those alone.  ``repeated`` keeps the order of ``counts``
+    and ``max`` returns the first maximum, as it would over all of them.
+    """
+    top_count = max(counts[sub] for sub in repeated)
+    contenders = [sub for sub in repeated if counts[sub] == top_count]
+    return max(contenders, key=lambda sub: _candidate_rank(sub, rank_memo))
 
 
 def _candidate_set(
@@ -995,6 +1006,46 @@ def _memoised_call(function, key, memo: dict):
     return memo[key]
 
 
+def _best_indexed_candidate(
+    counts: dict, expensive_twice: bool, ops_memo: dict, sort_key_memo: dict
+):
+    """Pick the canonical sub-expression to hoist next, or ``None``.
+
+    The winner maximises ``(count, count_ops)`` among the candidates that
+    pass the cheap-operation filter, the first one in ``default_sort_key``
+    order on ties.  Count groups are visited in descending order, so
+    ``count_ops`` and the sort key are only computed for the groups that
+    can still win: a lower count is reached only when every candidate of
+    the higher groups was filtered out.
+    """
+    repeated = [canon for canon, count in counts.items() if count >= 2]
+    for count in sorted({counts[canon] for canon in repeated}, reverse=True):
+        group = sorted(
+            (canon for canon in repeated if counts[canon] == count),
+            key=lambda item: _memoised_call(
+                sp.default_sort_key, item, sort_key_memo
+            ),
+        )
+        best = None
+        best_ops = None
+        for canon in group:
+            ops = _memoised_call(sp.count_ops, canon, ops_memo)
+            # A single repeated operation is not worth the extra array
+            # unless it is used at least three times.
+            if (
+                ops < 2
+                and count < 3
+                and not (expensive_twice and _is_expensive(canon))
+            ):
+                continue
+            if best_ops is None or ops > best_ops:
+                best_ops = ops
+                best = canon
+        if best is not None:
+            return best
+    return None
+
+
 def _indexed_cse(
     expressions, namer, arrays, expensive_twice=False, counted=None
 ):
@@ -1077,30 +1128,9 @@ def _indexed_cse(
             for _, canon, indices in position_entries:
                 counts[canon] = counts.get(canon, 0) + 1
                 sizes[canon] = len(indices)
-        best = None
-        best_key = None
-        for canon in sorted(
-            counts,
-            key=lambda item: _memoised_call(
-                sp.default_sort_key, item, sort_key_memo
-            ),
-        ):
-            count = counts[canon]
-            if count < 2:
-                continue
-            ops = _memoised_call(sp.count_ops, canon, ops_memo)
-            # A single repeated operation is not worth the extra array
-            # unless it is used at least three times.
-            if (
-                ops < 2
-                and count < 3
-                and not (expensive_twice and _is_expensive(canon))
-            ):
-                continue
-            key = (count, ops)
-            if best_key is None or key > best_key:
-                best_key = key
-                best = canon
+        best = _best_indexed_candidate(
+            counts, expensive_twice, ops_memo, sort_key_memo
+        )
         if best is None:
             break
         free = slots[: sizes[best]]

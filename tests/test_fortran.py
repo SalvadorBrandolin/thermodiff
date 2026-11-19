@@ -25,6 +25,8 @@ from thermodiff import (
 from thermodiff.fortran import (
     _index_set,
     _Namer,
+    _best_indexed_candidate,
+    _best_scalar_candidate,
     _common_scalar_cse,
     _free_indices,
     _indexed_cse,
@@ -379,6 +381,30 @@ class TestSharing:
         assert [
             (str(item["target"]), str(item["body"])) for item in definitions
         ] == [("t1", "sqrt(a*b + c)"), ("t2", "sin(a)")]
+
+    def test_best_scalar_candidate_ranks_only_top_count(self):
+        a, b = sp.symbols("a b")
+        cheap, costly, rare = sp.sin(a), sp.exp(a * b), sp.log(a)
+        counts = {cheap: 3, rare: 2, costly: 3}
+        ranked = {}
+        best = _best_scalar_candidate(list(counts), counts, ranked)
+        assert best == costly
+        assert rare not in ranked
+
+    def test_best_indexed_candidate_falls_back_to_lower_count(self):
+        ac = sp.IndexedBase("ac", shape=(sp.Symbol("nc", integer=True),))
+        cheap = sp.log(ac[k])
+        costly = sp.sqrt(ac[k] ** 2 + 1)
+        # The count-three group holds only the cheap factor, which is
+        # kept (three uses); the pair at count two is never examined.
+        counts = {costly: 2, cheap: 3}
+        ops_memo = {}
+        assert _best_indexed_candidate(counts, False, ops_memo, {}) == cheap
+        assert costly not in ops_memo
+        # With the cheap factor used twice it is filtered out.
+        counts = {costly: 2, cheap: 2}
+        assert _best_indexed_candidate(counts, False, {}, {}) == costly
+        assert _best_indexed_candidate({cheap: 2}, False, {}, {}) is None
 
     def test_index_dependent_terms_are_not_hoisted(self):
         namer = _Namer()
