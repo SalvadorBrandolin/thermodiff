@@ -108,6 +108,17 @@ class TestLegacyRoundTrip:
         assert options.array_pad == 8
 
 
+class TestSplitAccFalsy:
+    """Every falsy ``split_acc`` is off, as in ``if split_acc and ...``."""
+
+    @pytest.mark.parametrize("value", [False, None, 0, 0.0, ""])
+    def test_falsy_is_off(self, value):
+        options = CodegenOptions.from_legacy(split_acc=value)
+        assert options.split_acc is None
+        assert options.to_legacy()["split_acc"] is False
+        assert options.validate() == (options, ())
+
+
 class TestLegacyErrors:
     """Unknown keys and values fail or warn as today."""
 

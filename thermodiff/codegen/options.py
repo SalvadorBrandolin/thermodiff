@@ -114,8 +114,12 @@ def _coerce_cse_backend(value: Any) -> CseBackend:
 
 
 def _coerce_split_acc(value: Any) -> int | None:
-    """Map a legacy ``split_acc`` (False/None/True/int/str) to int or None."""
-    if value is None or value is False:
+    """Map a legacy ``split_acc`` to ``int`` or ``None``.
+
+    Every falsy value (``False``, ``None``, ``0``, ``0.0``, ``""``) means off,
+    as in ``if split_acc and ...`` of ``to_fortran``.
+    """
+    if not value:
         return None
     return int(value)
 
@@ -245,7 +249,10 @@ class CodegenOptions:
         TypeError
             For an unknown keyword.
         ValueError
-            For an unknown ``cse_backend`` or a non-integer ``split_acc``.
+            For an unknown ``cse_backend`` or a truthy non-integer
+            ``split_acc``.  The latter deviates from today's generator,
+            which only converts ``split_acc`` when ``optional_derivatives``
+            is off.
         """
         return cls(**kwargs)
 
