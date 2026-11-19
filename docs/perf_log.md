@@ -220,6 +220,13 @@ Machine state for every row: campaign running (pid 352450), see Wave 1 interim.
 | 58fbbad | 1.10b+c (cumulative vs Wave 0) | cumulative vs Wave 0 baseline | slow pcsaft/e3/w6 | 192.705 (401daf6 re-measure) | 62.294 (cold min) | −67.67 % | emit (158.1 → 43.6 s, −72.4 %); diff 34.44 → 18.56 s (−46.1 %) | Against the logged 193.238 s: −67.76 %. Target ≤ 57.8 s NOT met on the cold basis (+4.5 s). Warm 2nd repetition 49.9999 s would be −74.05 %. |
 | 2f5f406 | 1.10 (drift) | none, re-measure of the T1.9 head | p32 pcsaft/p32/w6 | 76.246 (c3c4e3a, T1.P3) | 76.347 | +0.13 % | emit (57.81 s) | 1 rep, same block as 58fbbad. |
 | 58fbbad | 1.10b+c (cumulative) | skip `xreplace` + lazy rank | p32 pcsaft/p32/w6 | 76.347 (2f5f406) | 64.736 | −15.21 % | emit (57.81 → 46.76 s, −19.1 %); diff 18.41 → 17.85 s (−3.0 %) | 1 rep, same block. Δ > 5 %, so no repeat. `_candidate_rank` 11.9 % → 0.2 % of the profile (T1.9 vs now). |
+| 3d559ff | 1.11a | merge the per-output atoms walks of `to_fortran` into one walk | medium pcsaft/e2/w5d | 22.754 (7c337d2, min of 3 cold) | 21.363 (min of 3 cold) | −6.11 % | emit (14.20 s, was 15.65 s) | Cold protocol: 3 fresh processes per commit (see "Wave 1 after T1.11"). Median 22.823 → 21.472 (−5.92 %). Not timed on slow or p32 at this commit. |
+| 3380256 | 1.11b | walk once and skip empty `xreplace` in placeholder resolve | medium pcsaft/e2/w5d | 21.363 (3d559ff, min) | 20.873 (min) | −2.29 % | emit (13.80 s) | Median 21.472 → 20.997 (−2.21 %). |
+| 331ad50 | 1.11c | memoise Sum atoms per call in `_share_sums` | medium pcsaft/e2/w5d | 20.873 (3380256, min) | 21.194 (min) | +1.54 % | emit (13.83 s); diff 6.95 → 7.23 s | Median 20.997 → 21.399 (+1.92 %). Ranges overlap (20.87–21.54 vs 21.19–21.43), so the sign is not resolved at this sample size; no measurable gain. |
+| 331ad50 | 1.11a–c (cumulative) | merge + resolve + share-sums | medium pcsaft/e2/w5d | 22.754 (7c337d2, min) | 21.194 (min) | −6.86 % | emit (15.65 → 13.83 s, −11.6 %); diff 6.97 → 7.23 s | Median 22.823 → 21.399 (−6.24 %). Cold-process basis, not comparable with the in-process medium rows above (warm 2nd and 3rd reps). |
+| 331ad50 | 1.11a–c (cumulative) | merge + resolve + share-sums | slow pcsaft/e3/w6 | 61.546 (7c337d2, 1 cold run) | 57.636 (median of 3 cold runs; min 56.882, max 58.823) | −6.35 % | emit (43.71 → 39.13 s, median run); diff 17.71 → 18.38 s (+3.8 %) | 3 fresh single-generation runs at 331ad50, 1 at 7c337d2. Δ ≥ 5 % (min −7.58 %), so the base was not repeated. **Checkpoint 1 MET** on the cold basis (median ≤ 57.8 s, margin 0.164 s). Peak RSS 142.06 → 138.25 MiB (−2.7 %). |
+| 331ad50 | 1.11a–c (cumulative vs Wave 0) | cumulative | slow pcsaft/e3/w6 | 192.705 (401daf6 re-measure; logged 193.238) | 57.636 (median of 3 cold) | −70.09 % | emit (158.1 → 39.1 s, −75.3 %); diff 34.44 → 18.38 s (−46.6 %) | Against the logged 193.238 s: −70.17 %. Target ≥ 70 % reduction (≤ 57.8 s) met on the cold basis. Margin is inside the run-to-run spread (3.4 %). |
+| 331ad50 | 1.11c (p32) | cumulative T1.11a–c | p32 pcsaft/p32/w6 | 64.558 (7c337d2, min of 2 cold; median 64.811) | 61.937 (min of 2 cold; median 62.323) | −4.06 % (median −3.84 %) | emit (46.55 → 43.68 s, 1st pair); diff 18.39 → 18.13 s | Two cold pairs: 7c337d2 65.063 / 64.558 s, 331ad50 61.937 / 62.708 s. Both pairs under 5 %, so the repeat rule applied. Peak RSS 169.7 MiB at both commits. |
 
 ## Wave 1 interim
 
@@ -863,3 +870,217 @@ p32 w6: 1. `_common_scalar_cse` 14.13 %; 2. `chain_rule_derivatives` 13.49 %;
 - Checkpoint 1 (slow ≤ 57.8 s) is not met on the cold basis (62.3 s, −67.7 %).
   The next gain must come from emit (`_indexed_cse` and `_common_scalar_cse`
   together are 36.7 % of the profile, `xreplace` 45 %).
+
+## Wave 1 after T1.11 — Checkpoint 1
+
+Task T1.P5. Commits measured: 7c337d2 (base; same thermodiff code as 58fbbad),
+3d559ff (T1.11a), 3380256 (T1.11b), 331ad50 (T1.11c, head). Serial,
+`taskset -c 0-4,6-10`, `PYTHONHASHSEED=0`, run alone. Detached worktrees
+`../thermodiff-perf-<sha>` for the three older commits, removed after the run.
+Timings use `perf_counter` through `generate_workload`; peak RSS is
+`ru_maxrss` of the same process. Logs: `.orchestration/logs/T1.P5-*.log`
+(raw JSON lines, not committed).
+
+**COLD BASIS (coordinator decision).** Every slow-case number and every
+Checkpoint 1 input comes from a fresh process that runs exactly one generation.
+Medium repetitions were also run as fresh processes (3 per commit, one
+generation each). The earlier medium rows used 3 repetitions in one process, so
+the medium values of this section are NOT comparable with those rows; see
+"Medium cold versus warm" below.
+
+Machine state (`uptime`): start 10:07:38, load 1.65 / 2.44 / 3.20. During the
+window the load stayed between 2.0 and 2.6. A benchmark from another project
+(`bench3-LOW`, pid 623809, `bench_v2`) was running on CPU 5 (its affinity list
+is `5`) at the start. The measurement cores `0-4,6-10` exclude CPU 5 and its
+SMT sibling 11, but caches and memory bandwidth are shared. **Campaign running,
+so the absolute times are flagged.**
+
+### Medium pcsaft e2 w5d, 3 fresh processes per commit (generation s)
+
+| commit | rep 1 | rep 2 | rep 3 | min | median | max | diff (min rep) | emit (min rep) |
+|--------|-------|-------|-------|-----|--------|-----|----------------|----------------|
+| 7c337d2 | 22.754 | 22.823 | 24.701 | 22.754 | 22.823 | 24.701 | 6.973 | 15.653 |
+| 3d559ff | 21.472 | 21.363 | 22.705 | 21.363 | 21.472 | 22.705 | 7.037 | 14.198 |
+| 3380256 | 20.873 | 20.997 | 21.541 | 20.873 | 20.997 | 21.541 | 6.945 | 13.799 |
+| 331ad50 | 21.194 | 21.399 | 21.425 | 21.194 | 21.399 | 21.425 | 7.232 | 13.834 |
+
+| step | Δ % (min) | Δ % (median) | note |
+|------|-----------|--------------|------|
+| 7c337d2 → 3d559ff (T1.11a) | −6.11 % | −5.92 % | emit 15.65 → 14.20 s (min rep) |
+| 3d559ff → 3380256 (T1.11b) | −2.29 % | −2.21 % | emit 14.20 → 13.80 s |
+| 3380256 → 331ad50 (T1.11c) | +1.54 % | +1.92 % | ranges overlap; no resolvable gain or loss |
+| 7c337d2 → 331ad50 (T1.11 cumulative) | −6.86 % | −6.24 % | emit 15.65 → 13.83 s (−11.6 %) |
+
+### Slow pcsaft e3 w6, cold single-generation processes (s)
+
+| run | commit | generation | parse | diff | emit | peak RSS (MiB) |
+|-----|--------|------------|-------|------|------|----------------|
+| 1 | 331ad50 | 58.823 | 0.129 | 18.407 | 40.286 | 138.25 |
+| 2 | 331ad50 | 57.636 | 0.128 | 18.382 | 39.125 | 138.41 |
+| 3 | 331ad50 | 56.882 | 0.126 | 18.037 | 38.719 | 138.60 |
+| 1 | 7c337d2 | 61.546 | 0.129 | 17.709 | 43.708 | 142.06 |
+
+331ad50: min 56.882, **median 57.636**, max 58.823 (spread 3.41 % of the min).
+7c337d2: 61.546 (one run). Δ median vs base −6.35 %; min vs base −7.58 %.
+
+**Checkpoint 1: MET on the cold basis.** The median of the three cold runs at
+331ad50 (57.636 s) is at or below 57.8 s. The margin is 0.164 s (0.28 %), which
+is well inside the 3.4 % run-to-run spread, and one of the three runs (58.823 s)
+was above the target. The verdict follows the decided rule and is fragile.
+
+### p32 pcsaft p32 w6, cold processes (s)
+
+| run | commit | generation | parse | diff | emit | peak RSS (MiB) |
+|-----|--------|------------|-------|------|------|----------------|
+| 1 | 7c337d2 | 65.063 | 0.128 | 18.390 | 46.546 | 169.66 |
+| 1 | 331ad50 | 61.937 | 0.130 | 18.130 | 43.678 | 169.81 |
+| 2 | 331ad50 | 62.708 | 0.130 | 18.572 | 44.007 | 169.77 |
+| 2 | 7c337d2 | 64.558 | 0.128 | 17.908 | 46.522 | 169.64 |
+
+Min of 2 pairs: 64.558 → 61.937 s (−4.06 %). Median of 2 pairs: 64.811 →
+62.323 s (−3.84 %). The first pair alone gave −4.80 %. The first pair was below
+the 5 % repetition rule, so the second pair was run.
+
+### Peak RSS (fresh process, one generation, `ru_maxrss`)
+
+| case | commit | runs (MiB) | min (MiB) |
+|------|--------|------------|-----------|
+| slow e3 w6 | 331ad50 | 138.25, 138.41, 138.60 | 138.25 (min of runs 1 and 2, as specified) |
+| slow e3 w6 | 7c337d2 | 142.06 | 142.06 (one run) |
+| p32 w6 | 331ad50 | 169.81, 169.77 | 169.77 |
+| p32 w6 | 7c337d2 | 169.66, 169.64 | 169.64 |
+
+Slow RSS: −2.68 % vs 7c337d2 (single run), −2.37 % vs 58fbbad (141.61 MiB,
+T1.P4). Against the first measured RSS (3936fac, 114.6 MiB, T1.P3) it is
++20.7 %, which is the T1.9 memo cost reported earlier. p32 RSS is flat (+0.0 %).
+
+### Medium cold versus warm (why the medium numbers moved)
+
+The same code measured in the earlier in-process protocol gave a medium minimum
+of 18.284 s (58fbbad, T1.P4). The cold protocol gives 22.754 s (7c337d2). The
+gap is the `diff` phase of the first generation in each fresh process
+(about 7.0 s, against about 2.0 s when warm), i.e. the SymPy cache starting
+empty. It is a protocol effect, not a regression. Medium rows in the Change
+log of this section use the cold protocol and compare only within this block.
+
+### Cold profiles at 331ad50 (default mode of `tools/profile_case.py`)
+
+The default mode runs the profiled generation in a fresh child process. The
+parent process also ran one unprofiled generation first, as a further cold
+sample: slow 57.469 s (diff 18.223, emit 39.118); p32 62.456 s (diff 18.364,
+emit 43.965). Profile totals: slow 222.61 s, p32 235.24 s (cProfile, inflated,
+not used for timings). Percentages are cumtime divided by the
+`generate_workload` cumtime of the same profile. Raw files (not committed):
+`.orchestration/scratch/T1.P5/slow_e3_w6.prof`, `.orchestration/scratch/T1.P5/p32_w6.prof`.
+
+#### Slow pcsaft e3 w6: top 15 thermodiff functions by cumtime
+
+| # | function (file:line) | calls | cumtime (s) | % of profile |
+|---|----------------------|-------|-------------|--------------|
+| 1 | `generate_workload` (bench_hooks.py:1097) | 1 | 222.61 | 100.0 |
+| 2 | `to_fortran` (fortran.py:4358) | 1 | 160.77 | 72.2 |
+| 3 | `build_diff` (model/emit.py:80) | 1 | 61.32 | 27.5 |
+| 4 | `__init__` (diffplz.py:140) | 1 | 61.13 | 27.5 |
+| 5 | `_compute` (diffplz.py:170) | 15 | 61.10 | 27.4 |
+| 6 | `_indexed_cse` (fortran.py:1106) | 1 | 52.52 | 23.6 |
+| 7 | `diff_ni` (diffplz.py:221) | 4 | 41.12 | 18.5 |
+| 8 | `_common_scalar_cse` (fortran.py:729) | 1 | 25.09 | 11.3 |
+| 9 | `diff_dnidnj` (diffplz.py:251) | 1 | 20.35 | 9.1 |
+| 10 | `_share_sums` (fortran.py:616) | 1 | 14.49 | 6.5 |
+| 11 | `_scan_atoms` (fortran.py:4231) | 20 | 13.41 | 6.0 |
+| 12 | `_free_indices` (fortran.py:139) | 21 348 | 9.35 | 4.2 |
+| 13 | `handle_free_kronecker` (core/kronecker_handling.py:234) | 32 | 8.84 | 4.0 |
+| 14 | `_sorted_sums` (fortran.py:590) | 40 | 7.42 | 3.3 |
+| 15 | `_sum_atoms` (fortran.py:569) | 708 | 7.42 | 3.3 |
+
+#### Slow pcsaft e3 w6: top 5 SymPy primitives by cumtime
+
+| # | primitive (file:line) | calls | cumtime (s) | % of profile |
+|---|-----------------------|-------|-------------|--------------|
+| 1 | `xreplace` (sympy/core/basic.py:1299) | 401 550 | 114.02 | 51.2 |
+| 2 | `_xreplace` (sympy/core/basic.py:1364) | 38 824 067 | 113.92 | 51.2 |
+| 3 | `wrapper` (sympy/core/cache.py:69, cacheit) | 2 438 871 | 75.62 | 34.0 |
+| 4 | `__next__` (sympy/core/traversal.py:160) | 20 456 521 | 54.00 | 24.3 |
+| 5 | `atoms` (sympy/core/basic.py:601) | 115 804 | 51.67 | 23.2 |
+
+#### p32 pcsaft p32 w6: top 15 thermodiff functions by cumtime
+
+| # | function (file:line) | calls | cumtime (s) | % of profile |
+|---|----------------------|-------|-------------|--------------|
+| 1 | `generate_workload` (bench_hooks.py:1097) | 1 | 235.24 | 100.0 |
+| 2 | `to_fortran` (fortran.py:4358) | 1 | 171.16 | 72.8 |
+| 3 | `__init__` (diffplz.py:140) | 11 | 63.80 | 27.1 |
+| 4 | `_compute` (diffplz.py:170) | 141 | 63.77 | 27.1 |
+| 5 | `build_diff` (model/emit.py:80) | 1 | 63.55 | 27.0 |
+| 6 | `diff_ni` (diffplz.py:221) | 38 | 43.66 | 18.6 |
+| 7 | `_common_scalar_cse` (fortran.py:729) | 1 | 30.94 | 13.2 |
+| 8 | `chain_rule_derivatives` (chain.py:1046) | 1 | 27.10 | 11.5 |
+| 9 | `assemble` (chain.py:1357) | 1 | 24.77 | 10.5 |
+| 10 | `diff_dnidnj` (diffplz.py:251) | 9 | 20.66 | 8.8 |
+| 11 | `_nest_double_sums` (fortran.py:1458) | 1 | 20.39 | 8.7 |
+| 12 | `_indexed_cse` (fortran.py:1106) | 1 | 16.18 | 6.9 |
+| 13 | `_count_scalar_candidates` (fortran.py:841) | 217 | 15.87 | 6.7 |
+| 14 | `_preorder_entries` (fortran.py:879) | 3 319 | 15.10 | 6.4 |
+| 15 | `_own_scalar_candidate` (fortran.py:832) | 24 610 | 13.46 | 5.7 |
+
+#### p32 pcsaft p32 w6: top 5 SymPy primitives by cumtime
+
+| # | primitive (file:line) | calls | cumtime (s) | % of profile |
+|---|-----------------------|-------|-------------|--------------|
+| 1 | `wrapper` (sympy/core/cache.py:69, cacheit) | 3 952 880 | 98.43 | 41.8 |
+| 2 | `xreplace` (sympy/core/basic.py:1299) | 789 801 | 72.02 | 30.6 |
+| 3 | `_xreplace` (sympy/core/basic.py:1364) | 22 089 245 | 71.77 | 30.5 |
+| 4 | `diff` (sympy/core/function.py:2446) | 584 | 59.92 | 25.5 |
+| 5 | `diff` (sympy/core/expr.py:3604) | 33 956 | 59.92 | 25.5 |
+
+### Summary: Wave 0 baseline to now
+
+| case | Wave 0 (s) | now (s, cold) | cumulative Δ % | notes |
+|------|------------|---------------|----------------|-------|
+| slow pcsaft e3 w6 | 192.705 (401daf6 re-measure; logged 193.238) | 57.636 (median of 3) | −70.09 % (−70.17 % vs logged) | Target ≥ 70 % and ≤ 57.8 s |
+| medium pcsaft e2 w5d | 66.183 (401daf6 re-measure, in-process min of 3; logged 64.164) | 21.194 (min of 3 cold) | −67.98 % (not like-for-like) | Like-for-like in this block: 22.754 → 21.194 (−6.86 %) |
+| p32 pcsaft p32 w6 | not measured in Wave 0; first sample 127.637 (ca6ddc4, unprofiled run) | 61.937 (min of 2 pairs cold; median 62.323) | −51.5 % vs the ca6ddc4 sample (cross-block) | Like-for-like in this block: −4.06 % |
+| peak RSS slow | not measured in Wave 0; first measured 114.6 MiB (3936fac) | 138.25 MiB (min of 2) | +20.7 % vs 3936fac | RSS came down 2.7 % in T1.11 |
+
+### Per-task contributions (from the earlier sections)
+
+| task | commit | slow (s) before → after | slow Δ % | medium (s) before → after | medium Δ % | p32 (s) before → after | p32 Δ % |
+|------|--------|-------------------------|----------|---------------------------|------------|------------------------|---------|
+| T1.1 | 813f9a5 | 192.705 → 179.667 | −6.77 | 66.183 → 58.112 | −12.19 | n/a | n/a |
+| T1.2 | ca6ddc4 | 179.667 → 168.774 | −6.06 | 58.112 → 53.946 | −7.17 | n/a | n/a |
+| T1.7a | 8172049 | 168.040 → 107.155 | −36.23 | 57.236 → 34.933 | −38.97 | n/a | n/a |
+| T1.9 | c3c4e3a | 106.591 → 64.529 | −39.46 | 34.915 → 18.854 | −46.00 | 90.473 → 76.246 | −15.72 |
+| T1.10 | 58fbbad | 64.030 → 62.294 | −2.71 | 18.916 → 18.284 | −3.34 | 76.347 → 64.736 | −15.21 |
+| T1.11 | 331ad50 | 61.546 → 57.636 | −6.35 | 22.754 → 21.194 | −6.86 | 64.558 → 61.937 | −4.06 |
+
+Rows are the single-step deltas recorded in the Change log (same block for each
+row, except where the earlier section notes a different base, as for T1.7a
+where the base is the same-block daa02c8 re-measure, and T1.10 slow, where the
+base is the cold minimum of two processes). T1.1 and T1.2 have no p32 row.
+The per-task medium rows of T1.1–T1.10 are in-process (warm); the T1.11 row is
+cold. The sum of the per-task deltas does not reproduce the cumulative ratio,
+because each step was measured in its own block.
+
+### Checkpoint 1 decision
+
+**Checkpoint 1: MET** on the cold basis. Slow pcsaft e3 w6: median of three
+fresh single-generation runs at 331ad50 is 57.636 s, at or below the 57.8 s
+threshold, and −70.09 % against the 192.705 s Wave 0 baseline (the ≥ 70 %
+goal). The margin is 0.164 s, inside a 3.41 % run-to-run spread; one of the three
+runs (58.823 s) was above the threshold. The result is marginal, not robust.
+
+### Observations for the next wave
+
+- The emit phase is still the largest part of the slow case: `to_fortran` is
+  72.2 % of the profile, and `_indexed_cse` (23.6 %) and `_common_scalar_cse`
+  (11.3 %) are its main callees.
+- The diff phase is now about 18 s of the 57 s cold run, and about 21 % of
+  the profile is SymPy `diff`. The warm second run of T1.P4 dropped diff to
+  about 4 s, which comes from SymPy's cache, so cold diff is the target of any
+  further diff-phase work.
+- In p32 the cost sits in `chain.py` (`chain_rule_derivatives` 11.5 %,
+  `assemble` 10.5 %) and `_nest_double_sums` (8.7 %), which were lane C targets
+  set on hold earlier. They are now the largest non-CSE items for p32.
+- The T1.11c (`_share_sums`) effect is not resolvable at this sample size
+  (medium +1.5 % min, ranges overlapping). Any further claim needs more
+  repetitions or a profile of that step alone.
