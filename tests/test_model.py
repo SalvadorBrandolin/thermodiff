@@ -4,13 +4,14 @@ import io
 import math
 import os
 import re
-import shutil
 import subprocess
 
 import pytest
 
 from thermodiff.model import ModelError, compile_model, compile_model_file
 from thermodiff.model.cli import main
+
+from fortran_tools import GFORTRAN
 
 PR_MODEL = """
 model pr
@@ -73,16 +74,6 @@ function
     P*V + T + sum_i n_i*b_i
 """
 
-
-def _find_gfortran():
-    """Return the gfortran executable, honoring ``FC``."""
-    compiler = os.environ.get("FC")
-    if compiler and "gfortran" in os.path.basename(compiler).lower():
-        return compiler
-    return shutil.which("gfortran")
-
-
-GFORTRAN = _find_gfortran()
 
 _YAEOS_CONSTANTS_STUB = (
     "module yaeos__constants\n"

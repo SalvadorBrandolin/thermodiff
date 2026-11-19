@@ -5,8 +5,6 @@ V1 "none" = ``array_cse=False, share=False`` (D-007), V2 "partial" =
 must emit identical interfaces and equivalent bodies.
 """
 
-import os
-import shutil
 import subprocess
 
 import pytest
@@ -15,21 +13,12 @@ from thermodiff import DiffPlz, T, V, k, n, sum_components, to_fortran
 from thermodiff.model import compile_model
 from thermodiff.model.cli import main as cli_main
 
+from fortran_tools import GFORTRAN
+
 V1 = {"array_cse": False, "share": False}
 V2 = {"array_cse": False, "share": True}
 V3 = {"array_cse": True, "share": True}
 VARIANTS = {"v1": V1, "v2": V2, "v3": V3}
-
-
-def _find_gfortran():
-    """Return the gfortran executable to use, honoring ``FC``."""
-    compiler = os.environ.get("FC")
-    if compiler and "gfortran" in os.path.basename(compiler).lower():
-        return compiler
-    return shutil.which("gfortran")
-
-
-GFORTRAN = _find_gfortran()
 
 
 def toy_diff():

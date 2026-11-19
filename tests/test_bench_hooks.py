@@ -12,7 +12,6 @@ import json
 import math
 import os
 import re
-import shutil
 import subprocess
 import sys
 
@@ -26,19 +25,10 @@ from thermodiff.bench_hooks import (
 )
 
 from conftest import PR76_MODEL, SESSION_ROOT, VARIANT_ORDER, WORKLOAD_ORDER
+from fortran_tools import GFORTRAN
 
 R_GAS = 0.08314462618  # yaeos/src/constants.f90:7-8 [bar L /(mol K)]
 
-
-def _find_gfortran():
-    """Return the gfortran executable to use, honoring ``FC``."""
-    compiler = os.environ.get("FC")
-    if compiler and "gfortran" in os.path.basename(compiler).lower():
-        return compiler
-    return shutil.which("gfortran")
-
-
-GFORTRAN = _find_gfortran()
 
 YAEOS_CONSTANTS_STUB = (
     "module yaeos__constants\n"

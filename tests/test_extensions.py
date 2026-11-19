@@ -12,7 +12,6 @@ variants must agree with the reference variant ``a0`` (no optimisation).
 """
 
 import os
-import shutil
 import subprocess
 
 import numpy as np
@@ -26,7 +25,7 @@ from thermodiff.model.errors import ModelError
 from thermodiff.model.ir import build_ir
 from thermodiff.model.parser import read_sections
 
-GFORTRAN = os.environ.get("FC") or shutil.which("gfortran")
+from fortran_tools import GFORTRAN
 
 PR76_SYM = """
 model pr76

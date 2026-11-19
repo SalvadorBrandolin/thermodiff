@@ -7,6 +7,7 @@ import sys, re, subprocess, tempfile, pathlib, json, itertools
 import numpy as np
 from thermodiff.model import compile_model
 from thermodiff.bench_hooks import EXTENDED_VARIANTS
+from fortran_tools import GFORTRAN
 
 W6 = "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"
 OUTS = [
@@ -132,7 +133,7 @@ def run(text, settings, inits=None, present=OUTS, derivs=W6, opt=True):
         (d / "drive.f90").write_text(driver(code, inits or {}, present))
         r = subprocess.run(
             [
-                "gfortran",
+                GFORTRAN,
                 "-O0",
                 "-ffree-line-length-0",
                 "drive.f90",

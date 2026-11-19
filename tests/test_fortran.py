@@ -1,7 +1,6 @@
 """Tests for the Fortran code generation module."""
 
 import os
-import shutil
 import subprocess
 
 import pytest
@@ -34,16 +33,7 @@ from thermodiff.fortran import (
     _preorder_entries,
 )
 
-
-def _find_gfortran():
-    """Return the gfortran executable to use, honoring ``FC``."""
-    compiler = os.environ.get("FC")
-    if compiler and "gfortran" in os.path.basename(compiler).lower():
-        return compiler
-    return shutil.which("gfortran")
-
-
-GFORTRAN = _find_gfortran()
+from fortran_tools import GFORTRAN
 
 
 def explicit_diff():
