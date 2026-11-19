@@ -293,13 +293,14 @@ class TestValidateRules:
 
     def test_fixed_point_cascade(self):
         # optional_derivatives disables fuse_outer, which in turn makes
-        # fuse_libm_guard moot; the cascade is applied but not listed.
+        # fuse_libm_guard moot; the cascaded name is listed last.
         (options, names), caught = validated(
             optional_derivatives=True, fuse_outer=True, fuse_libm_guard=True
         )
-        assert names == ("fuse_outer",)
+        assert names == ("fuse_outer", "fuse_libm_guard")
         assert not options.fuse_libm_guard
         assert len(caught) == 1
+        assert "fuse_libm_guard" in str(caught[0].message)
 
     def test_scalar_chain_on_is_not_reported(self):
         (options, names), caught = validated(
@@ -407,9 +408,19 @@ class TestPresets:
             "fastest", optional_derivatives=True
         )
         (normalised, names), caught = validated(**options.to_legacy())
-        assert set(names) == set(RULE_CASES[0][1]) | {
+        assert names == (
+            "fuse_loops",
+            "comp_fuse",
             "fuse_outer",
-        }
-        assert len(names) == 11
+            "diag_table",
+            "sib_fuse",
+            "lowrank_hess",
+            "drop_pair_tables",
+            "share_elementwise",
+            "scalar_chain",
+            "split_affine",
+            "split_acc",
+            "fuse_libm_guard",
+        )
         assert len(caught) == 1
         assert normalised.sym_rank3

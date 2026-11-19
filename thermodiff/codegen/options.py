@@ -431,19 +431,20 @@ def _apply_rules(options: CodegenOptions) -> tuple[CodegenOptions, list[str]]:
     Returns
     -------
     tuple
-        The normalised options and the names ignored by the rules that
-        fire on the options as given (names disabled only as a consequence
-        of an earlier disabling are not listed).
+        The normalised options and every disabled name, in the order in
+        which they were disabled (field order within each round; names
+        disabled as a consequence of an earlier round come last).
     """
     defaults = CodegenOptions()
-    listed = _ignored_names(options)
-    pending = listed
+    disabled: list[str] = []
+    pending = _ignored_names(options)
     while pending:
         options = options.replace(
             **{name: getattr(defaults, name) for name in pending}
         )
+        disabled.extend(pending)
         pending = _ignored_names(options)
-    return options, listed
+    return options, disabled
 
 
 _FIELD_ORDER = tuple(
