@@ -49,6 +49,12 @@ Model paths: `tests/data/models/<name>/<name>.model` (pcsaft, srk, ...).
 Variant `e0` has no indexed CSE (`array_cse=False`); `e2`/`e3` and `p22`/`p33`
 do. Workloads: `w5c`, `w5d`, `w6` as listed in `thermodiff/bench_hooks.py`.
 
+Profiles are cold since T1.12: `tools/profile_case.py` runs the profiled
+generation in a fresh child process (`--warm` restores the old in-process
+run, for comparisons only). Profiles taken before commit 7d8047f have a warm
+diff phase, so their diff-phase numbers are not comparable with cold ones.
+The emit numbers are comparable across both.
+
 Measurement rules: slow case 1 repetition (repeat only if two candidates are
 within 5 %); medium case 3 repetitions reported as min / median / max; smoke
 case 5 repetitions reported as min / median. The first repetition of each
