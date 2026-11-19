@@ -483,76 +483,79 @@ def _validate(
     return normalised, tuple(ignored)
 
 
+# Options set to True by each preset (the rest keep their defaults).
+_STANDARD_ENABLED: tuple[str, ...] = (
+    "chain_rule",
+    "fuse_temps",
+    "hessian_symmetry",
+    "hoist_invariants",
+    "hoist_loops",
+    "nest_shared",
+    "nest_sums",
+    "param_symmetry",
+    "split_sqrt",
+    "split_sums",
+    "sum_alpha",
+    "sum_free_alpha",
+    "sym_matvec",
+)
+
+_FASTEST_ENABLED: tuple[str, ...] = (
+    "chain_rule",
+    "col_major",
+    "comp_fuse",
+    "contiguous_args",
+    "cse_expensive",
+    "diag_table",
+    "drop_pair_tables",
+    "dummy_canon",
+    "float_canon",
+    "fuse_guard",
+    "fuse_libm_guard",
+    "fuse_loops",
+    "fuse_outer",
+    "fuse_temps",
+    "hessian_symmetry",
+    "hoist_invariants",
+    "hoist_loops",
+    "keep_libm_tables",
+    "nest_cost",
+    "nest_general",
+    "nest_shared",
+    "nest_sums",
+    "nested_nodes",
+    "pair_cse",
+    "pair_rates",
+    "param_symmetry",
+    "share_elementwise",
+    "sib_fuse",
+    "split_affine",
+    "split_sqrt",
+    "split_sums",
+    "sum_alpha",
+    "sum_free_alpha",
+    "sum_transpose",
+    "sym_matvec",
+    "sym_perm",
+    "sym_rank3",
+    "sym_sum2",
+    "table_layout",
+)
+
+_FASTEST_MODES: Mapping[str, object] = MappingProxyType(
+    {
+        "lowrank_hess": LowrankHessMode.ON,
+        "scalar_chain": ScalarChainMode.ESTIMATE,
+        "sep_sums": SepSumsMode.COST,
+        "split_acc": _REQUIRED_SPLIT_ACC,
+    }
+)
+
+
 def _preset_settings() -> Mapping[Preset, Mapping[str, object]]:
     """Build the immutable preset table."""
-    standard = dict.fromkeys(
-        (
-            "chain_rule",
-            "fuse_temps",
-            "hessian_symmetry",
-            "hoist_invariants",
-            "hoist_loops",
-            "nest_shared",
-            "nest_sums",
-            "param_symmetry",
-            "split_sqrt",
-            "split_sums",
-            "sum_alpha",
-            "sum_free_alpha",
-            "sym_matvec",
-        ),
-        True,
-    )
-    fastest = dict.fromkeys(
-        (
-            "chain_rule",
-            "col_major",
-            "comp_fuse",
-            "contiguous_args",
-            "cse_expensive",
-            "diag_table",
-            "drop_pair_tables",
-            "dummy_canon",
-            "float_canon",
-            "fuse_guard",
-            "fuse_libm_guard",
-            "fuse_loops",
-            "fuse_outer",
-            "fuse_temps",
-            "hessian_symmetry",
-            "hoist_invariants",
-            "hoist_loops",
-            "keep_libm_tables",
-            "nest_cost",
-            "nest_general",
-            "nest_shared",
-            "nest_sums",
-            "nested_nodes",
-            "pair_cse",
-            "pair_rates",
-            "param_symmetry",
-            "share_elementwise",
-            "sib_fuse",
-            "split_affine",
-            "split_sqrt",
-            "split_sums",
-            "sum_alpha",
-            "sum_free_alpha",
-            "sum_transpose",
-            "sym_matvec",
-            "sym_perm",
-            "sym_rank3",
-            "sym_sum2",
-            "table_layout",
-        ),
-        True,
-    )
-    fastest.update(
-        lowrank_hess=LowrankHessMode.ON,
-        scalar_chain=ScalarChainMode.ESTIMATE,
-        sep_sums=SepSumsMode.COST,
-        split_acc=_REQUIRED_SPLIT_ACC,
-    )
+    standard = dict.fromkeys(_STANDARD_ENABLED, True)
+    fastest = {**dict.fromkeys(_FASTEST_ENABLED, True), **_FASTEST_MODES}
     return MappingProxyType(
         {
             Preset.MINIMAL: MappingProxyType({}),
