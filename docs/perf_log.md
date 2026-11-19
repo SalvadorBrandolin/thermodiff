@@ -174,5 +174,102 @@ are the harness entry points.
 
 ## Change log
 
-| date | commit | task | case | before | after | delta % | notes |
-|------|--------|------|------|--------|-------|---------|-------|
+Columns follow the logging rule of the refactor. Medium and slow rows use the
+same serial protocol as the baseline (`bench.py`, `taskset -c 0-4,6-10`,
+`PYTHONHASHSEED=0`). Antes/Después are total generation times (s). For the
+medium case they are the minimum of 3 repetitions; the slow case has 1
+repetition. "Antes" is the parent commit, or the re-measured base commit when
+the parent differs only by tests (no change in `thermodiff/` or `tools/`).
+Machine state for every row: campaign running (pid 352450), see Wave 1 interim.
+
+| Commit | Paso | Cambio | Caso (modelo/variante/workload) | Antes (s) | Después (s) | Δ % | Fase dominante | Notas |
+|--------|------|--------|---------------------------------|-----------|-------------|-----|----------------|-------|
+| 401daf6 | 0.5 (drift) | none, re-measure of the base | medium pcsaft/e2/w5d | 64.164 (logged, aae26e2) | 66.183 | +3.15 % | emit (55.7 s) | Drift check. Reps 66.183 / 67.184 (median) / 69.374 (max). Earlier logged value is 3.1 % lower, so compare rows within this session only. |
+| 401daf6 | 0.5 (drift) | none, re-measure of the base | slow pcsaft/e3/w6 | 193.238 (logged) | 192.705 | −0.28 % | emit (158.1 s) | 1 rep. Drift check for the slow case. |
+| 813f9a5 | 1.1 | `subs` → `xreplace` in `handle_sum_kronecker` | medium pcsaft/e2/w5d | 66.183 (401daf6) | 58.112 | −12.19 % | emit (56.0 s); diff 10.43 → 2.00 s (−80.8 %) | Reps 58.112 / 58.547 (median) / 61.031 (max). Emit unchanged (+0.6 %). Profile: `handle_sum_kronecker` 86.6 s → 5.0 s and `subs` 83.3 s → 0.1 s (slow case, see Wave 1 interim). |
+| 813f9a5 | 1.1 | `subs` → `xreplace` in `handle_sum_kronecker` | slow pcsaft/e3/w6 | 192.705 (401daf6) | 179.667 | −6.77 % | emit (161.0 s); diff 34.44 → 18.54 s (−46.2 %) | 1 rep. Δ > 5 %, so no repeat. Emit +2.9 s (+1.8 %) is not attributed to the change. |
+| 0fd074d | 1.2a | memoise index sets in `_indexed_cse` | medium pcsaft/e2/w5d | 58.112 (813f9a5, same code as parent 7140e50) | 55.948 | −3.72 % | emit (53.9 s) | Reps 55.948 / 56.133 (median) / 59.425 (max). Diff unchanged (2.0 s). |
+| fe7a992 | 1.2b | cache hoistability and canonical form per call | medium pcsaft/e2/w5d | 55.948 (0fd074d) | 66.181 | **+18.29 % (regression)** | emit (64.1 s, was 53.9 s) | Reproduced in a repeat block: 66.362 min, emit 64.4–64.6 s (3 reps). Cause not identified; not profiled. The next commit removes it again. |
+| ca6ddc4 | 1.2c | reuse counting-phase entries in `_indexed_cse` | medium pcsaft/e2/w5d | 66.181 (fe7a992) | 53.946 | −18.49 % | emit (51.9 s) | Reps 53.946 / 54.215 (median) / 55.932 (max). Net vs 0fd074d: −3.58 %; net vs 401daf6: −18.49 %. Repeat block: 54.718 min (−17.55 % vs the repeat of fe7a992, 66.362). |
+| ca6ddc4 | 1.2a–c | `_indexed_cse` memo, caches, reuse (cumulative) | slow pcsaft/e3/w6 | 179.667 (813f9a5) | 168.774 | −6.06 % | emit (149.5 s); diff 18.54 → 19.14 s (+3.2 %) | 1 rep. Δ > 5 %, so no repeat. The unprofiled first call inside the profile run gave 166.669 s (diff 17.49, emit 149.05), a second sample. |
+| ca6ddc4 | 1.1 + 1.2a–c (cumulative) | cumulative vs baseline | slow pcsaft/e3/w6 | 192.705 (401daf6) | 168.774 | −12.42 % | emit (149.5 s); diff 34.44 → 19.14 s (−44.4 %) | Against the logged baseline 193.238 s: −12.66 %. Emit −5.46 %. |
+
+## Wave 1 interim
+
+Machine state at the start of this block (`uptime`, 01:14): load 1.30 / 1.89 /
+3.04. Campaign: `campaign.py` (pid 352450, `--campaign met5`, another project)
+was running for the whole window. Its affinity is `0-4,6-10`, not CPU 5 alone,
+so it shares every measured core. Its CPU use was 0.0 % at the start of the
+block. The load was about 2 during the block. All timings above are therefore
+flagged as "campaign running". The medium case moved by +3 % against the
+earlier baseline (drift), and the repeat block reproduced the medium numbers of fe7a992 and ca6ddc4 within
+about 1.5 %, so the relative deltas are the reliable part.
+
+Medium repetitions were run serially in one process per commit; the first
+repetition of each process carries the cold `diff` cost (about 7 to 15 s).
+Scripts and raw data: `.orchestration/scratch/T1.P1/` and
+`.orchestration/logs/T1.P1-*.jsonl` (not committed).
+
+### Top 10 at ca6ddc4 (slow pcsaft e3 w6, profiled total 811.78 s)
+
+cProfile run, `tools/profile_case.py ... --top 30`, separate from the timings.
+Raw profile: `.orchestration/scratch/T1.P1/slow-ca6ddc4.prof` (not committed).
+
+| # | function (file:line) | ncalls | cumtime (s) | % of profiled total |
+|---|----------------------|--------|-------------|---------------------|
+| 1 | `generate (tools/profile_case.py:31)` | 1 | 811.78 | 100.00 % |
+| 2 | `generate_workload (thermodiff/bench_hooks.py:1097)` | 1 | 811.78 | 100.00 % |
+| 3 | `to_fortran (thermodiff/fortran.py:3998)` | 1 | 792.96 | 97.68 % |
+| 4 | `__next__ (sympy/core/traversal.py:160)` | 225194571 | 487.78 | 60.09 % |
+| 5 | `atoms (sympy/core/basic.py:601)` | 3822957 | 472.63 | 58.22 % |
+| 6 | `<built-in method builtins.next>` | 225194571 | 454.13 | 55.94 % |
+| 7 | `_common_scalar_cse (thermodiff/fortran.py:615)` | 1 | 439.65 | 54.16 % |
+| 8 | `_preorder_traversal (sympy/core/traversal.py:117)` | 1940106763 | 417.20 | 51.39 % |
+| 9 | `_free_indices (thermodiff/fortran.py:100)` | 1853883 | 384.99 | 47.43 % |
+| 10 | `_indexed_cse (thermodiff/fortran.py:808)` | 1 | 234.38 | 28.87 % |
+
+Shares by function, same profile, for comparison with the baseline: `_indexed_cse`
+30.8 % → 28.9 %; `_common_scalar_cse` 46.3 % → 54.2 %; `handle_sum_kronecker` 9.0 % →
+0.6 %; `subs` 8.6 % → 0.02 %. The share of `_common_scalar_cse` rose because the
+total fell; its absolute time fell from 448.3 s to 439.6 s only.
+
+New hotspots (top 3 after the Wave 1 commits, excluding the harness rows and
+the sympy internals):
+
+1. `_free_indices` 47.43 % (384.99 s, 1.85 M calls, the same call count as the
+   baseline; not changed by T1.1 or T1.2).
+2. `_hoistable_entries` 22.24 % (180.57 s, 190 calls), with `_cached_hoistable`
+   12.97 % (105.25 s, 21.9 M calls) inside it. Before, this cost was spread
+   over `_is_hoistable` (4.7 %) and `canonical` (4.8 %).
+3. `xreplace` / `_xreplace` 12.61 % (102.37 s, 234 253 calls), and `__eq__`
+   (sympy `basic.py:497`) 11.79 % (95.71 s), which comes from the sympy
+   comparisons inside the same passes.
+
+### Lane C input: pcsaft p32 w6 at ca6ddc4
+
+cProfile run, `tools/profile_case.py pcsaft p32 --workload w6`. Profiled total
+537.33 s. The same run's unprofiled generation was 127.64 s (parse 0.126,
+diff 18.70, emit 108.82). Raw profile:
+`.orchestration/scratch/T1.P1/p32w6-ca6ddc4.prof` (not committed).
+
+Variant `p32` uses `scalar_chain="estimate"`, not `"cost"` as the task
+assumed. `to_fortran` was called once and `_common_scalar_cse` was called
+once, so on this path the scalar pipeline does not run twice.
+
+| function (file:line) | ncalls | cumtime (s) | % of profiled total |
+|----------------------|--------|-------------|---------------------|
+| `chain.py`: `chain_rule_derivatives (chain.py:1046)` | 1 | 29.75 | 5.54 % |
+| `chain.py`: `assemble (chain.py:1357)` | 1 | 27.52 | 5.12 % |
+| `chain.py`: `factor_sums (chain.py:71)` | 835561 | 11.96 | 2.23 % |
+| `chain.py`: `total_second (chain.py:1307)` | 6 | 9.52 | 1.77 % |
+| `chain.py`: `F2_plain (chain.py:1279)` | 451 | 9.26 | 1.72 % |
+| `_print_expr (fortran.py:369)` | 846 | 0.50 | 0.09 % |
+| `_common_scalar_cse (fortran.py:615)` | 1 | 294.55 | 54.82 % |
+| `_free_indices (fortran.py:100)` | 1469520 | 188.29 | 35.04 % |
+| `_indexed_cse (fortran.py:808)` | 1 | 71.93 | 13.39 % |
+| `handle_sum_kronecker (core/kronecker_handling.py:15)` | 38 | 5.43 | 1.01 % |
+
+The `chain.py` rows are nested (`assemble` is inside `chain_rule_derivatives`),
+so they must not be added. The whole chain.py share is at most about 5.5 %, and
+`_print_expr` is 0.09 %. `_free_indices` (35 %) and `_common_scalar_cse` (55 %)
+dominate this case too.
