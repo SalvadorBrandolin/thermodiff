@@ -34,7 +34,7 @@ from thermodiff.fortran import (
     _derivative_function_atoms,
 )
 
-from fortran_tools import GFORTRAN, compile_and_run
+from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
 
 
 def explicit_diff():
@@ -655,7 +655,7 @@ class TestCompile:
         module += "\nend module thermo_mod\n"
         source = tmp_path / "main.f90"
         source.write_text(module + driver)
-        return compile_and_run([source], tmp_path, ("-O2",)).stdout
+        return compile_and_run([source], tmp_path, OPTIMISED_FLAGS).stdout
 
     def test_explicit_model(self, tmp_path):
         code = to_fortran(explicit_diff())

@@ -25,7 +25,11 @@ from thermodiff.bench_hooks import (
 )
 
 from conftest import PR76_MODEL, SESSION_ROOT, VARIANT_ORDER, WORKLOAD_ORDER
-from fortran_tools import GFORTRAN, compile_and_run
+from fortran_tools import (
+    GFORTRAN,
+    OPTIMISED_FREE_FORM_FLAGS,
+    compile_and_run,
+)
 
 R_GAS = 0.08314462618  # yaeos/src/constants.f90:7-8 [bar L /(mol K)]
 
@@ -353,7 +357,7 @@ class TestPr76Compilation:
                 for name in ("stub.f90", "wrapper.f90", "driver.f90")
             ],
             tmp_path,
-            ("-O2", "-ffree-line-length-0"),
+            OPTIMISED_FREE_FORM_FLAGS,
         )
         values = [float(value) for value in run.stdout.split()]
         assert values  # the driver really printed the outputs

@@ -11,7 +11,7 @@ from thermodiff import DiffPlz, T, V, k, n, sum_components, to_fortran
 from thermodiff.model import compile_model
 from thermodiff.model.cli import main as cli_main
 
-from fortran_tools import GFORTRAN, compile_and_run
+from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
 
 V1 = {"array_cse": False, "share": False}
 V2 = {"array_cse": False, "share": True}
@@ -196,7 +196,7 @@ class TestCompileVariants:
         module += "\nend module toy_mod\n"
         source = tmp_path / "main.f90"
         source.write_text(module + driver)
-        run = compile_and_run([source], tmp_path, ("-O2",))
+        run = compile_and_run([source], tmp_path, OPTIMISED_FLAGS)
         return [float(value) for value in run.stdout.split()]
 
     def test_interface_is_independent_of_nc(self, tmp_path):

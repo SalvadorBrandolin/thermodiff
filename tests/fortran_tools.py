@@ -8,6 +8,13 @@ from pathlib import Path
 EXECUTABLE_NAME = "a.exe" if os.name == "nt" else "a.out"
 _STDERR_TAIL_CHARS = 1500
 
+# Optimised build, default free-form line length.
+OPTIMISED_FLAGS = ("-O2",)
+# Optimised build of long generated lines.
+OPTIMISED_FREE_FORM_FLAGS = ("-O2", "-ffree-line-length-0")
+# Unoptimised build of long generated lines.
+DEBUG_FREE_FORM_FLAGS = ("-O0", "-ffree-line-length-0")
+
 
 def find_gfortran() -> str | None:
     """Return the gfortran executable to use, honoring ``FC``.
