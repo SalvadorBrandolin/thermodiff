@@ -381,20 +381,7 @@ def _expand_sums(expr: sp.Expr, namer: _Namer):
             break
         for total in innermost:
             tmp = namer("t")
-            statements.append(f"{tmp} = 0.0d0")
-            depth = 0
-            for idx, low, high in total.limits:
-                low_s = _print_expr(low)
-                high_s = _print_expr(high)
-                statements.append(
-                    f"{_INDENT * depth}do {idx} = {low_s}, {high_s}"
-                )
-                depth += 1
-            body_s = _print_expr(total.function)
-            statements.append(f"{_INDENT * depth}{tmp} = {tmp} + {body_s}")
-            for _ in total.limits:
-                depth -= 1
-                statements.append(f"{_INDENT * depth}end do")
+            statements.extend(_sum_loop_lines(tmp, total, [], total.function))
             residual = residual.xreplace({total: tmp})
 
     # remaining sums contain inner sums that depend on their bound indices
@@ -410,25 +397,49 @@ def _expand_sums(expr: sp.Expr, namer: _Namer):
     )
     for total in remaining:
         tmp = namer("t")
-        statements.append(f"{tmp} = 0.0d0")
-        depth = 0
-        for idx, low, high in total.limits:
-            statements.append(
-                f"{_INDENT * depth}do {idx} = {_print_expr(low)}, {_print_expr(high)}"
-            )
-            depth += 1
         inner_statements, body = _expand_sums(total.function, namer)
-        for statement in inner_statements:
-            statements.append(_INDENT * depth + statement)
-        statements.append(
-            f"{_INDENT * depth}{tmp} = {tmp} + {_print_expr(body)}"
-        )
-        for _ in total.limits:
-            depth -= 1
-            statements.append(f"{_INDENT * depth}end do")
+        statements.extend(_sum_loop_lines(tmp, total, inner_statements, body))
         residual = residual.xreplace({total: tmp})
 
     return statements, residual
+
+
+def _sum_loop_lines(
+    tmp: sp.Symbol,
+    total: sp.Sum,
+    inner_lines: list,
+    body: sp.Expr,
+) -> list:
+    """Return the Fortran loop nest that accumulates ``total`` in ``tmp``.
+
+    Parameters
+    ----------
+    tmp : sympy.Symbol
+        Temporary that receives the sum.
+    total : sympy.Sum
+        Summation whose limits define the ``do`` headers.
+    inner_lines : list of str
+        Statements emitted inside the innermost loop before the update.
+    body : sympy expression
+        Summand added to ``tmp`` at each iteration.
+
+    Returns
+    -------
+    list of str
+        Initialisation, loop headers, inner lines, update and closers.
+    """
+    lines = [f"{tmp} = 0.0d0"]
+    for depth, (idx, low, high) in enumerate(total.limits):
+        lines.append(
+            f"{_INDENT * depth}do {idx} = "
+            f"{_print_expr(low)}, {_print_expr(high)}"
+        )
+    depth = len(total.limits)
+    lines.extend(_INDENT * depth + line for line in inner_lines)
+    lines.append(f"{_INDENT * depth}{tmp} = {tmp} + {_print_expr(body)}")
+    for depth in range(len(total.limits) - 1, -1, -1):
+        lines.append(f"{_INDENT * depth}end do")
+    return lines
 
 
 def _print_expr(expr: sp.Expr) -> str:
