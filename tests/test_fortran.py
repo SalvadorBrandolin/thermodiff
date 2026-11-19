@@ -28,6 +28,10 @@ from thermodiff.fortran import (
     _free_indices,
     _indexed_cse,
     _preorder_entries,
+    _scan_atoms,
+    _sorted_sums,
+    _sum_atoms,
+    _derivative_function_atoms,
 )
 
 from fortran_tools import GFORTRAN, compile_and_run
@@ -739,18 +743,16 @@ class TestCompile:
 
 def test_scan_atoms_matches_separate_atoms_calls():
     """The merged walk returns the same sets as separate ``atoms`` calls."""
-    from thermodiff.fortran import _scan_atoms
-
     idx = sp.Idx("a")
     base = sp.IndexedBase("w")
     other = sp.IndexedBase("z")
-    x_sym = sp.Symbol("x")
+    scalar_symbol = sp.Symbol("x")
     exprs = [
-        x_sym,
-        base[idx] * x_sym
-        + sp.Sum(other[idx, idx] * sp.exp(x_sym), (idx, 1, 3)),
+        scalar_symbol,
+        base[idx] * scalar_symbol
+        + sp.Sum(other[idx, idx] * sp.exp(scalar_symbol), (idx, 1, 3)),
         sp.Integer(3),
-        sp.Sum(sp.Sum(base[idx], (idx, 1, 2)) * x_sym, (idx, 1, 4)),
+        sp.Sum(sp.Sum(base[idx], (idx, 1, 2)) * scalar_symbol, (idx, 1, 4)),
     ]
     for expr in exprs:
         scan = _scan_atoms(expr)
@@ -759,19 +761,17 @@ def test_scan_atoms_matches_separate_atoms_calls():
         assert scan.idxs == expr.atoms(sp.Idx)
         assert scan.bases == expr.atoms(sp.IndexedBase)
         assert scan.symbols == expr.atoms(sp.Symbol)
-        assert (x_sym in scan.symbols) == expr.has(x_sym)
+        assert (scalar_symbol in scan.symbols) == expr.has(scalar_symbol)
 
 
 def test_derivative_function_atoms_match_atoms_calls():
     """The merged walk equals ``atoms(Derivative)`` / ``atoms(Function)``."""
-    from thermodiff.fortran import _derivative_function_atoms
-
-    x_sym = sp.Symbol("x")
-    func = sp.Function("f")(x_sym)
+    scalar_symbol = sp.Symbol("x")
+    func = sp.Function("f")(scalar_symbol)
     exprs = [
-        x_sym,
-        func + sp.sin(x_sym),
-        sp.Derivative(func, x_sym) * sp.exp(func),
+        scalar_symbol,
+        func + sp.sin(scalar_symbol),
+        sp.Derivative(func, scalar_symbol) * sp.exp(func),
     ]
     for expr in exprs:
         derivatives, functions = _derivative_function_atoms(expr)
@@ -781,8 +781,6 @@ def test_derivative_function_atoms_match_atoms_calls():
 
 def test_sum_atoms_memo_matches_atoms_and_sorting():
     """The memoised helpers equal ``atoms(Sum)`` and its sorted order."""
-    from thermodiff.fortran import _sorted_sums, _sum_atoms
-
     idx = sp.Idx("a")
     base = sp.IndexedBase("w")
     inner = sp.Sum(base[idx], (idx, 1, 2))
