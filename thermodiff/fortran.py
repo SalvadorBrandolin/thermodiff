@@ -566,6 +566,53 @@ def _free_alpha_key(total, indexes, symmetric_params=()):
     return key, free
 
 
+def _sum_atoms(expr: sp.Basic, memo: dict) -> set:
+    """Return ``expr.atoms(sp.Sum)``, memoised in ``memo`` by expression.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to scan.
+    memo : dict
+        Per-call cache from expression to its set of ``Sum`` atoms.
+
+    Returns
+    -------
+    set
+        The ``Sum`` nodes of ``expr``; callers must not mutate it.
+    """
+    found = memo.get(expr)
+    if found is None:
+        found = memo[expr] = expr.atoms(sp.Sum)
+    return found
+
+
+def _sorted_sums(expr: sp.Basic, memo: dict, sorted_memo: dict) -> tuple:
+    """Return the ``Sum`` atoms of ``expr`` sorted by ``default_sort_key``.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to scan.
+    memo : dict
+        Per-call cache used by :func:`_sum_atoms`.
+    sorted_memo : dict
+        Per-call cache from expression to its sorted ``Sum`` atoms.
+
+    Returns
+    -------
+    tuple
+        The sorted ``Sum`` nodes of ``expr``.
+    """
+    ordered = sorted_memo.get(expr)
+    if ordered is None:
+        ordered = tuple(
+            sorted(_sum_atoms(expr, memo), key=sp.default_sort_key)
+        )
+        sorted_memo[expr] = ordered
+    return ordered
+
+
 def _share_sums(
     expressions,
     namer,
@@ -603,12 +650,14 @@ def _share_sums(
     """
     exprs = list(expressions)
     definitions = []
+    sums_memo: dict = {}
+    sorted_memo: dict = {}
     while True:
         innermost = []
         seen = set()
         for expr in exprs:
-            for total in sorted(expr.atoms(sp.Sum), key=sp.default_sort_key):
-                if total.function.atoms(sp.Sum) or total in seen:
+            for total in _sorted_sums(expr, sums_memo, sorted_memo):
+                if _sum_atoms(total.function, sums_memo) or total in seen:
                     continue
                 seen.add(total)
                 innermost.append(total)

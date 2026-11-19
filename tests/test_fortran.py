@@ -801,3 +801,22 @@ def test_derivative_function_atoms_match_atoms_calls():
         derivatives, functions = _derivative_function_atoms(expr)
         assert derivatives == expr.atoms(sp.Derivative)
         assert functions == expr.atoms(sp.Function)
+
+
+def test_sum_atoms_memo_matches_atoms_and_sorting():
+    """The memoised helpers equal ``atoms(Sum)`` and its sorted order."""
+    from thermodiff.fortran import _sorted_sums, _sum_atoms
+
+    idx = sp.Idx("a")
+    base = sp.IndexedBase("w")
+    inner = sp.Sum(base[idx], (idx, 1, 2))
+    expr = sp.Sum(inner * base[idx], (idx, 1, 3)) + sp.Sum(
+        base[idx] ** 2, (idx, 1, 5)
+    )
+    memo, sorted_memo = {}, {}
+    for _ in range(2):  # second round is served from the memo
+        assert _sum_atoms(expr, memo) == expr.atoms(sp.Sum)
+        assert _sorted_sums(expr, memo, sorted_memo) == tuple(
+            sorted(expr.atoms(sp.Sum), key=sp.default_sort_key)
+        )
+    assert _sum_atoms(sp.Symbol("x"), memo) == set()
