@@ -70,6 +70,20 @@ class TestReduceDeltaSums:
         expr = sp.Piecewise((n[i], condition), (0, True))
         assert handle_sum_kronecker(expr, i) == n[i]
 
+    def test_xreplace_matches_subs_on_range_guards(self):
+        guards = {i >= 1: True, nc >= i: True}
+        conditions = [
+            sp.And(nc >= i, i >= 1),
+            sp.And(i <= nc, 1 <= i),
+            sp.And(i > 0, i <= nc),
+            i >= 1,
+        ]
+        for condition in conditions:
+            piecewise = sp.Piecewise((n[i], condition), (0, True))
+            nested = sp.Sum(2 * piecewise + n[k], (k, 1, nc)) * n[j]
+            for expr in (piecewise, piecewise + n[j], nested):
+                assert handle_sum_kronecker(expr, i) == expr.subs(guards)
+
     def test_delta_inside_add_factor_is_distributed(self):
         # The delta is not a factor of the whole term: only its own
         # summand may be substituted out of the summation.
