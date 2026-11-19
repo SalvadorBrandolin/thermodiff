@@ -96,7 +96,7 @@ def _coerce_mode(
             f"{name}={value!r} is not a known mode; treated as "
             f"{truthy_fallback.value!r}",
             UserWarning,
-            stacklevel=4,
+            stacklevel=5,
         )
         return truthy_fallback
 
@@ -343,6 +343,11 @@ class CodegenOptions:
         return _validate(self)
 
 
+_FIELD_ORDER = tuple(
+    field.name for field in dataclasses.fields(CodegenOptions)
+)
+
+
 class _Rule(NamedTuple):
     """Options that have no effect when ``condition`` holds."""
 
@@ -452,11 +457,6 @@ def _apply_rules(options: CodegenOptions) -> tuple[CodegenOptions, list[str]]:
         disabled.extend(pending)
         pending = _ignored_names(options)
     return options, disabled
-
-
-_FIELD_ORDER = tuple(
-    field.name for field in dataclasses.fields(CodegenOptions)
-)
 
 
 def _check_split_acc(options: CodegenOptions) -> None:

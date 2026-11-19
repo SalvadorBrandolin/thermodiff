@@ -151,6 +151,11 @@ class TestLegacyErrors:
             options = CodegenOptions.from_legacy(**{name: value})
         assert getattr(options, name) is expected
 
+    def test_odd_truthy_warning_points_at_caller(self):
+        with pytest.warns(UserWarning) as caught:
+            CodegenOptions.from_legacy(sep_sums="bogus")
+        assert caught[0].filename == __file__
+
     @pytest.mark.parametrize(
         "name", ["scalar_chain", "sep_sums", "lowrank_hess"]
     )
@@ -260,12 +265,11 @@ class TestValidateRules:
     def test_rule_fires(self, gate, ignored, enabled):
         base = {"chain_rule": True, "share": True}
         settings = {**base, **gate, **ignored}
-        # settings that would keep a dependent option alive stay as in gate
         (options, names), caught = validated(**settings)
         defaults = CodegenOptions()
         for name in names:
             assert getattr(options, name) == getattr(defaults, name)
-        assert set(names) <= set(ignored)
+        assert set(names) == set(ignored)
         assert names
         assert len(caught) == 1
         assert all(name in str(caught[0].message) for name in names)
