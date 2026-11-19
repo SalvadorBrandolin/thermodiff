@@ -11,6 +11,8 @@ from thermodiff.codegen import (
     CodegenOptions,
     CseBackend,
     LowrankHessMode,
+    PRESET_SETTINGS,
+    Preset,
     ScalarChainMode,
     SepSumsMode,
 )
@@ -347,3 +349,67 @@ class TestValidateSplitAcc:
         assert options.split_acc is None
         assert names == ("split_acc",)
         assert len(caught) == 1
+
+
+class TestPresets:
+    """Presets reproduce the bench settings they stand for."""
+
+    def test_minimal_is_defaults(self):
+        options = CodegenOptions.from_preset("minimal")
+        assert options.to_legacy() == signature_defaults()
+
+    @pytest.mark.parametrize(
+        "preset, variant_key",
+        [("standard", "e8"), ("fastest", "p33")],
+    )
+    def test_matches_bench_variant(self, preset, variant_key):
+        variant = bench_hooks.variant_settings(variant_key)
+        expected = {**signature_defaults(), **codegen_settings(variant)}
+        options = CodegenOptions.from_preset(preset)
+        assert options.to_legacy() == expected
+
+    def test_preset_member_and_overrides(self):
+        options = CodegenOptions.from_preset(
+            Preset.STANDARD, chain_rule=False, array_pad=8
+        )
+        assert not options.chain_rule
+        assert options.array_pad == 8
+        assert options.nest_sums
+
+    def test_unknown_preset(self):
+        with pytest.raises(ValueError):
+            CodegenOptions.from_preset("turbo")
+
+    def test_table_is_immutable(self):
+        with pytest.raises(TypeError):
+            PRESET_SETTINGS[Preset.MINIMAL] = {}
+        with pytest.raises(TypeError):
+            PRESET_SETTINGS[Preset.STANDARD]["chain_rule"] = False
+
+    def test_setting_counts(self):
+        assert len(PRESET_SETTINGS[Preset.MINIMAL]) == 0
+        assert len(PRESET_SETTINGS[Preset.STANDARD]) == 13
+        assert len(PRESET_SETTINGS[Preset.FASTEST]) == 43
+
+    def test_standard_without_optional_derivatives_is_clean(self):
+        options = CodegenOptions.from_preset("standard")
+        _, caught = validated(**options.to_legacy())
+        assert caught == []
+
+    def test_fastest_without_optional_derivatives_is_clean(self):
+        options = CodegenOptions.from_preset("fastest")
+        (normalised, names), caught = validated(**options.to_legacy())
+        assert names == () and caught == []
+        assert normalised == options
+
+    def test_fastest_with_optional_derivatives_warns(self):
+        options = CodegenOptions.from_preset(
+            "fastest", optional_derivatives=True
+        )
+        (normalised, names), caught = validated(**options.to_legacy())
+        assert set(names) == set(RULE_CASES[0][1]) | {
+            "fuse_outer",
+        }
+        assert len(names) == 11
+        assert len(caught) == 1
+        assert normalised.sym_rank3

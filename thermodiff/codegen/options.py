@@ -268,6 +268,41 @@ class CodegenOptions:
             legacy[field.name] = value
         return legacy
 
+    @classmethod
+    def from_preset(
+        cls, preset: Preset | str, **overrides: Any
+    ) -> CodegenOptions:
+        """Build a preset and apply overrides on top of it.
+
+        Presets
+        -------
+        ``"minimal"``
+            Today's ``to_fortran`` defaults.
+        ``"standard"``
+            The recommended default: the e8 settings of the met4 campaign
+            (chain rule, symmetry, nesting and sum sharing).
+        ``"fastest"``
+            The p33 settings: the fastest generated code of the met4
+            campaign.  Meant for ``optional_derivatives=False``, because a
+            kernel specialised to the needed derivative set is what pays
+            off.  Generation is slower and reassociation changes the last
+            bits of the results.
+
+        Parameters
+        ----------
+        preset : Preset or str
+            Preset member or its value.
+        **overrides
+            Options replacing the preset's (legacy values or enums).
+
+        Returns
+        -------
+        CodegenOptions
+            The resulting options.
+        """
+        settings = PRESET_SETTINGS[Preset(preset)]
+        return cls(**{**settings, **overrides})
+
     def replace(self, **changes: Any) -> CodegenOptions:
         """Return a copy with some fields changed (values are coerced).
 
@@ -438,3 +473,85 @@ def _validate(
             stacklevel=3,
         )
     return normalised, tuple(ignored)
+
+
+def _preset_settings() -> Mapping[Preset, Mapping[str, object]]:
+    """Build the immutable preset table."""
+    standard = dict.fromkeys(
+        (
+            "chain_rule",
+            "fuse_temps",
+            "hessian_symmetry",
+            "hoist_invariants",
+            "hoist_loops",
+            "nest_shared",
+            "nest_sums",
+            "param_symmetry",
+            "split_sqrt",
+            "split_sums",
+            "sum_alpha",
+            "sum_free_alpha",
+            "sym_matvec",
+        ),
+        True,
+    )
+    fastest = dict.fromkeys(
+        (
+            "chain_rule",
+            "col_major",
+            "comp_fuse",
+            "contiguous_args",
+            "cse_expensive",
+            "diag_table",
+            "drop_pair_tables",
+            "dummy_canon",
+            "float_canon",
+            "fuse_guard",
+            "fuse_libm_guard",
+            "fuse_loops",
+            "fuse_outer",
+            "fuse_temps",
+            "hessian_symmetry",
+            "hoist_invariants",
+            "hoist_loops",
+            "keep_libm_tables",
+            "nest_cost",
+            "nest_general",
+            "nest_shared",
+            "nest_sums",
+            "nested_nodes",
+            "pair_cse",
+            "pair_rates",
+            "param_symmetry",
+            "share_elementwise",
+            "sib_fuse",
+            "split_affine",
+            "split_sqrt",
+            "split_sums",
+            "sum_alpha",
+            "sum_free_alpha",
+            "sum_transpose",
+            "sym_matvec",
+            "sym_perm",
+            "sym_rank3",
+            "sym_sum2",
+            "table_layout",
+        ),
+        True,
+    )
+    fastest.update(
+        lowrank_hess=LowrankHessMode.ON,
+        scalar_chain=ScalarChainMode.ESTIMATE,
+        sep_sums=SepSumsMode.COST,
+        split_acc=_REQUIRED_SPLIT_ACC,
+    )
+    return MappingProxyType(
+        {
+            Preset.MINIMAL: MappingProxyType({}),
+            Preset.STANDARD: MappingProxyType(standard),
+            Preset.FASTEST: MappingProxyType(fastest),
+        }
+    )
+
+
+PRESET_SETTINGS: Mapping[Preset, Mapping[str, object]] = _preset_settings()
