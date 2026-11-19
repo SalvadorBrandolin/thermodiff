@@ -27,6 +27,7 @@ are exposed as extra input arguments by default; pass ``strict=True`` to
 raise an error instead.
 """
 
+import functools
 import re
 
 import sympy as sp
@@ -920,28 +921,32 @@ def _cached_canonical(sub, indices: list, slots: list, cache: dict):
     return cache[sub]
 
 
-def _hoistable_entries(
-    expr,
+def _own_hoistable_entry(
+    sub,
     slots: list,
     index_memo: dict,
     hoistable_cache: dict,
     canonical_cache: dict,
-) -> list:
-    """List ``(sub, canonical, indices)`` of the hoistable sub-trees.
+) -> tuple:
+    """Return the ``(sub, canonical, indices)`` entry of ``sub`` itself.
 
-    Sub-trees come in pre-order, and only those whose rank does not exceed
-    :data:`_MAX_ARRAY_CSE_RANK` are kept.
+    The tuple is empty when ``sub`` is not hoistable or its rank exceeds
+    :data:`_MAX_ARRAY_CSE_RANK`.
     """
-    entries = []
-    for sub in sp.preorder_traversal(expr):
-        if not _cached_hoistable(sub, index_memo, hoistable_cache):
-            continue
-        indices = _sorted_indices(sub, index_memo)
-        if len(indices) > _MAX_ARRAY_CSE_RANK:
-            continue
-        canon = _cached_canonical(sub, indices, slots, canonical_cache)
-        entries.append((sub, canon, indices))
-    return entries
+    if not _cached_hoistable(sub, index_memo, hoistable_cache):
+        return ()
+    indices = _sorted_indices(sub, index_memo)
+    if len(indices) > _MAX_ARRAY_CSE_RANK:
+        return ()
+    canon = _cached_canonical(sub, indices, slots, canonical_cache)
+    return ((sub, canon, indices),)
+
+
+def _memoised_call(function, key, memo: dict):
+    """Return ``function(key)``, cached in the per-call ``memo``."""
+    if key not in memo:
+        memo[key] = function(key)
+    return memo[key]
 
 
 def _indexed_cse(
@@ -1002,14 +1007,20 @@ def _indexed_cse(
     slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
 
     index_memo = {}
-    hoistable_cache = {}
-    canonical_cache = {}
+    own_entries = functools.partial(
+        _own_hoistable_entry,
+        slots=slots,
+        index_memo=index_memo,
+        hoistable_cache={},
+        canonical_cache={},
+    )
+    entries_memo = {}
+    ops_memo = {}
+    sort_key_memo = {}
 
     while True:
         entries = [
-            _hoistable_entries(
-                expr, slots, index_memo, hoistable_cache, canonical_cache
-            )
+            _preorder_entries(expr, own_entries, entries_memo)
             for expr in exprs
         ]
         counts = {}
@@ -1022,11 +1033,16 @@ def _indexed_cse(
                 sizes[canon] = len(indices)
         best = None
         best_key = None
-        for canon in sorted(counts, key=sp.default_sort_key):
+        for canon in sorted(
+            counts,
+            key=lambda item: _memoised_call(
+                sp.default_sort_key, item, sort_key_memo
+            ),
+        ):
             count = counts[canon]
             if count < 2:
                 continue
-            ops = sp.count_ops(canon)
+            ops = _memoised_call(sp.count_ops, canon, ops_memo)
             # A single repeated operation is not worth the extra array
             # unless it is used at least three times.
             if (
