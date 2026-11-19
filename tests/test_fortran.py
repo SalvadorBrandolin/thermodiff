@@ -28,6 +28,7 @@ from thermodiff.fortran import (
     _best_indexed_candidate,
     _best_scalar_candidate,
     _common_scalar_cse,
+    _expand_sums,
     _free_indices,
     _indexed_cse,
     _preorder_entries,
@@ -820,3 +821,37 @@ def test_sum_atoms_memo_matches_atoms_and_sorting():
             sorted(expr.atoms(sp.Sum), key=sp.default_sort_key)
         )
     assert _sum_atoms(sp.Symbol("x"), memo) == set()
+
+
+def test_expand_sums_nested_and_sibling_output_is_pinned():
+    """Pin statements and residual of ``_expand_sums``."""
+    a, b = sp.Idx("a"), sp.Idx("b")
+    w, g = sp.IndexedBase("w"), sp.IndexedBase("g")
+
+    nested = sp.Sum(w[a] / sp.Sum(w[b] * g[b, a], (b, 1, 3)), (a, 1, 3))
+    statements, residual = _expand_sums(nested, _Namer())
+    assert statements == [
+        "t1 = 0.0d0",
+        "do a = 1, 3",
+        "   t2 = 0.0d0",
+        "   do b = 1, 3",
+        "      t2 = t2 + g(b, a)*w(b)",
+        "   end do",
+        "   t1 = t1 + w(a)/t2",
+        "end do",
+    ]
+    assert residual == sp.Symbol("t1")
+
+    siblings = sp.Sum(w[a], (a, 1, 2)) * sp.Sum(w[b] ** 2, (b, 1, 4))
+    statements, residual = _expand_sums(siblings, _Namer())
+    assert statements == [
+        "t1 = 0.0d0",
+        "do a = 1, 2",
+        "   t1 = t1 + w(a)",
+        "end do",
+        "t2 = 0.0d0",
+        "do b = 1, 4",
+        "   t2 = t2 + w(b)**2",
+        "end do",
+    ]
+    assert residual == sp.Symbol("t1") * sp.Symbol("t2")
