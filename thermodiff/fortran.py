@@ -699,6 +699,7 @@ def _common_scalar_cse(expressions, namer, arrays):
     )
     entries_memo = {}
     rank_memo = {}
+    candidate_sets = {}
     while True:
         counts = _count_scalar_candidates(exprs, own_entries, entries_memo)
         repeated = [sub for sub, count in counts.items() if count > 1]
@@ -717,8 +718,33 @@ def _common_scalar_cse(expressions, namer, arrays):
                 "body": best,
             }
         )
-        exprs = [expr.xreplace({best: target}) for expr in exprs]
+        rule = {best: target}
+        for position, expr in enumerate(exprs):
+            candidates = _candidate_set(
+                expr, own_entries, entries_memo, candidate_sets
+            )
+            if best in candidates:
+                exprs[position] = expr.xreplace(rule)
     return exprs, definitions
+
+
+def _candidate_set(
+    expr: sp.Basic,
+    own_entries: Callable[[sp.Basic], tuple],
+    entries_memo: dict,
+    sets_memo: dict,
+) -> frozenset:
+    """Return the set of candidates occurring in ``expr`` (memoised).
+
+    ``sets_memo`` is the per-call cache ``expression -> frozenset``; it is
+    keyed by the expression object, which ``xreplace`` leaves unchanged
+    when nothing in it is replaced.
+    """
+    if expr not in sets_memo:
+        sets_memo[expr] = frozenset(
+            _preorder_entries(expr, own_entries, entries_memo)
+        )
+    return sets_memo[expr]
 
 
 def _is_scalar_candidate(
@@ -1090,11 +1116,17 @@ def _indexed_cse(
         base = target.base
         rank = len(free)
         replacements = {}
-        for position_entries in entries:
+        touched = set()
+        for position, position_entries in enumerate(entries):
             for sub, canon, indices in position_entries:
                 if len(indices) == rank and canon == best:
                     replacements[sub] = sp.Indexed(base, *indices)
-        exprs = [expr.xreplace(replacements) for expr in exprs]
+                    touched.add(position)
+        # ``xreplace`` returns the very same object when no key occurs.
+        exprs = [
+            expr.xreplace(replacements) if position in touched else expr
+            for position, expr in enumerate(exprs)
+        ]
     return exprs, definitions
 
 
