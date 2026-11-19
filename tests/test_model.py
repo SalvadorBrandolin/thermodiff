@@ -11,7 +11,7 @@ import pytest
 from thermodiff.model import ModelError, compile_model, compile_model_file
 from thermodiff.model.cli import main
 
-from fortran_tools import GFORTRAN
+from fortran_tools import GFORTRAN, compile_and_run
 
 PR_MODEL = """
 model pr
@@ -599,18 +599,7 @@ class TestCompile:
     def _compile_and_run(self, tmp_path, code, driver, stub=""):
         source = tmp_path / "main.f90"
         source.write_text(stub + code + driver)
-        exe = tmp_path / ("a.exe" if os.name == "nt" else "a.out")
-        result = subprocess.run(
-            [GFORTRAN, "-O2", "-o", str(exe), str(source)],
-            capture_output=True,
-            text=True,
-            cwd=tmp_path,
-        )
-        assert result.returncode == 0, result.stderr
-        run = subprocess.run(
-            [str(exe)], capture_output=True, text=True, cwd=tmp_path
-        )
-        assert run.returncode == 0, run.stderr
+        run = compile_and_run([source], tmp_path, ("-O2",))
         return [float(value) for value in run.stdout.split()]
 
     def test_pr_matches_finite_differences(self, tmp_path):

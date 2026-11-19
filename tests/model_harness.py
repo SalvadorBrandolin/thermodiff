@@ -2,12 +2,12 @@
 compile a .model with given settings, build an automatic gfortran driver that
 calls it with nc = 3 and 7, and compare all outputs with the a0 reference."""
 
-import sys, re, subprocess, tempfile, pathlib, json, itertools
+import sys, re, tempfile, pathlib, json, itertools
 
 import numpy as np
 from thermodiff.model import compile_model
 from thermodiff.bench_hooks import EXTENDED_VARIANTS
-from fortran_tools import GFORTRAN
+from fortran_tools import compile_and_run
 
 W6 = "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"
 OUTS = [
@@ -131,23 +131,7 @@ def run(text, settings, inits=None, present=OUTS, derivs=W6, opt=True):
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
         (d / "drive.f90").write_text(driver(code, inits or {}, present))
-        r = subprocess.run(
-            [
-                GFORTRAN,
-                "-O0",
-                "-ffree-line-length-0",
-                "drive.f90",
-                "-o",
-                "drive",
-            ],
-            cwd=d,
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode:
-
-            raise RuntimeError("COMPILE FAIL:\n" + r.stderr[-1500:])
-        subprocess.run(["./drive"], cwd=d, check=True)
+        compile_and_run([d / "drive.f90"], d, ("-O0", "-ffree-line-length-0"))
         return np.loadtxt(d / "out.txt"), code
 
 

@@ -1,8 +1,5 @@
 """Tests for the Fortran code generation module."""
 
-import os
-import subprocess
-
 import pytest
 
 import sympy as sp
@@ -33,7 +30,7 @@ from thermodiff.fortran import (
     _preorder_entries,
 )
 
-from fortran_tools import GFORTRAN
+from fortran_tools import GFORTRAN, compile_and_run
 
 
 def explicit_diff():
@@ -654,19 +651,7 @@ class TestCompile:
         module += "\nend module thermo_mod\n"
         source = tmp_path / "main.f90"
         source.write_text(module + driver)
-        exe = tmp_path / ("a.exe" if os.name == "nt" else "a.out")
-        compile_result = subprocess.run(
-            [GFORTRAN, "-O2", "-o", str(exe), str(source)],
-            capture_output=True,
-            text=True,
-            cwd=tmp_path,
-        )
-        assert compile_result.returncode == 0, compile_result.stderr
-        run_result = subprocess.run(
-            [str(exe)], capture_output=True, text=True, cwd=tmp_path
-        )
-        assert run_result.returncode == 0, run_result.stderr
-        return run_result.stdout
+        return compile_and_run([source], tmp_path, ("-O2",)).stdout
 
     def test_explicit_model(self, tmp_path):
         code = to_fortran(explicit_diff())

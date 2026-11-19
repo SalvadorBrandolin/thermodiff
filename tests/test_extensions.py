@@ -12,7 +12,6 @@ variants must agree with the reference variant ``a0`` (no optimisation).
 """
 
 import os
-import subprocess
 
 import numpy as np
 import pytest
@@ -25,7 +24,7 @@ from thermodiff.model.errors import ModelError
 from thermodiff.model.ir import build_ir
 from thermodiff.model.parser import read_sections
 
-from fortran_tools import GFORTRAN
+from fortran_tools import GFORTRAN, compile_and_run
 
 PR76_SYM = """
 model pr76
@@ -233,13 +232,9 @@ def _run_variant(tmp_path, settings):
         + "\nprogram drive"
         + DRIVER.split("program drive")[1]
     )
-    subprocess.run(
-        [GFORTRAN, "-O0", "-ffree-line-length-0", "drive.f90", "-o", "drive"],
-        cwd=work,
-        check=True,
-        capture_output=True,
+    compile_and_run(
+        [work / "drive.f90"], work, ("-O0", "-ffree-line-length-0")
     )
-    subprocess.run(["./drive"], cwd=work, check=True)
     return np.loadtxt(work / "out.txt"), code
 
 
@@ -369,13 +364,9 @@ def _run_rkpr(work, settings):
     )
     head, tail = RKPR_DRIVER.split("program drive", 1)
     (work / "drive.f90").write_text(head + code + "\nprogram drive" + tail)
-    subprocess.run(
-        [GFORTRAN, "-O0", "-ffree-line-length-0", "drive.f90", "-o", "drive"],
-        cwd=work,
-        check=True,
-        capture_output=True,
+    compile_and_run(
+        [work / "drive.f90"], work, ("-O0", "-ffree-line-length-0")
     )
-    subprocess.run(["./drive"], cwd=work, check=True)
     return np.loadtxt(work / "out.txt"), code
 
 

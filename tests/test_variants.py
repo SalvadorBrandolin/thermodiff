@@ -5,15 +5,13 @@ V1 "none" = ``array_cse=False, share=False`` (D-007), V2 "partial" =
 must emit identical interfaces and equivalent bodies.
 """
 
-import subprocess
-
 import pytest
 
 from thermodiff import DiffPlz, T, V, k, n, sum_components, to_fortran
 from thermodiff.model import compile_model
 from thermodiff.model.cli import main as cli_main
 
-from fortran_tools import GFORTRAN
+from fortran_tools import GFORTRAN, compile_and_run
 
 V1 = {"array_cse": False, "share": False}
 V2 = {"array_cse": False, "share": True}
@@ -198,18 +196,7 @@ class TestCompileVariants:
         module += "\nend module toy_mod\n"
         source = tmp_path / "main.f90"
         source.write_text(module + driver)
-        exe = tmp_path / "a.out"
-        result = subprocess.run(
-            [GFORTRAN, "-O2", "-o", str(exe), str(source)],
-            capture_output=True,
-            text=True,
-            cwd=tmp_path,
-        )
-        assert result.returncode == 0, result.stderr
-        run = subprocess.run(
-            [str(exe)], capture_output=True, text=True, cwd=tmp_path
-        )
-        assert run.returncode == 0, run.stderr
+        run = compile_and_run([source], tmp_path, ("-O2",))
         return [float(value) for value in run.stdout.split()]
 
     def test_interface_is_independent_of_nc(self, tmp_path):

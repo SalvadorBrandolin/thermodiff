@@ -25,7 +25,7 @@ from thermodiff.bench_hooks import (
 )
 
 from conftest import PR76_MODEL, SESSION_ROOT, VARIANT_ORDER, WORKLOAD_ORDER
-from fortran_tools import GFORTRAN
+from fortran_tools import GFORTRAN, compile_and_run
 
 R_GAS = 0.08314462618  # yaeos/src/constants.f90:7-8 [bar L /(mol K)]
 
@@ -347,27 +347,14 @@ class TestPr76Compilation:
         self._prepare_stub(tmp_path)
         (tmp_path / "wrapper.f90").write_text(wrapper)
         (tmp_path / "driver.f90").write_text(_driver_w6(state, variant))
-        exe = tmp_path / "a.out"
-        result = subprocess.run(
+        run = compile_and_run(
             [
-                GFORTRAN,
-                "-O2",
-                "-ffree-line-length-0",
-                "-o",
-                str(exe),
-                "stub.f90",
-                "wrapper.f90",
-                "driver.f90",
+                tmp_path / name
+                for name in ("stub.f90", "wrapper.f90", "driver.f90")
             ],
-            capture_output=True,
-            text=True,
-            cwd=tmp_path,
+            tmp_path,
+            ("-O2", "-ffree-line-length-0"),
         )
-        assert result.returncode == 0, result.stderr
-        run = subprocess.run(
-            [str(exe)], capture_output=True, text=True, cwd=tmp_path
-        )
-        assert run.returncode == 0, run.stderr
         values = [float(value) for value in run.stdout.split()]
         assert values  # the driver really printed the outputs
         return values
