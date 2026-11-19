@@ -40,7 +40,7 @@ include = ["thermodiff*"]
 
 [tool.pytest.ini_options]
 markers = [
-    "marker_name: marker_description",
+    "thesis: tests that need models or data outside the repository (deselected with -m 'not thesis')",
 ]
 
 [tool.black]
