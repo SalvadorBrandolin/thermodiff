@@ -781,6 +781,30 @@ def _cached_canonical(sub, indices: list, slots: list, cache: dict):
     return cache[sub]
 
 
+def _hoistable_entries(
+    expr,
+    slots: list,
+    index_memo: dict,
+    hoistable_cache: dict,
+    canonical_cache: dict,
+) -> list:
+    """List ``(sub, canonical, indices)`` of the hoistable sub-trees.
+
+    Sub-trees come in pre-order, and only those whose rank does not exceed
+    :data:`_MAX_ARRAY_CSE_RANK` are kept.
+    """
+    entries = []
+    for sub in sp.preorder_traversal(expr):
+        if not _cached_hoistable(sub, index_memo, hoistable_cache):
+            continue
+        indices = _sorted_indices(sub, index_memo)
+        if len(indices) > _MAX_ARRAY_CSE_RANK:
+            continue
+        canon = _cached_canonical(sub, indices, slots, canonical_cache)
+        entries.append((sub, canon, indices))
+    return entries
+
+
 def _indexed_cse(
     expressions, namer, arrays, expensive_twice=False, counted=None
 ):
@@ -843,18 +867,18 @@ def _indexed_cse(
     canonical_cache = {}
 
     while True:
+        entries = [
+            _hoistable_entries(
+                expr, slots, index_memo, hoistable_cache, canonical_cache
+            )
+            for expr in exprs
+        ]
         counts = {}
         sizes = {}
-        for position, expr in enumerate(exprs):
+        for position, position_entries in enumerate(entries):
             if counted is not None and not counted[position]:
                 continue
-            for sub in sp.preorder_traversal(expr):
-                if not _cached_hoistable(sub, index_memo, hoistable_cache):
-                    continue
-                indices = _sorted_indices(sub, index_memo)
-                if len(indices) > _MAX_ARRAY_CSE_RANK:
-                    continue
-                canon = _cached_canonical(sub, indices, slots, canonical_cache)
+            for _, canon, indices in position_entries:
                 counts[canon] = counts.get(canon, 0) + 1
                 sizes[canon] = len(indices)
         best = None
@@ -891,15 +915,9 @@ def _indexed_cse(
         base = target.base
         rank = len(free)
         replacements = {}
-        for expr in exprs:
-            for sub in sp.preorder_traversal(expr):
-                if not _cached_hoistable(sub, index_memo, hoistable_cache):
-                    continue
-                indices = _sorted_indices(sub, index_memo)
-                if len(indices) != rank:
-                    continue
-                canon = _cached_canonical(sub, indices, slots, canonical_cache)
-                if canon == best:
+        for position_entries in entries:
+            for sub, canon, indices in position_entries:
+                if len(indices) == rank and canon == best:
                     replacements[sub] = sp.Indexed(base, *indices)
         exprs = [expr.xreplace(replacements) for expr in exprs]
     return exprs, definitions
