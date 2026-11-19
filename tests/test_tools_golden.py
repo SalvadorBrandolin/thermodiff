@@ -73,3 +73,19 @@ def test_check_detects_extra_and_stale(golden_roots):
     manifest["models"]["molefrac"]["sha256"] = "0"
     golden._write_manifest(roots.examples, manifest)
     assert check_golden.stale_models(cases, roots, REPO_ROOT) == {"molefrac"}
+
+
+@pytest.mark.parametrize("extra_args", [[], ["--warm"]], ids=["cold", "warm"])
+def test_profile_case_writes_loadable_stats(tmp_path, extra_args):
+    """Both profiling modes write stats that pstats can load."""
+    import pstats
+
+    from tools import profile_case
+
+    model = str(REPO_ROOT / "examples" / "molefrac.model")
+    out = tmp_path / "x.prof"
+    argv = [model, "e0", "--workload", "g0", "--top", "5"]
+    argv += ["--out", str(out), *extra_args]
+    assert profile_case.main(argv) == 0
+    assert out.exists()
+    assert pstats.Stats(str(out)).total_calls > 0
