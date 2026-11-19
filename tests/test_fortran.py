@@ -359,6 +359,27 @@ class TestSharing:
         ] == [("t1", "cos(a)"), ("t2", "sin(a)")]
         assert [str(name) for name in namer.created] == ["t1", "t2"]
 
+    def test_common_scalars_count_ops_breaks_count_ties(self):
+        namer = _Namer()
+        arrays = {}
+        a, b, c = sp.symbols("a b c")
+        # Both candidates occur twice; ``sqrt(a*b + c)`` has more
+        # operations, so it is hoisted first.  The last expression holds
+        # no candidate and must come back untouched.
+        big, small = sp.sqrt(a * b + c), sp.sin(a)
+        assert sp.count_ops(big) > sp.count_ops(small)
+        exprs = [big * T + small * V, big * V + small * T, c + 5]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert [str(expr) for expr in residuals] == [
+            "T*t1 + V*t2",
+            "T*t2 + V*t1",
+            "c + 5",
+        ]
+        assert residuals[2] is exprs[2]
+        assert [
+            (str(item["target"]), str(item["body"])) for item in definitions
+        ] == [("t1", "sqrt(a*b + c)"), ("t2", "sin(a)")]
+
     def test_index_dependent_terms_are_not_hoisted(self):
         namer = _Namer()
         arrays = {}
@@ -469,6 +490,34 @@ class TestSharing:
                 ("t2[p]", ["p"], "log(ac[p] + n[p])"),
             ],
             {"t1": 2, "t2": 1},
+        )
+
+    def test_indexed_cse_cheap_filter_with_counted(self):
+        # ``log(ac[k])`` is counted twice with a single operation, so the
+        # ``ops < 2 and count < 3`` filter keeps it inline; the third
+        # position is not counted although it also holds the factor.
+        ac = sp.IndexedBase("ac", shape=(sp.Symbol("nc", integer=True),))
+        cheap = sp.log(ac[k])
+        root = sp.sqrt(n[k] ** 2 + 1)
+        exprs = [
+            cheap * T + root * V,
+            cheap * V + root + 3,
+            cheap + root * T,
+            cheap * 5,
+        ]
+        arrays = {}
+        residuals, definitions = _indexed_cse(
+            exprs, _Namer(), arrays, counted=[True, True, False, False]
+        )
+        assert self._describe_cse(residuals, definitions, arrays) == (
+            [
+                "T*log(ac[k]) + V*t1[k]",
+                "V*log(ac[k]) + t1[k] + 3",
+                "T*t1[k] + log(ac[k])",
+                "5*log(ac[k])",
+            ],
+            [("t1[p]", ["p"], "sqrt(n[p]**2 + 1)")],
+            {"t1": 1},
         )
 
     def test_index_set_matches_atoms(self):
