@@ -260,6 +260,25 @@ class TestFreeIndices:
         second = sp.Sum(n[k] * n[l], (k, 1, self.NC))
         assert _free_indices(n[k] * first + n[l] * second) == {l}
 
+    def test_shared_memo_matches_unmemoised_on_every_subtree(self):
+        first = sp.Sum(n[k], (k, 1, self.NC))
+        second = sp.Sum(n[k] * n[l], (k, 1, self.NC))
+        expressions = [
+            n[k] * first + n[l] * second,
+            sp.Piecewise((n[k], sp.Eq(k, l)), (first, True)),
+            sp.KroneckerDelta(k, l) * second,
+            sp.Sum(sp.KroneckerDelta(k, l) * n[k], (k, 1, self.NC)),
+            first * sp.Sum(n[k], (k, 1, l)),
+            sp.Sum(
+                n[k] * sp.Sum(n[l] * n[k], (l, 1, self.NC)), (k, 1, self.NC)
+            )
+            + n[l],
+        ]
+        memo = {}
+        for expr in expressions:
+            for sub in sp.preorder_traversal(expr):
+                assert _free_indices(sub, memo=memo) == _free_indices(sub)
+
 
 class TestSharing:
     """Shared summations and common sub-expressions."""
@@ -312,6 +331,30 @@ class TestSharing:
         ]
         assert [str(name) for name in namer.created] == ["t1", "t2", "t3"]
         assert arrays == {}
+
+    def test_common_scalars_sort_key_breaks_ties(self):
+        namer = _Namer()
+        arrays = {}
+        a, c = sp.symbols("a c")
+        # ``sin(a)`` and ``cos(a)`` share count and ``count_ops``, so the
+        # larger ``default_sort_key`` (``cos``) is hoisted first.
+        first, second = sp.sin(a), sp.cos(a)
+        assert sp.count_ops(first) == sp.count_ops(second)
+        exprs = [
+            first * T + second * V,
+            first * V + second * T,
+            first + second + c,
+        ]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert [str(expr) for expr in residuals] == [
+            "T*t2 + V*t1",
+            "T*t1 + V*t2",
+            "c + t1 + t2",
+        ]
+        assert [
+            (str(item["target"]), str(item["body"])) for item in definitions
+        ] == [("t1", "cos(a)"), ("t2", "sin(a)")]
+        assert [str(name) for name in namer.created] == ["t1", "t2"]
 
     def test_index_dependent_terms_are_not_hoisted(self):
         namer = _Namer()
