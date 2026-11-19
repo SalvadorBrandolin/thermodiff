@@ -18,6 +18,7 @@ furo
 
 # Testing
 check-manifest
+numpy
 pytest
 pytest-cov
 pytest-dependency

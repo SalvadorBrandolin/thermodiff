@@ -33,7 +33,7 @@ thermodiff-model = "thermodiff.model.cli:main"
 thermodiff-gui = "thermodiff.gui.cli:main"
 
 [project.optional-dependencies]
-gui = ["streamlit>=1.30"]
+gui = ["streamlit>=1.30", "pandas"]
 
 [tool.setuptools.packages.find]
 include = ["thermodiff*"]
