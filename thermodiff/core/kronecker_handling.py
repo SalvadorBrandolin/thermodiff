@@ -53,7 +53,23 @@ def handle_sum_kronecker(expr: sp.Expr, idx: sp.Idx) -> sp.Expr:
         Simplified expression.
     """
     reduced = _reduce_delta_sums(expr)
-    return reduced.subs({idx >= 1: True, nc >= idx: True})
+    return reduced.xreplace(_range_guards(idx))
+
+
+def _range_guards(idx: sp.Idx) -> dict[sp.Basic, sp.Basic]:
+    """Build the mapping that turns the ``1 <= idx <= nc`` guards to True.
+
+    Parameters
+    ----------
+    idx : sp.Idx
+        Index variable whose range guards are dropped.
+
+    Returns
+    -------
+    dict
+        Relationals ``idx >= 1`` and ``nc >= idx`` mapped to ``True``.
+    """
+    return {idx >= 1: sp.true, nc >= idx: sp.true}
 
 
 def _reduce_delta_sums(expr):
