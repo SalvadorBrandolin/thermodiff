@@ -29,6 +29,7 @@ raise an error instead.
 
 import functools
 import re
+from collections.abc import Callable
 
 import sympy as sp
 from sympy.core.function import DefinedFunction
@@ -744,7 +745,9 @@ def _own_scalar_candidate(
 
 
 def _count_scalar_candidates(
-    exprs: list, own_entries, entries_memo: dict
+    exprs: list,
+    own_entries: Callable[[sp.Basic], tuple],
+    entries_memo: dict,
 ) -> dict:
     """Count the occurrences of every hoistable sub-expression.
 
@@ -769,22 +772,28 @@ def _candidate_rank(sub: sp.Expr, rank_memo: dict) -> tuple:
 def _node_children(node: sp.Basic):
     """Return the children that ``sp.preorder_traversal`` visits.
 
-    Mirrors SymPy: ``LatticeOp`` nodes (``Max``, ``Min``, ``And``...) are
+    Mirrors ``sp.preorder_traversal(expr)`` with ``keys=None`` for SymPy
+    ``Basic`` nodes: ``LatticeOp`` nodes (``Max``, ``Min``, ``And``...) are
     walked through their ``_argset``, everything else through ``args``.
+    Non-``Basic`` iterable args (e.g. matrices) are not supported.
     """
     if hasattr(node, "_argset"):
         return node._argset
     return node.args
 
 
-def _preorder_entries(expr: sp.Basic, own_entries, memo: dict) -> tuple:
+def _preorder_entries(
+    expr: sp.Basic, own_entries: Callable[[sp.Basic], tuple], memo: dict
+) -> tuple:
     """Collect per-node entries of ``expr`` in pre-order, memoised.
 
     The result equals the concatenation of ``own_entries(node)`` over
-    ``sp.preorder_traversal(expr)``.  Entries are cached per subtree in
-    ``memo``; ``xreplace`` returns the very same objects for the subtrees
-    it leaves alone, so a later walk of a rewritten expression only
-    visits the nodes that changed.
+    ``sp.preorder_traversal(expr)`` with ``keys=None``, for SymPy ``Basic``
+    trees.  Non-``Basic`` iterable args (e.g. matrices) are not supported;
+    they never occur in the expressions of the generator.  Entries are
+    cached per subtree in ``memo``; ``xreplace`` returns the very same
+    objects for the subtrees it leaves alone, so a later walk of a
+    rewritten expression only visits the nodes that changed.
 
     Parameters
     ----------
