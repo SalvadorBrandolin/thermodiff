@@ -229,8 +229,9 @@ class _PlaceholderResolver:
 
     def resolve(self, expr: sp.Expr) -> sp.Expr:
         """Return ``expr`` with placeholders replaced by plain variables."""
-        derivatives = list(expr.atoms(sp.Derivative))
-        functions = [f for f in expr.atoms(sp.Function) if _is_placeholder(f)]
+        derivative_set, function_set = _derivative_function_atoms(expr)
+        derivatives = list(derivative_set)
+        functions = [f for f in function_set if _is_placeholder(f)]
 
         if self.strict and (derivatives or functions):
             names = sorted(
@@ -244,13 +245,19 @@ class _PlaceholderResolver:
         replacements = {
             deriv: self._derivative_var(deriv) for deriv in derivatives
         }
-        resolved = expr.xreplace(replacements)
-
-        bare = {
-            func
-            for func in resolved.atoms(sp.Function)
-            if _is_placeholder(func)
-        }
+        if not replacements:
+            # ``xreplace`` with no rule returns ``expr``: reuse its walk
+            resolved = expr
+            bare = set(functions)
+        else:
+            resolved = expr.xreplace(replacements)
+            bare = {
+                func
+                for func in resolved.atoms(sp.Function)
+                if _is_placeholder(func)
+            }
+        if not bare:
+            return resolved
         replacements = {func: self._function_var(func) for func in bare}
         return resolved.xreplace(replacements)
 
@@ -4135,6 +4142,31 @@ def _swap(expr, a, b, symmetric_params):
     """Swap the indices ``a`` and ``b`` and re-canonicalise."""
     swapped = expr.xreplace({a: b, b: a})
     return _canonical_symmetric(swapped, symmetric_params)
+
+
+def _derivative_function_atoms(expr: sp.Basic) -> tuple[set, set]:
+    """Return ``expr.atoms(Derivative)`` and ``expr.atoms(Function)``.
+
+    Both sets come from a single ``preorder_traversal`` of ``expr``.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to scan.
+
+    Returns
+    -------
+    tuple of set
+        The Derivative nodes and the Function nodes.
+    """
+    derivatives = set()
+    functions = set()
+    for node in sp.preorder_traversal(expr):
+        if isinstance(node, sp.Derivative):
+            derivatives.add(node)
+        if isinstance(node, sp.Function):
+            functions.add(node)
+    return derivatives, functions
 
 
 class _ScanAtoms(NamedTuple):

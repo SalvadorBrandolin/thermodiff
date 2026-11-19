@@ -784,3 +784,20 @@ def test_scan_atoms_matches_separate_atoms_calls():
         assert scan.bases == expr.atoms(sp.IndexedBase)
         assert scan.symbols == expr.atoms(sp.Symbol)
         assert (x_sym in scan.symbols) == expr.has(x_sym)
+
+
+def test_derivative_function_atoms_match_atoms_calls():
+    """The merged walk equals ``atoms(Derivative)`` / ``atoms(Function)``."""
+    from thermodiff.fortran import _derivative_function_atoms
+
+    x_sym = sp.Symbol("x")
+    func = sp.Function("f")(x_sym)
+    exprs = [
+        x_sym,
+        func + sp.sin(x_sym),
+        sp.Derivative(func, x_sym) * sp.exp(func),
+    ]
+    for expr in exprs:
+        derivatives, functions = _derivative_function_atoms(expr)
+        assert derivatives == expr.atoms(sp.Derivative)
+        assert functions == expr.atoms(sp.Function)
