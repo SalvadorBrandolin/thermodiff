@@ -20,7 +20,12 @@ from thermodiff import (
     sum_components,
     to_fortran,
 )
-from thermodiff.fortran import _Namer, _common_scalar_cse, _indexed_cse
+from thermodiff.fortran import (
+    _index_set,
+    _Namer,
+    _common_scalar_cse,
+    _indexed_cse,
+)
 
 
 def _find_gfortran():
@@ -360,6 +365,18 @@ class TestSharing:
             ],
             {"t1": 2, "t2": 1},
         )
+
+    def test_index_set_matches_atoms(self):
+        total = sp.Sum(n[k], (k, 1, 5))
+        exprs = [
+            sp.sqrt(n[k] * n[l]) + T,
+            total + n[l],
+            sp.KroneckerDelta(k, l) * V,
+        ]
+        memo = {}
+        for expr in exprs:
+            for sub in sp.preorder_traversal(expr):
+                assert _index_set(sub, memo) == frozenset(sub.atoms(sp.Idx))
 
     def test_indexed_cse_skips_rank_three(self):
         # A rank three temporary is ``nc**3`` entries; benchmarks show it

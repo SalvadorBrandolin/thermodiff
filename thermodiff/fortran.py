@@ -695,8 +695,53 @@ def _index_symbols(expr) -> list:
     return sorted(expr.atoms(sp.Idx), key=str)
 
 
-def _is_hoistable(sub) -> bool:
-    """Whether ``sub`` may be replaced by an array temporary."""
+def _index_set(expr, memo: dict) -> frozenset:
+    """Return the ``sp.Idx`` atoms of ``expr``, memoised bottom-up.
+
+    Parameters
+    ----------
+    expr : sympy expression
+        Expression to inspect.
+    memo : dict
+        Maps every visited sub-tree to its index set.  It is owned by the
+        caller (one per pass), so it can be reused while the expressions
+        stay valid keys; each node is visited once.
+
+    Returns
+    -------
+    frozenset
+        The same set as ``expr.atoms(sp.Idx)``.
+    """
+    stack = [expr]
+    while stack:
+        node = stack[-1]
+        if node in memo:
+            stack.pop()
+            continue
+        if isinstance(node, sp.Idx):
+            memo[node] = frozenset((node,))
+            stack.pop()
+            continue
+        pending = [arg for arg in node.args if arg not in memo]
+        if pending:
+            stack.extend(pending)
+            continue
+        memo[node] = frozenset().union(*(memo[arg] for arg in node.args))
+        stack.pop()
+    return memo[expr]
+
+
+def _sorted_indices(expr, memo: dict) -> list:
+    """Like :func:`_index_symbols`, but reusing the ``memo`` index sets."""
+    return sorted(_index_set(expr, memo), key=str)
+
+
+def _is_hoistable(sub, index_memo: dict | None = None) -> bool:
+    """Whether ``sub`` may be replaced by an array temporary.
+
+    ``index_memo`` optionally supplies the memo of :func:`_index_set`
+    used for the final index test instead of ``sub.atoms(sp.Idx)``.
+    """
     if not isinstance(sub, sp.Expr) or sub.is_Atom:
         return False
     if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)):
@@ -705,7 +750,17 @@ def _is_hoistable(sub) -> bool:
         return False
     if sub.is_Relational or sub.is_Boolean:
         return False
+    if index_memo is not None:
+        return bool(_index_set(sub, index_memo))
     return bool(sub.atoms(sp.Idx))
+
+
+def _canonical_form(sub, indices: list, slots: list):
+    """Rename ``indices`` of ``sub`` to the leading auxiliary ``slots``."""
+    mapping = {
+        index: slots[position] for position, index in enumerate(indices)
+    }
+    return sub.xreplace(mapping)
 
 
 def _indexed_cse(
@@ -765,12 +820,7 @@ def _indexed_cse(
     used.update({"nc", "res"})
     slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
 
-    def canonical(sub):
-        indices = _index_symbols(sub)
-        mapping = {
-            index: slots[position] for position, index in enumerate(indices)
-        }
-        return sub.xreplace(mapping), indices
+    index_memo = {}
 
     while True:
         counts = {}
@@ -779,12 +829,12 @@ def _indexed_cse(
             if counted is not None and not counted[position]:
                 continue
             for sub in sp.preorder_traversal(expr):
-                if not _is_hoistable(sub):
+                if not _is_hoistable(sub, index_memo):
                     continue
-                indices = _index_symbols(sub)
+                indices = _sorted_indices(sub, index_memo)
                 if len(indices) > _MAX_ARRAY_CSE_RANK:
                     continue
-                canon, _ = canonical(sub)
+                canon = _canonical_form(sub, indices, slots)
                 counts[canon] = counts.get(canon, 0) + 1
                 sizes[canon] = len(indices)
         best = None
@@ -823,12 +873,12 @@ def _indexed_cse(
         replacements = {}
         for expr in exprs:
             for sub in sp.preorder_traversal(expr):
-                if not _is_hoistable(sub):
+                if not _is_hoistable(sub, index_memo):
                     continue
-                indices = _index_symbols(sub)
+                indices = _sorted_indices(sub, index_memo)
                 if len(indices) != rank:
                     continue
-                canon, _ = canonical(sub)
+                canon = _canonical_form(sub, indices, slots)
                 if canon == best:
                     replacements[sub] = sp.Indexed(base, *indices)
         exprs = [expr.xreplace(replacements) for expr in exprs]
