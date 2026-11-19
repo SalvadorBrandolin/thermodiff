@@ -754,6 +754,61 @@ def _candidate_rank(sub: sp.Expr, rank_memo: dict) -> tuple:
     return rank_memo[sub]
 
 
+def _node_children(node: sp.Basic):
+    """Return the children that ``sp.preorder_traversal`` visits.
+
+    Mirrors SymPy: ``LatticeOp`` nodes (``Max``, ``Min``, ``And``...) are
+    walked through their ``_argset``, everything else through ``args``.
+    """
+    if hasattr(node, "_argset"):
+        return node._argset
+    return node.args
+
+
+def _preorder_entries(expr: sp.Basic, own_entries, memo: dict) -> tuple:
+    """Collect per-node entries of ``expr`` in pre-order, memoised.
+
+    The result equals the concatenation of ``own_entries(node)`` over
+    ``sp.preorder_traversal(expr)``.  Entries are cached per subtree in
+    ``memo``; ``xreplace`` returns the very same objects for the subtrees
+    it leaves alone, so a later walk of a rewritten expression only
+    visits the nodes that changed.
+
+    Parameters
+    ----------
+    expr : sympy expression
+        Root of the walk.
+    own_entries : callable
+        Maps a node to the tuple of entries it contributes by itself.
+        It must be pure for the lifetime of ``memo``.
+    memo : dict
+        Per-call cache ``subtree -> tuple of entries``, owned by the
+        caller and valid for one fixed ``own_entries``.
+
+    Returns
+    -------
+    tuple
+        The entries of ``expr`` in pre-order.
+    """
+    stack = [expr]
+    while stack:
+        node = stack[-1]
+        if node in memo:
+            stack.pop()
+            continue
+        children = _node_children(node)
+        pending = [child for child in children if child not in memo]
+        if pending:
+            stack.extend(pending)
+            continue
+        memo[node] = (
+            *own_entries(node),
+            *(entry for child in children for entry in memo[child]),
+        )
+        stack.pop()
+    return memo[expr]
+
+
 #: Candidate names for the auxiliary loop variables used by the array
 #: temporaries of :func:`_indexed_cse`.  Names already present in the model
 #: are skipped, so the generated code stays clash free.

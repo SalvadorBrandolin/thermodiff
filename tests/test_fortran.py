@@ -10,6 +10,7 @@ import sympy as sp
 
 from thermodiff import (
     DiffPlz,
+    R,
     T,
     V,
     idx_function,
@@ -17,6 +18,7 @@ from thermodiff import (
     l,
     m,
     n,
+    nc,
     sum_components,
     to_fortran,
 )
@@ -26,6 +28,7 @@ from thermodiff.fortran import (
     _common_scalar_cse,
     _free_indices,
     _indexed_cse,
+    _preorder_entries,
 )
 
 
@@ -524,6 +527,56 @@ class TestSharing:
         residuals, definitions = _indexed_cse(exprs, namer, arrays)
         assert definitions == []
         assert residuals == exprs
+
+
+def _nested_expressions():
+    """Build expressions that cover the node types of the CSE passes."""
+    f = sp.Function("f")
+    body = sp.sqrt(n[k] * n[l]) + sp.exp(-T / (R * n[k]))
+    return [
+        sp.Sum(body * f(T, n[k]), (k, 1, nc)) ** 2 + T,
+        sp.Piecewise((body, sp.Eq(k, l)), (n[k] ** 3 / T, True)),
+        sp.KroneckerDelta(k, l) * sp.log(T) * f(T, T) + sp.Max(T, 2, R),
+        sp.And(sp.Eq(k, l), sp.Lt(T, 3)),
+    ]
+
+
+class TestPreorderEntries:
+    """The memoised walk reproduces ``sp.preorder_traversal``."""
+
+    @staticmethod
+    def _node_itself(node):
+        return (node,)
+
+    def test_matches_preorder_traversal(self):
+        memo = {}
+        for expr in _nested_expressions():
+            walked = _preorder_entries(expr, self._node_itself, memo)
+            assert list(walked) == list(sp.preorder_traversal(expr))
+
+    def test_reuses_memo_after_xreplace(self):
+        memo = {}
+        exprs = _nested_expressions()
+        for expr in exprs:
+            _preorder_entries(expr, self._node_itself, memo)
+        rule = {sp.exp(-T / (R * n[k])): sp.Symbol("tmp")}
+        for expr in exprs:
+            rewritten = expr.xreplace(rule)
+            walked = _preorder_entries(rewritten, self._node_itself, memo)
+            assert list(walked) == list(sp.preorder_traversal(rewritten))
+
+    def test_filtered_entries(self):
+        def only_functions(node):
+            return (node,) if isinstance(node, sp.Function) else ()
+
+        for expr in _nested_expressions():
+            walked = _preorder_entries(expr, only_functions, {})
+            expected = [
+                node
+                for node in sp.preorder_traversal(expr)
+                if isinstance(node, sp.Function)
+            ]
+            assert list(walked) == expected
 
 
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
