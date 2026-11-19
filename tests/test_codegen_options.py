@@ -155,3 +155,195 @@ class TestImmutability:
         options = CodegenOptions()
         with pytest.raises(dataclasses.FrozenInstanceError):
             options.chain_rule = True
+
+
+def validated(**settings):
+    """Validate options, returning the result and the emitted warnings."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = CodegenOptions(**settings).validate()
+    messages = [w for w in caught if issubclass(w.category, UserWarning)]
+    return result, messages
+
+
+# (condition settings, ignored option set on top, non-ignoring settings)
+RULE_CASES = [
+    (
+        {"optional_derivatives": True},
+        {
+            "lowrank_hess": True,
+            "drop_pair_tables": True,
+            "share_elementwise": True,
+            "split_affine": True,
+            "fuse_loops": True,
+            "sib_fuse": True,
+            "diag_table": True,
+            "comp_fuse": True,
+            "split_acc": 2,
+            "scalar_chain": "cost",
+        },
+        {"optional_derivatives": False},
+    ),
+    (
+        {"chain_rule": False},
+        {
+            "split_sqrt": True,
+            "split_sums": True,
+            "pair_cse": True,
+            "pair_rates": True,
+            "nested_nodes": True,
+            "scalar_chain": "estimate",
+            "table_layout": True,
+        },
+        {"chain_rule": True},
+    ),
+    (
+        {"share": False},
+        {
+            "sum_alpha": True,
+            "sum_free_alpha": True,
+            "sum_transpose": True,
+        },
+        {"share": True},
+    ),
+    (
+        {"share_sums": False},
+        {"sum_alpha": True},
+        {"share_sums": True, "share": False},
+    ),
+    ({"array_cse": False}, {"cse_expensive": True}, {"array_cse": True}),
+    (
+        {"fuse_temps": False},
+        {"fuse_guard": True, "keep_libm_tables": True},
+        {"fuse_temps": True},
+    ),
+    (
+        {"nest_sums": False},
+        {"nest_general": True, "nest_cost": True},
+        {"nest_sums": True},
+    ),
+    (
+        {"fuse_temps": False, "nest_sums": False, "param_symmetry": False},
+        {"nest_shared": True},
+        {"fuse_temps": True},
+    ),
+    (
+        {"param_symmetry": False},
+        {"sym_matvec": True, "sym_sum2": True, "sym_perm": True},
+        {"param_symmetry": True},
+    ),
+    (
+        {"fuse_outer": False},
+        {"fuse_libm_guard": True},
+        {"fuse_outer": True},
+    ),
+]
+
+
+class TestValidateRules:
+    """Each rule disables, and reports, exactly its ignored options."""
+
+    @pytest.mark.parametrize("gate, ignored, enabled", RULE_CASES)
+    def test_rule_fires(self, gate, ignored, enabled):
+        base = {"chain_rule": True, "share": True}
+        settings = {**base, **gate, **ignored}
+        # settings that would keep a dependent option alive stay as in gate
+        (options, names), caught = validated(**settings)
+        defaults = CodegenOptions()
+        for name in names:
+            assert getattr(options, name) == getattr(defaults, name)
+        assert set(names) <= set(ignored)
+        assert names
+        assert len(caught) == 1
+        assert all(name in str(caught[0].message) for name in names)
+
+    @pytest.mark.parametrize("gate, ignored, enabled", RULE_CASES)
+    def test_rule_does_not_fire(self, gate, ignored, enabled):
+        settings = {
+            "chain_rule": True,
+            "share": True,
+            "optional_derivatives": False,
+            "array_cse": True,
+            "fuse_temps": True,
+            "nest_sums": True,
+            "param_symmetry": True,
+            "fuse_outer": True,
+            "col_major": True,
+            **enabled,
+            **ignored,
+        }
+        # an ignored option whose gate is open must be kept
+        (options, names), caught = validated(**settings)
+        assert names == ()
+        assert caught == []
+        assert options == CodegenOptions(**settings)
+
+    def test_each_listed_option_is_reported_in_field_order(self):
+        (_, names), _ = validated(
+            optional_derivatives=True, lowrank_hess=True, split_affine=True
+        )
+        assert names == ("lowrank_hess", "split_affine")
+
+    def test_table_layout_kept_with_col_major(self):
+        (options, names), _ = validated(table_layout=True, col_major=True)
+        assert options.table_layout
+        assert names == ()
+
+    def test_fixed_point_cascade(self):
+        # optional_derivatives disables fuse_outer, which in turn makes
+        # fuse_libm_guard moot; the cascade is applied but not listed.
+        (options, names), caught = validated(
+            optional_derivatives=True, fuse_outer=True, fuse_libm_guard=True
+        )
+        assert names == ("fuse_outer",)
+        assert not options.fuse_libm_guard
+        assert len(caught) == 1
+
+    def test_scalar_chain_on_is_not_reported(self):
+        (options, names), caught = validated(
+            optional_derivatives=True, scalar_chain=True
+        )
+        assert options.scalar_chain is ScalarChainMode.ON
+        assert names == ()
+        assert caught == []
+
+    def test_sym_rank3_is_never_touched(self):
+        (options, names), _ = validated(
+            sym_rank3=True, param_symmetry=False, sym_sum2=True
+        )
+        assert options.sym_rank3
+        assert "sym_rank3" not in names
+        assert not options.sym_sum2
+
+    def test_model_dependent_options_do_not_warn(self):
+        (_, names), caught = validated(
+            param_symmetry=True, hessian_symmetry=True, chain_rule=True
+        )
+        assert names == ()
+        assert caught == []
+
+    def test_clean_options_are_unchanged(self):
+        (options, names), caught = validated()
+        assert options == CodegenOptions()
+        assert names == () and caught == []
+
+
+class TestValidateSplitAcc:
+    """Only ``split_acc=2`` is legal where ``to_fortran`` checks it."""
+
+    @pytest.mark.parametrize("value", [True, 1, 3])
+    def test_illegal_value_raises(self, value):
+        with pytest.raises(ValueError, match="2 accumulators only"):
+            CodegenOptions(split_acc=value).validate()
+
+    def test_two_is_legal(self):
+        options, names = CodegenOptions(split_acc=2).validate()
+        assert options.split_acc == 2 and names == ()
+
+    def test_illegal_value_is_ignored_when_optional(self):
+        (options, names), caught = validated(
+            optional_derivatives=True, split_acc=3
+        )
+        assert options.split_acc is None
+        assert names == ("split_acc",)
+        assert len(caught) == 1

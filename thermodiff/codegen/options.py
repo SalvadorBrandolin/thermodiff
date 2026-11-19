@@ -16,7 +16,7 @@ import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 
 class ScalarChainMode(enum.Enum):
@@ -282,3 +282,159 @@ class CodegenOptions:
             The modified copy.
         """
         return dataclasses.replace(self, **changes)
+
+    def validate(self) -> tuple[CodegenOptions, tuple[str, ...]]:
+        """Disable options that today's generator silently ignores.
+
+        Returns
+        -------
+        tuple
+            The normalised options and the names of the ignored options.
+            A single ``UserWarning`` lists them.
+
+        Raises
+        ------
+        ValueError
+            If ``split_acc`` is not 2 and ``optional_derivatives`` is off
+            (the only case where ``to_fortran`` raises).
+        """
+        return _validate(self)
+
+
+class _Rule(NamedTuple):
+    """Options that have no effect when ``condition`` holds."""
+
+    condition: Callable[[CodegenOptions], bool]
+    names: tuple[str, ...]
+
+
+def _effective_share_sums(options: CodegenOptions) -> bool:
+    """Return ``share_sums`` resolved against ``share``."""
+    if options.share_sums is None:
+        return options.share
+    return options.share_sums
+
+
+_RULES: tuple[_Rule, ...] = (
+    _Rule(
+        lambda o: o.optional_derivatives,
+        (
+            "lowrank_hess",
+            "drop_pair_tables",
+            "share_elementwise",
+            "split_affine",
+            "fuse_loops",
+            "sib_fuse",
+            "diag_table",
+            "comp_fuse",
+            "fuse_outer",
+            "split_acc",
+            "scalar_chain",
+        ),
+    ),
+    _Rule(
+        lambda o: not o.chain_rule,
+        (
+            "split_sqrt",
+            "split_sums",
+            "pair_cse",
+            "pair_rates",
+            "nested_nodes",
+            "scalar_chain",
+        ),
+    ),
+    _Rule(
+        lambda o: not o.chain_rule and not o.col_major,
+        ("table_layout",),
+    ),
+    _Rule(
+        lambda o: not _effective_share_sums(o),
+        ("sum_alpha", "sum_free_alpha", "sum_transpose"),
+    ),
+    _Rule(lambda o: not o.array_cse, ("cse_expensive",)),
+    _Rule(lambda o: not o.fuse_temps, ("fuse_guard", "keep_libm_tables")),
+    _Rule(lambda o: not o.nest_sums, ("nest_general", "nest_cost")),
+    _Rule(
+        lambda o: not (o.fuse_temps or o.nest_sums or o.param_symmetry),
+        ("nest_shared",),
+    ),
+    _Rule(
+        lambda o: not o.param_symmetry,
+        ("sym_matvec", "sym_sum2", "sym_perm"),
+    ),
+    _Rule(lambda o: not o.fuse_outer, ("fuse_libm_guard",)),
+)
+
+# Of the ``scalar_chain`` values, only these are coerced to off today; ``ON``
+# also fills ``stats`` keys, so it is never reported as ignored.
+_COERCED_SCALAR_CHAIN = (ScalarChainMode.COST, ScalarChainMode.ESTIMATE)
+
+
+def _is_active(options: CodegenOptions, name: str) -> bool:
+    """Tell whether ``name`` is set to something other than its default."""
+    value = getattr(options, name)
+    if name == "scalar_chain":
+        return value in _COERCED_SCALAR_CHAIN
+    return value != getattr(CodegenOptions(), name)
+
+
+def _ignored_names(options: CodegenOptions) -> list[str]:
+    """Return the active options disabled by some rule on ``options``."""
+    names = {
+        name
+        for rule in _RULES
+        if rule.condition(options)
+        for name in rule.names
+        if _is_active(options, name)
+    }
+    return sorted(names, key=_FIELD_ORDER.index)
+
+
+def _apply_rules(options: CodegenOptions) -> tuple[CodegenOptions, list[str]]:
+    """Apply the rules to a fixed point.
+
+    Returns
+    -------
+    tuple
+        The normalised options and the names ignored by the rules that
+        fire on the options as given (names disabled only as a consequence
+        of an earlier disabling are not listed).
+    """
+    defaults = CodegenOptions()
+    listed = _ignored_names(options)
+    pending = listed
+    while pending:
+        options = options.replace(
+            **{name: getattr(defaults, name) for name in pending}
+        )
+        pending = _ignored_names(options)
+    return options, listed
+
+
+_FIELD_ORDER = tuple(
+    field.name for field in dataclasses.fields(CodegenOptions)
+)
+
+
+def _check_split_acc(options: CodegenOptions) -> None:
+    """Raise when ``split_acc`` is illegal where ``to_fortran`` raises."""
+    if options.optional_derivatives:
+        return
+    if options.split_acc not in (None, _REQUIRED_SPLIT_ACC):
+        raise ValueError("split_acc supports 2 accumulators only")
+
+
+def _validate(
+    options: CodegenOptions,
+) -> tuple[CodegenOptions, tuple[str, ...]]:
+    """Implement :meth:`CodegenOptions.validate`."""
+    _check_split_acc(options)
+    normalised, ignored = _apply_rules(options)
+    if ignored:
+        warnings.warn(
+            "options ignored by the current combination and disabled: "
+            + ", ".join(ignored),
+            UserWarning,
+            stacklevel=3,
+        )
+    return normalised, tuple(ignored)
