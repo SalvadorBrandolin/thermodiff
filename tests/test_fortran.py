@@ -759,3 +759,28 @@ class TestCompile:
         assert values[1] == pytest.approx(58.0)  # f alongside dfdT
         assert values[2] == pytest.approx(14.0)  # dfdT alongside f
         assert values[3] == pytest.approx(14.0)  # dfdT on its own
+
+
+def test_scan_atoms_matches_separate_atoms_calls():
+    """The merged walk returns the same sets as separate ``atoms`` calls."""
+    from thermodiff.fortran import _scan_atoms
+
+    idx = sp.Idx("a")
+    base = sp.IndexedBase("w")
+    other = sp.IndexedBase("z")
+    x_sym = sp.Symbol("x")
+    exprs = [
+        x_sym,
+        base[idx] * x_sym
+        + sp.Sum(other[idx, idx] * sp.exp(x_sym), (idx, 1, 3)),
+        sp.Integer(3),
+        sp.Sum(sp.Sum(base[idx], (idx, 1, 2)) * x_sym, (idx, 1, 4)),
+    ]
+    for expr in exprs:
+        scan = _scan_atoms(expr)
+        assert scan.indexed == expr.atoms(sp.Indexed)
+        assert scan.sums == expr.atoms(sp.Sum)
+        assert scan.idxs == expr.atoms(sp.Idx)
+        assert scan.bases == expr.atoms(sp.IndexedBase)
+        assert scan.symbols == expr.atoms(sp.Symbol)
+        assert (x_sym in scan.symbols) == expr.has(x_sym)

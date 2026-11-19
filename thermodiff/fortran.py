@@ -30,6 +30,7 @@ raise an error instead.
 import functools
 import re
 from collections.abc import Callable
+from typing import NamedTuple
 
 import sympy as sp
 from sympy.core.function import DefinedFunction
@@ -4136,6 +4137,47 @@ def _swap(expr, a, b, symmetric_params):
     return _canonical_symmetric(swapped, symmetric_params)
 
 
+class _ScanAtoms(NamedTuple):
+    """Atoms of one expression gathered by :func:`_scan_atoms`."""
+
+    indexed: set
+    sums: set
+    idxs: set
+    bases: set
+    symbols: set
+
+
+def _scan_atoms(expr: sp.Basic) -> _ScanAtoms:
+    """Collect Indexed, Sum, Idx, IndexedBase and Symbol atoms in one walk.
+
+    Each set equals ``expr.atoms(cls)`` for the matching class: the nodes of
+    ``preorder_traversal`` (root included) that are instances of ``cls``.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to scan.
+
+    Returns
+    -------
+    _ScanAtoms
+        The five atom sets.
+    """
+    scan = _ScanAtoms(set(), set(), set(), set(), set())
+    targets = (
+        (sp.Indexed, scan.indexed),
+        (sp.Sum, scan.sums),
+        (sp.Idx, scan.idxs),
+        (sp.IndexedBase, scan.bases),
+        (sp.Symbol, scan.symbols),
+    )
+    for node in sp.preorder_traversal(expr):
+        for cls, found in targets:
+            if isinstance(node, cls):
+                found.add(node)
+    return scan
+
+
 class _LoopStart(sp.Symbol):
     """Lower bound ``outer + 1`` of a folded triangular loop.
 
@@ -4845,29 +4887,29 @@ def to_fortran(
     # NOTE: ``n`` is compared by name because ``expr`` has been rebuilt by
     # the ``nc`` replacement above, which also rewrites the shape of the
     # ``n`` IndexedBase.
+    scans = [_scan_atoms(expr) for expr in scan_exprs]
     n_name = str(n)
     uses_n = any(
-        n_name in {str(base_) for base_ in expr.atoms(sp.IndexedBase)}
-        for expr in scan_exprs
+        n_name in {str(base_) for base_ in scan.bases} for scan in scans
     )
 
     index_syms = set()
     indexed_bases = set()
-    for expr in scan_exprs:
-        for indexed in expr.atoms(sp.Indexed):
+    for scan in scans:
+        for indexed in scan.indexed:
             index_syms.update(indexed.indices)
-        for total in expr.atoms(sp.Sum):
+        for total in scan.sums:
             for limit in total.limits:
                 index_syms.add(limit[0])
-        index_syms.update(expr.atoms(sp.Idx))
-        indexed_bases.update(expr.atoms(sp.IndexedBase))
+        index_syms.update(scan.idxs)
+        indexed_bases.update(scan.bases)
 
     index_names = {str(idx) for idx in index_syms}
     base_names = {str(base_) for base_ in indexed_bases}
 
     param_scalars = set()
-    for expr in scan_exprs:
-        for sym in expr.atoms(sp.Symbol):
+    for scan in scans:
+        for sym in scan.symbols:
             name = str(sym)
             if name in index_names or name in base_names:
                 continue
@@ -4882,8 +4924,8 @@ def to_fortran(
             param_scalars.add(name)
 
     array_ranks = {}
-    for expr in scan_exprs:
-        for indexed in expr.atoms(sp.Indexed):
+    for scan in scans:
+        for indexed in scan.indexed:
             base_name = str(indexed.base)
             rank = len(indexed.indices)
             array_ranks[base_name] = max(array_ranks.get(base_name, 0), rank)
@@ -4904,7 +4946,7 @@ def to_fortran(
         uses_n
         or bool(param_arrays)
         or any(free for _, _, _, free in prepared)
-        or any(sp.Symbol("nc") in expr.atoms(sp.Symbol) for expr in scan_exprs)
+        or any(sp.Symbol("nc") in scan.symbols for scan in scans)
     )
 
     # ---- input declarations -------------------------------------------
@@ -4914,7 +4956,7 @@ def to_fortran(
     if integer_args:
         inputs.append("integer, intent(in) :: " + ", ".join(integer_args))
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
-        if any(expr.has(var) for expr in scan_exprs):
+        if any(var in scan.symbols for scan in scans):
             inputs.append(f"real(8), intent(in) :: {label}")
     for param in params:
         inputs.append(f"real(8), intent(in) :: {param}")
@@ -5004,8 +5046,9 @@ def to_fortran(
         | {out_name for _, out_name, _, _ in prepared}
     )
     for expr in all_exprs:
-        reserved.update(str(sym) for sym in expr.atoms(sp.Symbol))
-        reserved.update(str(b) for b in expr.atoms(sp.IndexedBase))
+        scan = _scan_atoms(expr)
+        reserved.update(str(sym) for sym in scan.symbols)
+        reserved.update(str(base_) for base_ in scan.bases)
     if fuse_temps:
         n_comp = len(component_array_defs)
         pool = component_array_defs + array_defs
@@ -5360,7 +5403,7 @@ def to_fortran(
         arg_names.append("nc")
     arg_names.extend(integer_args)
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
-        if any(expr.has(var) for expr in scan_exprs):
+        if any(var in scan.symbols for scan in scans):
             arg_names.append(label)
     arg_names.extend(params)
     arg_names.extend(sorted(param_arrays))
