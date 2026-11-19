@@ -695,25 +695,16 @@ def _common_scalar_cse(expressions, namer, arrays):
     exprs = list(expressions)
     definitions = []
     index_memo = {}
+    eligible_memo = {}
+    rank_memo = {}
     while True:
-        counts = {}
-        for expr in exprs:
-            for sub in sp.preorder_traversal(expr):
-                if not isinstance(sub, sp.Expr) or sub.is_Atom:
-                    continue
-                if _free_indices(sub, index_memo) or sub.has(sp.Sum):
-                    continue
-                counts[sub] = counts.get(sub, 0) + 1
+        counts = _count_scalar_candidates(exprs, index_memo, eligible_memo)
         repeated = [sub for sub, count in counts.items() if count > 1]
         if not repeated:
             break
         best = max(
             repeated,
-            key=lambda sub: (
-                counts[sub],
-                sp.count_ops(sub),
-                sp.default_sort_key(sub),
-            ),
+            key=lambda sub: (counts[sub], *_candidate_rank(sub, rank_memo)),
         )
         target = _new_shared_temp(namer, [], arrays)
         definitions.append(
@@ -726,6 +717,43 @@ def _common_scalar_cse(expressions, namer, arrays):
         )
         exprs = [expr.xreplace({best: target}) for expr in exprs]
     return exprs, definitions
+
+
+def _is_scalar_candidate(
+    sub: sp.Basic, index_memo: dict, eligible_memo: dict
+) -> bool:
+    """Tell whether ``sub`` may be hoisted as a shared scalar (memoised)."""
+    if sub not in eligible_memo:
+        eligible_memo[sub] = (
+            isinstance(sub, sp.Expr)
+            and not sub.is_Atom
+            and not _free_indices(sub, index_memo)
+            and not sub.has(sp.Sum)
+        )
+    return eligible_memo[sub]
+
+
+def _count_scalar_candidates(
+    exprs: list, index_memo: dict, eligible_memo: dict
+) -> dict:
+    """Count the occurrences of every hoistable sub-expression.
+
+    The dict keeps the order in which candidates are first met in a
+    pre-order walk of ``exprs``, which fixes the tie-break of the caller.
+    """
+    counts = {}
+    for expr in exprs:
+        for sub in sp.preorder_traversal(expr):
+            if _is_scalar_candidate(sub, index_memo, eligible_memo):
+                counts[sub] = counts.get(sub, 0) + 1
+    return counts
+
+
+def _candidate_rank(sub: sp.Expr, rank_memo: dict) -> tuple:
+    """Return ``(count_ops, default_sort_key)`` of ``sub`` (memoised)."""
+    if sub not in rank_memo:
+        rank_memo[sub] = (sp.count_ops(sub), sp.default_sort_key(sub))
+    return rank_memo[sub]
 
 
 #: Candidate names for the auxiliary loop variables used by the array
