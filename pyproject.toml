@@ -45,7 +45,7 @@ markers = [
 
 [tool.black]
 line-length = 79
-target-version = ["py312"]
+target-version = ["py310", "py311", "py312", "py313"]
 
 # The Streamlit application is a declarative UI script that can only run
 # with the optional ``gui`` extra, so it is not part of the standard test
