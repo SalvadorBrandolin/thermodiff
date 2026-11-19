@@ -2773,8 +2773,6 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
 
     for d in definitions:
         k = kind(d)
-        if k is None or (k == "map" and group and False):
-            pass
         if k is not None and group:
             x = outer_of(group[0])
             inner = [lim[0] for lim in d["limits"][1:]] if k == "red" else []
