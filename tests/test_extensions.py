@@ -752,8 +752,6 @@ def test_cmr_rank3_variants_without_optional_outputs(variant):
     import model_harness as mh
 
     path = os.path.join(_ROOT_MODELS, "cmr", "cmr.model")
-    if not os.path.exists(path):
-        pytest.skip("cmr model not in this checkout")
     text = open(path).read()
     inits = {
         "n": "0.3d0+0.11d0*i",
@@ -787,8 +785,6 @@ def test_cubic_fusion_variants_without_optional_outputs(variant):
 
 def test_sym_perm_puts_the_innermost_index_first():
     path = os.path.join(_ROOT_MODELS, "cmr", "cmr.model")
-    if not os.path.exists(path):
-        pytest.skip("cmr model not in this checkout")
     code = compile_model(
         open(path).read(),
         derivatives="dn",
@@ -805,8 +801,6 @@ def test_sym_perm_puts_the_innermost_index_first():
 
 def test_fuse_guard_keeps_one_exponential_per_pair():
     path = os.path.join(_ROOT_MODELS, "uniquac", "uniquac.model")
-    if not os.path.exists(path):
-        pytest.skip("uniquac model not in this checkout")
     text = open(path).read()
     before = compile_model(
         text,
