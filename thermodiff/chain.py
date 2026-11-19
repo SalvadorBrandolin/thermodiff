@@ -136,14 +136,18 @@ def summation_nodes(expr):
         symbol = sp.Dummy(f"S{position}")
         nodes.append((symbol, total))
         replacements[key] = symbol
+
     def substitute(sub):
         if isinstance(sub, sp.Sum):
             key = _alpha_key(sub)
             if key in replacements:
                 return replacements[key]
-        if not getattr(sub, "args", ()) or isinstance(sub, (sp.Idx, sp.Indexed)):
+        if not getattr(sub, "args", ()) or isinstance(
+            sub, (sp.Idx, sp.Indexed)
+        ):
             return sub
         return sub.func(*[substitute(arg) for arg in sub.args])
+
     return substitute(expr), nodes
 
 
@@ -162,10 +166,27 @@ PAIR_SLOTS = (sp.Idx("ia"), sp.Idx("ib"))
 #: prefixes of the generated arrays (changed if the model uses them)
 _PREFIX = {"cmp": "cmp", "mat": "mat"}
 
-_SLOT_CANDIDATES = ["ic", "ia", "ib", "jc", "ja", "jb", "kc", "ka", "kb",
-                    "ua", "ub", "uc", "va", "vb", "vc"]
-_PREFIX_CANDIDATES = {"cmp": ["cmp", "cpf", "cfn", "cvec"],
-                      "mat": ["mat", "pmt", "pfn", "pmat"]}
+_SLOT_CANDIDATES = [
+    "ic",
+    "ia",
+    "ib",
+    "jc",
+    "ja",
+    "jb",
+    "kc",
+    "ka",
+    "kb",
+    "ua",
+    "ub",
+    "uc",
+    "va",
+    "vb",
+    "vc",
+]
+_PREFIX_CANDIDATES = {
+    "cmp": ["cmp", "cpf", "cfn", "cvec"],
+    "mat": ["mat", "pmt", "pfn", "pmat"],
+}
 
 
 def _configure_names(expression):
@@ -193,7 +214,7 @@ class _Param:
 
     def __init__(self, name, body, rank, symmetric=False):
         self.name = name
-        self.body = body        # in terms of COMPONENT_SLOT / PAIR_SLOTS
+        self.body = body  # in terms of COMPONENT_SLOT / PAIR_SLOTS
         self.rank = rank
         self.symmetric = symmetric
         self.func = sp.Function(name)
@@ -220,8 +241,14 @@ def _subscript_order(body, a, b):
     return (b, a) if ba > ab else (a, b)
 
 
-def abstract_component_functions(expr, registry, symmetric_params=(), pairs=True,
-                                 split_sqrt=False, table_layout=False):
+def abstract_component_functions(
+    expr,
+    registry,
+    symmetric_params=(),
+    pairs=True,
+    split_sqrt=False,
+    table_layout=False,
+):
     """Abstract per-component and per-pair functions of temperature.
 
     Inside summations, the factors of a product that do not contain mole
@@ -252,9 +279,13 @@ def abstract_component_functions(expr, registry, symmetric_params=(), pairs=True
     def plain(arg):
         # only functions of T (and parameters): V and P dependence would be
         # lost, because the abstract functions are differentiated in T only
-        return (_mole_free(arg) and not arg.has(sp.Sum)
-                and not arg.has(sp.Piecewise) and not arg.has(V)
-                and not arg.has(P))
+        return (
+            _mole_free(arg)
+            and not arg.has(sp.Sum)
+            and not arg.has(sp.Piecewise)
+            and not arg.has(V)
+            and not arg.has(P)
+        )
 
     def make(body, indices):
         indices = sorted(indices, key=str)
@@ -262,21 +293,34 @@ def abstract_component_functions(expr, registry, symmetric_params=(), pairs=True
             canon = body.xreplace({indices[0]: COMPONENT_SLOT})
             key = ("c", canon)
             if key not in registry:
-                registry[key] = _Param(f"{_PREFIX['cmp']}{len(registry)}", canon, 1)
+                registry[key] = _Param(
+                    f"{_PREFIX['cmp']}{len(registry)}", canon, 1
+                )
             return registry[key].func(indices[0], T)
         a, b = indices
         canon = body.xreplace({a: PAIR_SLOTS[0], b: PAIR_SLOTS[1]})
         canon = _canonical_symmetric(canon, symmetric_params)
-        if table_layout and _subscript_order(body, a, b) == (b, a) and \
-                _swap(canon, PAIR_SLOTS[0], PAIR_SLOTS[1], symmetric_params) != canon:
+        if (
+            table_layout
+            and _subscript_order(body, a, b) == (b, a)
+            and _swap(canon, PAIR_SLOTS[0], PAIR_SLOTS[1], symmetric_params)
+            != canon
+        ):
             a, b = b, a
             canon = body.xreplace({a: PAIR_SLOTS[0], b: PAIR_SLOTS[1]})
             canon = _canonical_symmetric(canon, symmetric_params)
-        inner = abstract_component_functions(canon, registry, symmetric_params, pairs=False)
+        inner = abstract_component_functions(
+            canon, registry, symmetric_params, pairs=False
+        )
         key = ("p", canon)
         if key not in registry:
-            sym = _swap(canon, PAIR_SLOTS[0], PAIR_SLOTS[1], symmetric_params) == canon
-            registry[key] = _Param(f"{_PREFIX['mat']}{len(registry)}", inner, 2, sym)
+            sym = (
+                _swap(canon, PAIR_SLOTS[0], PAIR_SLOTS[1], symmetric_params)
+                == canon
+            )
+            registry[key] = _Param(
+                f"{_PREFIX['mat']}{len(registry)}", inner, 2, sym
+            )
         if canon.has(T):
             return registry[key].func(a, b, T)
         return registry[key].func(a, b)
@@ -290,15 +334,18 @@ def abstract_component_functions(expr, registry, symmetric_params=(), pairs=True
         Returns the list of factors, or None when the group does not split
         into per-component functions and a temperature-free pair factor.
         """
-        inner = abstract_component_functions(group, registry, symmetric_params,
-                                             pairs=False)
+        inner = abstract_component_functions(
+            group, registry, symmetric_params, pairs=False
+        )
         expanded = sp.expand_power_base(inner, force=True)
-        factors = expanded.args if isinstance(expanded, sp.Mul) else (expanded,)
+        factors = (
+            expanded.args if isinstance(expanded, sp.Mul) else (expanded,)
+        )
         out = []
         for f in factors:
             fidx = f.atoms(sp.Idx)
             if len(fidx) == 2 and f.has(T):
-                return None   # still a genuine function of the pair and T
+                return None  # still a genuine function of the pair and T
             if len(fidx) == 1 and f.has(T):
                 if isinstance(f, sp.core.function.AppliedUndef):
                     out.append(f)
@@ -308,14 +355,18 @@ def abstract_component_functions(expr, registry, symmetric_params=(), pairs=True
                     canon = f.xreplace({index: COMPONENT_SLOT})
                     key = ("c", canon)
                     if key not in registry:
-                        registry[key] = _Param(f"{_PREFIX['cmp']}{len(registry)}", canon, 1)
+                        registry[key] = _Param(
+                            f"{_PREFIX['cmp']}{len(registry)}", canon, 1
+                        )
                     out.append(registry[key].func(index, T))
             else:
                 out.append(f)
         return out
 
     def rewrite(sub, inside):
-        if not getattr(sub, "args", ()) or isinstance(sub, (sp.Idx, sp.Indexed)):
+        if not getattr(sub, "args", ()) or isinstance(
+            sub, (sp.Idx, sp.Indexed)
+        ):
             return sub
         if isinstance(sub, sp.Sum):
             return sub.func(rewrite(sub.function, True), *sub.limits)
@@ -330,15 +381,23 @@ def abstract_component_functions(expr, registry, symmetric_params=(), pairs=True
             new = [rewrite(a, inside) for a in rest]
             used = set()
             for idx in sorted(pair_groups, key=lambda x: sorted(map(str, x))):
-                members = [a for a in free if a.atoms(sp.Idx) <= idx and id(a) not in used]
+                members = [
+                    a
+                    for a in free
+                    if a.atoms(sp.Idx) <= idx and id(a) not in used
+                ]
                 if len(members) < 2 and not any(m.has(T) for m in members):
                     continue
                 for m in members:
                     used.add(id(m))
                 group = sp.Mul(*members)
-                if split_sqrt and group.has(T) and any(
-                    isinstance(x, sp.Pow) and not x.exp.is_integer
-                    for x in sp.preorder_traversal(group)
+                if (
+                    split_sqrt
+                    and group.has(T)
+                    and any(
+                        isinstance(x, sp.Pow) and not x.exp.is_integer
+                        for x in sp.preorder_traversal(group)
+                    )
                 ):
                     split = _split_pair_roots(group, idx)
                     if split is not None:
@@ -371,8 +430,9 @@ def abstract_component_functions(expr, registry, symmetric_params=(), pairs=True
     return rewrite(expr, not expr.has(sp.Sum))
 
 
-def component_definitions(registry, order, inline_rates=False, pair_cse=False,
-                          pair_rates=False):
+def component_definitions(
+    registry, order, inline_rates=False, pair_cse=False, pair_rates=False
+):
     """Values and temperature derivatives of the abstracted functions.
 
     Returns
@@ -389,19 +449,28 @@ def component_definitions(registry, order, inline_rates=False, pair_cse=False,
     for p in params.values():
         for d in range(order + 1):
             names[(p.name, d)] = sp.IndexedBase(
-                p.name + ("" if d == 0 else "_" + "T" * d), shape=(nc,) * p.rank
+                p.name + ("" if d == 0 else "_" + "T" * d),
+                shape=(nc,) * p.rank,
             )
 
     def mapping(expr):
         def visit(sub):
             if isinstance(sub, sp.Derivative):
                 f = sub.expr
-                if isinstance(f, sp.core.function.AppliedUndef) and str(f.func) in params:
+                if (
+                    isinstance(f, sp.core.function.AppliedUndef)
+                    and str(f.func) in params
+                ):
                     d = sum(c for var, c in sub.variable_count if var == T)
                     idx = [a for a in f.args if a != T]
-                    if inline_rates and str(f.func) in pair_dep_rates and d in (1, 2):
+                    if (
+                        inline_rates
+                        and str(f.func) in pair_dep_rates
+                        and d in (1, 2)
+                    ):
                         G = pair_dep_rates[str(f.func)].xreplace(
-                            dict(zip(PAIR_SLOTS, idx)))
+                            dict(zip(PAIR_SLOTS, idx))
+                        )
                         m = sp.Indexed(names[(str(f.func), 0)], *idx)
                         if d == 1:
                             return visit(m * G)
@@ -418,11 +487,19 @@ def component_definitions(registry, order, inline_rates=False, pair_cse=False,
                         rate_T = sp.diff(g0, T) + vecs[1][a_] + vecs[1][b_]
                         return m * (rate**2 + rate_T)
                     return sp.Indexed(names[(str(f.func), d)], *idx)
-            if isinstance(sub, sp.core.function.AppliedUndef) and str(sub.func) in params:
-                return sp.Indexed(names[(str(sub.func), 0)], *[a for a in sub.args if a != T])
-            if not getattr(sub, "args", ()) or isinstance(sub, (sp.Idx, sp.Indexed)):
+            if (
+                isinstance(sub, sp.core.function.AppliedUndef)
+                and str(sub.func) in params
+            ):
+                return sp.Indexed(
+                    names[(str(sub.func), 0)], *[a for a in sub.args if a != T]
+                )
+            if not getattr(sub, "args", ()) or isinstance(
+                sub, (sp.Idx, sp.Indexed)
+            ):
                 return sub
             return sub.func(*[visit(arg) for arg in sub.args])
+
         return visit(expr)
 
     if pair_cse:
@@ -452,15 +529,20 @@ def component_definitions(registry, order, inline_rates=False, pair_cse=False,
         # sqrt(a_a*a_b)), whose plain derivative divides by it too
         factors = p.body.args if isinstance(p.body, sp.Mul) else (p.body,)
         if not all(
-            (not f.has(T)) or (isinstance(f, sp.Pow) and not f.exp.is_integer)
+            (not f.has(T))
+            or (isinstance(f, sp.Pow) and not f.exp.is_integer)
             or (pair_rates and isinstance(f, sp.exp))
             for f in factors
         ):
             continue
         G = sp.expand(sp.diff(sp.expand_log(sp.log(p.body), force=True), T))
         terms = G.args if isinstance(G, sp.Add) else (G,)
-        if pair_rates and not G.has(sp.log) and not G.has(sp.exp) \
-                and any(len(t.atoms(sp.Idx)) > 1 for t in terms):
+        if (
+            pair_rates
+            and not G.has(sp.log)
+            and not G.has(sp.exp)
+            and any(len(t.atoms(sp.Idx)) > 1 for t in terms)
+        ):
             # a cheap rate that depends on the pair (c_ab b_ab / T**2 for
             # exp(-c_ab tau_ab)): M' = M*G_ab written in place
             pair_dep_rates[p.name] = G
@@ -492,12 +574,15 @@ def component_definitions(registry, order, inline_rates=False, pair_cse=False,
         factors = p.body.args if isinstance(p.body, sp.Mul) else (p.body,)
         costly = [f for f in factors if f.has(T)]
         if not costly or not all(
-            (isinstance(f, sp.Pow) and not f.exp.is_integer) or isinstance(f, sp.exp)
+            (isinstance(f, sp.Pow) and not f.exp.is_integer)
+            or isinstance(f, sp.exp)
             for f in costly
         ):
             continue
         h = sp.diff(sp.expand_log(sp.log(p.body), force=True), T)
-        if h.has(sp.log) and any(isinstance(f, sp.Pow) and f.exp.has(T) for f in costly):
+        if h.has(sp.log) and any(
+            isinstance(f, sp.Pow) and f.exp.has(T) for f in costly
+        ):
             continue
         comp_rates[p.name] = h
 
@@ -507,8 +592,10 @@ def component_definitions(registry, order, inline_rates=False, pair_cse=False,
             if p.rank != rank:
                 continue
             slots = (COMPONENT_SLOT,) if rank == 1 else PAIR_SLOTS
-            arrays_ = [sp.Indexed(names[(p.name, d)], *slots)
-                       for d in range(order + 1)]
+            arrays_ = [
+                sp.Indexed(names[(p.name, d)], *slots)
+                for d in range(order + 1)
+            ]
             opaque = sp.Function("_opaque_" + p.name)(T)
             current = p.body
             for d in range(order + 1 if p.body.has(T) else 1):
@@ -516,8 +603,11 @@ def component_definitions(registry, order, inline_rates=False, pair_cse=False,
                     value = p.body
                 elif p.name in comp_rates:
                     h = comp_rates[p.name]
-                    value = (arrays_[0] * h if d == 1
-                             else arrays_[1] * h + arrays_[0] * sp.diff(h, T))
+                    value = (
+                        arrays_[0] * h
+                        if d == 1
+                        else arrays_[1] * h + arrays_[0] * sp.diff(h, T)
+                    )
                 elif p.name in rates:
                     g0, vecs = rates[p.name]
                     a_, b_ = PAIR_SLOTS
@@ -533,12 +623,24 @@ def component_definitions(registry, order, inline_rates=False, pair_cse=False,
                         current = current.subs(p.body, opaque)
                     value = current
                     for dd in range(d, 0, -1):
-                        value = value.subs(sp.Derivative(opaque, (T, dd)), arrays_[dd])
+                        value = value.subs(
+                            sp.Derivative(opaque, (T, dd)), arrays_[dd]
+                        )
                     value = value.subs(opaque, arrays_[0])
-                if inline_rates and d > 0 and (p.name in rates or p.name in pair_dep_rates):
+                if (
+                    inline_rates
+                    and d > 0
+                    and (p.name in rates or p.name in pair_dep_rates)
+                ):
                     continue  # written in place by mapping()
-                defs.append((str(names[(p.name, d)]), mapping(value), rank,
-                             p.symmetric))
+                defs.append(
+                    (
+                        str(names[(p.name, d)]),
+                        mapping(value),
+                        rank,
+                        p.symmetric,
+                    )
+                )
         if rank == 1:
             for vname, body in extra_vectors:
                 defs.append((vname, mapping(body), 1, False))
@@ -554,6 +656,7 @@ def split_sum_terms(expr):
     and every term becomes a dot product with a vector sum
     (:func:`thermodiff.fortran._nest_double_sums`).  Exact.
     """
+
     def depends_on_t(e):
         return e.has(T) or any(
             str(b).startswith((_PREFIX["cmp"], _PREFIX["mat"]))
@@ -564,7 +667,9 @@ def split_sum_terms(expr):
         # factors that do not depend on T (1 - k_ij, b_i + b_j) stay atomic
         masks = {}
         for sub in sorted(body.atoms(sp.Add), key=sp.count_ops, reverse=True):
-            if not depends_on_t(sub) and not any(sub.has(m) for m in masks.values()):
+            if not depends_on_t(sub) and not any(
+                sub.has(m) for m in masks.values()
+            ):
                 masks[sub] = sp.Dummy("mask")
         expanded = sp.expand(body.xreplace(masks))
         return expanded.xreplace({v: k for k, v in masks.items()})
@@ -575,11 +680,16 @@ def split_sum_terms(expr):
             if not body.has(sp.Sum) and not body.has(sp.Piecewise):
                 body = expand_rates(body)
             if isinstance(body, sp.Add):
-                return sp.Add(*[sp.Sum(term, *sub.limits) for term in body.args])
+                return sp.Add(
+                    *[sp.Sum(term, *sub.limits) for term in body.args]
+                )
             return sub.func(body, *sub.limits)
-        if not getattr(sub, "args", ()) or isinstance(sub, (sp.Idx, sp.Indexed)):
+        if not getattr(sub, "args", ()) or isinstance(
+            sub, (sp.Idx, sp.Indexed)
+        ):
             return sub
         return sub.func(*[visit(arg) for arg in sub.args])
+
     return visit(expr)
 
 
@@ -600,6 +710,7 @@ def _nest_inner_nodes(nodes):
 
     def inner_sums(body):
         found = []
+
         def visit(sub, bound):
             if isinstance(sub, sp.Sum):
                 if not (sub.atoms(sp.Idx) - _bound_all(sub)):
@@ -610,6 +721,7 @@ def _nest_inner_nodes(nodes):
                 return
             for arg in getattr(sub, "args", ()):
                 visit(arg, bound)
+
         visit(body, set())
         return found
 
@@ -628,8 +740,12 @@ def _nest_inner_nodes(nodes):
             replacements[inner] = by_key[key]
             kids.add(by_key[key])
         if replacements:
-            new_total = total.func(total.function.xreplace(replacements), *total.limits)
-            result = [(s_, new_total if s_ == symbol else t_) for s_, t_ in result]
+            new_total = total.func(
+                total.function.xreplace(replacements), *total.limits
+            )
+            result = [
+                (s_, new_total if s_ == symbol else t_) for s_, t_ in result
+            ]
             for pos, (s_, t_) in enumerate(queue):
                 if s_ == symbol:
                     queue[pos] = (s_, new_total)
@@ -650,13 +766,28 @@ def _nested_node_derivatives(nodes, inner_map, needed, indexes):
     bodies = dict(nodes)
     done = {}
     first = {"dni": "n", "dt": "T", "dv": "V"}
-    second = {"dnidnj": ("n", "n"), "dt2": ("T", "T"), "dv2": ("V", "V"),
-              "dtdv": ("T", "V"), "dtdni": ("n", "T"), "dvdni": ("n", "V")}
+    second = {
+        "dnidnj": ("n", "n"),
+        "dt2": ("T", "T"),
+        "dv2": ("V", "V"),
+        "dtdv": ("T", "V"),
+        "dtdni": ("n", "T"),
+        "dvdni": ("n", "V"),
+    }
     attr_of = {"n": "dni", "T": "dt", "V": "dv"}
 
     def plain(symbol):
-        dz = DiffPlz(bodies[symbol], internal_functions=[], indexes=indexes,
-                     name="s", derivatives=needed) if needed else None
+        dz = (
+            DiffPlz(
+                bodies[symbol],
+                internal_functions=[],
+                indexes=indexes,
+                name="s",
+                derivatives=needed,
+            )
+            if needed
+            else None
+        )
         entry = {"value": bodies[symbol]}
         for attr in needed:
             entry[attr] = _node_derivative(dz, attr)
@@ -669,9 +800,17 @@ def _nested_node_derivatives(nodes, inner_map, needed, indexes):
         return value
 
     def second_of(entry, x, y):
-        key = {("n", "n"): "dnidnj", ("T", "T"): "dt2", ("V", "V"): "dv2",
-               ("T", "V"): "dtdv", ("V", "T"): "dtdv", ("n", "T"): "dtdni",
-               ("T", "n"): "dtdni", ("n", "V"): "dvdni", ("V", "n"): "dvdni"}[(x, y)]
+        key = {
+            ("n", "n"): "dnidnj",
+            ("T", "T"): "dt2",
+            ("V", "V"): "dv2",
+            ("T", "V"): "dtdv",
+            ("V", "T"): "dtdv",
+            ("n", "T"): "dtdni",
+            ("T", "n"): "dtdni",
+            ("n", "V"): "dvdni",
+            ("V", "n"): "dvdni",
+        }[(x, y)]
         return entry.get(key, sp.S.Zero)
 
     def compute(symbol):
@@ -688,8 +827,17 @@ def _nested_node_derivatives(nodes, inner_map, needed, indexes):
         B = {k: sp.diff(body, k) for k in kids}
         PB = {}
         for k in kids:
-            dz = DiffPlz(B[k], internal_functions=[], indexes=indexes, name="s",
-                         derivatives=firsts) if firsts else None
+            dz = (
+                DiffPlz(
+                    B[k],
+                    internal_functions=[],
+                    indexes=indexes,
+                    name="s",
+                    derivatives=firsts,
+                )
+                if firsts
+                else None
+            )
             PB[k] = {a: _node_derivative(dz, a) for a in firsts}
         entry = {"value": body}
         for attr in needed:
@@ -709,8 +857,11 @@ def _nested_node_derivatives(nodes, inner_map, needed, indexes):
                     value += pbx * first_of(kid_d[k], y, iy)
                     value += pby * first_of(kid_d[k], x, ix)
                     for l_ in kids:
-                        value += (sp.diff(B[k], l_) * first_of(kid_d[k], x, ix)
-                                  * first_of(kid_d[l_], y, iy))
+                        value += (
+                            sp.diff(B[k], l_)
+                            * first_of(kid_d[k], x, ix)
+                            * first_of(kid_d[l_], y, iy)
+                        )
                     value += B[k] * second_of(kid_d[k], x, y)
             entry[attr] = value
         done[symbol] = entry
@@ -720,13 +871,24 @@ def _nested_node_derivatives(nodes, inner_map, needed, indexes):
         if inner_map.get(symbol):
             compute(symbol)
     return {s_: e for s_, e in done.items() if inner_map.get(s_)} | {
-        s_: done[s_] for s_ in done}
+        s_: done[s_] for s_ in done
+    }
 
 
 #: functions without a usable symbolic derivative: the outer function falls back
 #: to the plain ``sp.diff`` path when it contains one of them
-_NONSMOOTH = (sp.Piecewise, sp.Max, sp.Min, sp.Abs, sp.sign, sp.Heaviside, sp.floor,
-              sp.ceiling, sp.KroneckerDelta, sp.DiracDelta)
+_NONSMOOTH = (
+    sp.Piecewise,
+    sp.Max,
+    sp.Min,
+    sp.Abs,
+    sp.sign,
+    sp.Heaviside,
+    sp.floor,
+    sp.ceiling,
+    sp.KroneckerDelta,
+    sp.DiracDelta,
+)
 
 
 def _scalar_dag(F, mode):
@@ -737,7 +899,9 @@ def _scalar_dag(F, mode):
     ``"fine"``: in addition every compound sub-expression is a node of its own
     (one operation per node, n-ary sums and products kept whole).
     """
-    rep, red = sp.cse(F, symbols=sp.numbered_symbols("_scu"), optimizations="basic")
+    rep, red = sp.cse(
+        F, symbols=sp.numbered_symbols("_scu"), optimizations="basic"
+    )
     nodes = list(rep) + [(sp.Symbol("_sctop"), red[0])]
     if mode == "cse":
         return nodes
@@ -784,8 +948,10 @@ def _propagate(F, leaves, first, pairs, mode):
     for u, phi in _scalar_dag(F, mode):
         phi_v = phi.xreplace(value)
         value[u] = phi_v
-        parents = sorted((p for p in phi.free_symbols if grad.get(p)),
-                         key=sp.default_sort_key)
+        parents = sorted(
+            (p for p in phi.free_symbols if grad.get(p)),
+            key=sp.default_sort_key,
+        )
         g_u, h_u = {}, {}
         for a, p in enumerate(parents):
             d1 = sp.diff(phi, p)
@@ -819,8 +985,11 @@ def _propagate(F, leaves, first, pairs, mode):
         grad[u] = {leaf: x for leaf, x in g_u.items() if x != 0}
         hess[u] = {key: x for key, x in h_u.items() if x != 0}
     top = u
-    return ([value[top]] + [grad[top].get(leaf, sp.S.Zero) for leaf in first]
-            + [hess[top].get(pair, sp.S.Zero) for pair in pairs])
+    return (
+        [value[top]]
+        + [grad[top].get(leaf, sp.S.Zero) for leaf in first]
+        + [hess[top].get(pair, sp.S.Zero) for pair in pairs]
+    )
 
 
 def _scalar_chain(F, leaves, first, pairs):
@@ -844,9 +1013,12 @@ def _scalar_chain(F, leaves, first, pairs):
         flat = _propagate(F, leaves, first, pairs, mode)
         if flat is None:
             return None
-        rep, red = sp.cse(flat, symbols=sp.numbered_symbols("_scc"),
-                          optimizations="basic")
-        ops = sum(sp.count_ops(e) for _, e in rep) + sum(sp.count_ops(e) for e in red)
+        rep, red = sp.cse(
+            flat, symbols=sp.numbered_symbols("_scc"), optimizations="basic"
+        )
+        ops = sum(sp.count_ops(e) for _, e in rep) + sum(
+            sp.count_ops(e) for e in red
+        )
         if best is None or ops < best[0]:
             best = (ops, rep, red)
     _, rep, red = best
@@ -861,10 +1033,9 @@ def _scalar_chain(F, leaves, first, pairs):
             definitions.append((symbol, expr))
             results.append(symbol)
     value = results[0]
-    d1 = dict(zip(first, results[1:1 + len(first)]))
-    d2 = dict(zip(pairs, results[1 + len(first):]))
+    d1 = dict(zip(first, results[1 : 1 + len(first)]))
+    d2 = dict(zip(pairs, results[1 + len(first) :]))
     return definitions, value, d1, d2
-
 
 
 def _node_derivative(diff, attr):
@@ -872,10 +1043,19 @@ def _node_derivative(diff, attr):
     return sp.S.Zero if value is None else value
 
 
-def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
-                           split_sqrt=False, split_sums=False, pair_cse=False,
-                           pair_rates=False, nested_nodes=False, table_layout=False,
-                           scalar_chain=False):
+def chain_rule_derivatives(
+    expression,
+    attributes,
+    indexes,
+    symmetric_params=(),
+    split_sqrt=False,
+    split_sums=False,
+    pair_cse=False,
+    pair_rates=False,
+    nested_nodes=False,
+    table_layout=False,
+    scalar_chain=False,
+):
     """Derivatives of ``expression`` assembled by the chain rule.
 
     Parameters
@@ -913,7 +1093,9 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
     if not nodes:
         return None
     # the outer function must not depend on the mole numbers any more
-    if any(base == n for base in outer.atoms(sp.IndexedBase)) or outer.has(sp.Sum):
+    if any(base == n for base in outer.atoms(sp.IndexedBase)) or outer.has(
+        sp.Sum
+    ):
         return None
 
     # node derivatives needed: any attribute that involves n needs the
@@ -927,20 +1109,36 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
             needed |= {"dni", "dnidnj"}
         elif "n" in vars_:
             x = vars_[0]
-            needed |= {"dni", {"T": "dtdni", "V": "dvdni"}[x], {"T": "dt", "V": "dv"}[x]}
+            needed |= {
+                "dni",
+                {"T": "dtdni", "V": "dvdni"}[x],
+                {"T": "dt", "V": "dv"}[x],
+            }
         else:
             for x in vars_:
                 needed.add({"T": "dt", "V": "dv"}[x])
             if len(vars_) == 2:
-                needed.add({("T", "T"): "dt2", ("V", "V"): "dv2",
-                            ("T", "V"): "dtdv"}[vars_])
+                needed.add(
+                    {("T", "T"): "dt2", ("V", "V"): "dv2", ("T", "V"): "dtdv"}[
+                        vars_
+                    ]
+                )
     needed = sorted(needed)
 
     registry = {}
-    nodes = [(symbol, abstract_component_functions(total, registry, symmetric_params,
-                                                   split_sqrt=split_sqrt,
-                                                   table_layout=table_layout))
-             for symbol, total in nodes]
+    nodes = [
+        (
+            symbol,
+            abstract_component_functions(
+                total,
+                registry,
+                symmetric_params,
+                split_sqrt=split_sqrt,
+                table_layout=table_layout,
+            ),
+        )
+        for symbol, total in nodes
+    ]
     node_symbols = [symbol for symbol, _ in nodes]
     node_d = {}
     if nested_nodes:
@@ -951,8 +1149,17 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
     for symbol, total in nodes:
         if symbol in node_d:
             continue
-        dz = DiffPlz(total, internal_functions=[], indexes=indexes, name="s",
-                     derivatives=needed) if needed else None
+        dz = (
+            DiffPlz(
+                total,
+                internal_functions=[],
+                indexes=indexes,
+                name="s",
+                derivatives=needed,
+            )
+            if needed
+            else None
+        )
         entry = {"value": total}
         for attr in needed:
             entry[attr] = _node_derivative(dz, attr)
@@ -965,7 +1172,11 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
     def dS(symbol, x, index=None):
         if x == "n":
             value = node(symbol, "dni")
-            return value if index is None or index == i else value.xreplace({i: index})
+            return (
+                value
+                if index is None or index == i
+                else value.xreplace({i: index})
+            )
         return node(symbol, {"T": "dt", "V": "dv"}[x])
 
     def d2S(symbol, x, y):
@@ -975,12 +1186,15 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
         if "n" in key:
             other = key[0] if key[1] == "n" else key[1]
             return node(symbol, {"T": "dtdni", "V": "dvdni"}[other])
-        return node(symbol, {("T", "T"): "dt2", ("V", "V"): "dv2",
-                             ("T", "V"): "dtdv"}[key])
+        return node(
+            symbol,
+            {("T", "T"): "dt2", ("V", "V"): "dv2", ("T", "V"): "dtdv"}[key],
+        )
 
     # partial derivatives of the outer function (scalar)
     F = outer
     Fk = {s: sp.diff(F, s) for s in node_symbols}
+
     def Fx(x):
         return sp.S.Zero if x == "n" else sp.diff(F, _SYM[x])
 
@@ -1006,7 +1220,9 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
                 lst.append(item)
 
         def pair(a, b):
-            want(pairs, (a, b) if leaves.index(a) <= leaves.index(b) else (b, a))
+            want(
+                pairs, (a, b) if leaves.index(a) <= leaves.index(b) else (b, a)
+            )
 
         # only the partials multiplied by a non-zero node derivative
         for attr in attributes:
@@ -1034,7 +1250,9 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
                     if dS(s_, x, i) != 0 and dS(t_, y, j) != 0:
                         pair(s_, t_)
         first = [leaf for leaf in leaves if leaf in first]
-        pairs = sorted(pairs, key=lambda ab: (leaves.index(ab[0]), leaves.index(ab[1])))
+        pairs = sorted(
+            pairs, key=lambda ab: (leaves.index(ab[0]), leaves.index(ab[1]))
+        )
         # nothing to propagate (only the value): keep the plain path
         if first or pairs:
             sc = _scalar_chain(F, leaves, first, pairs)
@@ -1042,12 +1260,19 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
                 # operation estimates of the two scalar blocks (scalar_chain=
                 # "estimate"): the plain partials of F after one CSE, against
                 # the propagated definitions and results
-                plain_exprs = [F] + [sp.diff(F, a) for a in first] + [
-                    sp.diff(F, a, b) for a, b in pairs]
-                rep_, red_ = sp.cse(plain_exprs, symbols=sp.numbered_symbols("_sce"),
-                                    optimizations="basic")
+                plain_exprs = (
+                    [F]
+                    + [sp.diff(F, a) for a in first]
+                    + [sp.diff(F, a, b) for a, b in pairs]
+                )
+                rep_, red_ = sp.cse(
+                    plain_exprs,
+                    symbols=sp.numbered_symbols("_sce"),
+                    optimizations="basic",
+                )
                 est_plain = sum(sp.count_ops(e) for _, e in rep_) + sum(
-                    sp.count_ops(e) for e in red_)
+                    sp.count_ops(e) for e in red_
+                )
                 est_sc = sum(sp.count_ops(e) for _, e in sc[0])
                 scalar_estimate = (est_plain, est_sc)
 
@@ -1068,6 +1293,7 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
             if leaves.index(a) > leaves.index(b):
                 a, b = b, a
             return sc_d2.get((a, b), sp.S.Zero)
+
     else:
         F2 = F2_plain
 
@@ -1095,18 +1321,29 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
             expr += Fk[s] * d2S(s, x, y)
         return expr
 
-    order = max((sum(1 for v in _ATTR_VARS[a] if v == "T") for a in attributes), default=0)
-    defs, mapping = component_definitions(registry, order, inline_rates=split_sums,
-                                          pair_cse=pair_cse, pair_rates=pair_rates)
+    order = max(
+        (sum(1 for v in _ATTR_VARS[a] if v == "T") for a in attributes),
+        default=0,
+    )
+    defs, mapping = component_definitions(
+        registry,
+        order,
+        inline_rates=split_sums,
+        pair_cse=pair_cse,
+        pair_rates=pair_rates,
+    )
     value0 = mapping(resolve(outer)) if sc is None else sc_value
     if split_sums:
         value0 = split_sum_terms(value0)
     out = {"value": value0, "_component_defs": defs}
     if sc is not None:
         # the scalars keep the node symbols; the nodes they read go apart
-        out["_scalar_defs"] = [(symbol, mapping(body)) for symbol, body in sc_defs]
+        out["_scalar_defs"] = [
+            (symbol, mapping(body)) for symbol, body in sc_defs
+        ]
         read = set().union(*[body.free_symbols for _, body in sc_defs]) | (
-            sc_value.free_symbols if isinstance(sc_value, sp.Expr) else set())
+            sc_value.free_symbols if isinstance(sc_value, sp.Expr) else set()
+        )
         nodes_read = []
         for symbol in node_symbols:
             if symbol in read:
@@ -1116,6 +1353,7 @@ def chain_rule_derivatives(expression, attributes, indexes, symmetric_params=(),
                 nodes_read.append((symbol, body))
         out["_scalar_nodes"] = nodes_read
         out["_scalar_estimate"] = scalar_estimate
+
     def assemble(target):
         for attr in attributes:
             vars_ = _ATTR_VARS[attr]

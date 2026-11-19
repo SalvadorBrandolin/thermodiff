@@ -26,21 +26,55 @@ import re
 
 #: kernel output name -> yaeos dummy name, per family (order = yaeos interface order,
 #: which also fixes the bit of each output in the mask)
-AR_OUTPUTS = {"f": "Ar", "dfdV": "ArV", "dfdT": "ArT", "dfdTdV": "ArTV", "dfdV2": "ArV2",
-              "dfdT2": "ArT2", "dfdn": "Arn", "dfdndV": "ArVn", "dfdndT": "ArTn",
-              "dfdndn": "Arn2"}
-GE_OUTPUTS = {"f": "Ge", "dfdT": "GeT", "dfdT2": "GeT2", "dfdn": "Gen", "dfdndT": "GeTn",
-              "dfdndn": "Gen2"}
+AR_OUTPUTS = {
+    "f": "Ar",
+    "dfdV": "ArV",
+    "dfdT": "ArT",
+    "dfdTdV": "ArTV",
+    "dfdV2": "ArV2",
+    "dfdT2": "ArT2",
+    "dfdn": "Arn",
+    "dfdndV": "ArVn",
+    "dfdndT": "ArTn",
+    "dfdndn": "Arn2",
+}
+GE_OUTPUTS = {
+    "f": "Ge",
+    "dfdT": "GeT",
+    "dfdT2": "GeT2",
+    "dfdn": "Gen",
+    "dfdndT": "GeTn",
+    "dfdndn": "Gen2",
+}
 #: rank of every yaeos output (0 scalar, 1 size(n), 2 size(n) x size(n))
-OUTPUT_RANK = {"Ar": 0, "ArV": 0, "ArT": 0, "ArTV": 0, "ArV2": 0, "ArT2": 0, "Arn": 1,
-               "ArVn": 1, "ArTn": 1, "Arn2": 2, "Ge": 0, "GeT": 0, "GeT2": 0, "Gen": 1,
-               "GeTn": 1, "Gen2": 2}
+OUTPUT_RANK = {
+    "Ar": 0,
+    "ArV": 0,
+    "ArT": 0,
+    "ArTV": 0,
+    "ArV2": 0,
+    "ArT2": 0,
+    "Arn": 1,
+    "ArVn": 1,
+    "ArTn": 1,
+    "Arn2": 2,
+    "Ge": 0,
+    "GeT": 0,
+    "GeT2": 0,
+    "Gen": 1,
+    "GeTn": 1,
+    "Gen2": 2,
+}
 #: state arguments of a kernel -> actual argument inside the wrapper
 STATE = {"nc": "size(n)", "n": "n", "V": "v", "T": "t"}
 #: names that cannot be parameters (components of the yaeos base types, dummies, locals)
-RESERVED = {"components", "name", "self", "mask", "v0", "p"} | {k.lower() for k in OUTPUT_RANK}
+RESERVED = {"components", "name", "self", "mask", "v0", "p"} | {
+    k.lower() for k in OUTPUT_RANK
+}
 
-_DECL = re.compile(r"^\s*(?:real|integer)\s*(?:\([^)]*\))?\s*(?:,[^:]*)?::\s*(.+)$", re.I)
+_DECL = re.compile(
+    r"^\s*(?:real|integer)\s*(?:\([^)]*\))?\s*(?:,[^:]*)?::\s*(.+)$", re.I
+)
 
 
 def family_outputs(family):
@@ -62,7 +96,11 @@ def kernel_interface(source):
     if not match:
         raise ValueError("no subroutine found in kernel source")
     routine = match.group(1)
-    args = [a.strip() for a in match.group(2).replace("&", " ").split(",") if a.strip()]
+    args = [
+        a.strip()
+        for a in match.group(2).replace("&", " ").split(",")
+        if a.strip()
+    ]
     ranks = {}
     for line in flat.splitlines():
         decl = _DECL.match(line)
@@ -74,7 +112,10 @@ def kernel_interface(source):
             if not name:
                 continue
             dims = re.match(r"\w+\s*\(([^)]*)\)", item)
-            ranks.setdefault(name.group(1).lower(), dims.group(1).count(",") + 1 if dims else 0)
+            ranks.setdefault(
+                name.group(1).lower(),
+                dims.group(1).count(",") + 1 if dims else 0,
+            )
     missing = [a for a in args if a.lower() not in ranks]
     if missing:
         raise ValueError(f"{routine}: no declaration for {missing}")
@@ -88,7 +129,7 @@ def _wrap(line, indent, width=110):
         if cut < 0:
             break
         out.append(cur[: cut + 1] + " &")
-        cur = indent + "    " + cur[cut + 2:]
+        cur = indent + "    " + cur[cut + 2 :]
     out.append(cur)
     return out
 
@@ -104,8 +145,17 @@ def _call(routine, args, outs, actual):
     return f"call {routine}(" + ", ".join(parts) + ")"
 
 
-def yaeos_model_module(model, key, family, workloads, kernel_module, *, v0_expr=None,
-                       type_name=None, module_name=None):
+def yaeos_model_module(
+    model,
+    key,
+    family,
+    workloads,
+    kernel_module,
+    *,
+    v0_expr=None,
+    type_name=None,
+    module_name=None,
+):
     """Fortran source of the yaeos wrapper of one thermodiff variant.
 
     Parameters
@@ -145,54 +195,80 @@ def yaeos_model_module(model, key, family, workloads, kernel_module, *, v0_expr=
             if low in state or name in outmap:
                 continue
             if low in RESERVED:
-                raise ValueError(f"parameter name {name} clashes with the yaeos wrapper")
+                raise ValueError(
+                    f"parameter name {name} clashes with the yaeos wrapper"
+                )
             if params.setdefault(low, rank) != rank:
-                raise ValueError(f"parameter {name} has different ranks in different kernels")
+                raise ValueError(
+                    f"parameter {name} has different ranks in different kernels"
+                )
         for o in wl["outputs"]:
             if o not in outmap:
                 raise ValueError(f"{wid}: unknown output {o}")
             if o not in {a for a, _ in wl["args"]}:
-                raise ValueError(f"{wid}: kernel {wl['routine']} has no output {o}")
+                raise ValueError(
+                    f"{wid}: kernel {wl['routine']} has no output {o}"
+                )
         mask = sum(bit[outmap[o]] for o in wl["outputs"])
         if mask in masks:
-            raise ValueError(f"workloads {masks[mask]} and {wid} request the same outputs")
+            raise ValueError(
+                f"workloads {masks[mask]} and {wid} request the same outputs"
+            )
         masks[mask] = wid
         if set(wl["outputs"]) == set(outmap):
             full = wid
     if full is None:
-        raise ValueError("no workload computes every output (needed for the default branch)")
+        raise ValueError(
+            "no workload computes every output (needed for the default branch)"
+        )
 
     def actual(prefix):
-        act = {nm: f"{prefix}{nm.lower()}" for wl in workloads.values() for nm, _ in wl["args"]
-               if nm.lower() in params}
+        act = {
+            nm: f"{prefix}{nm.lower()}"
+            for wl in workloads.values()
+            for nm, _ in wl["args"]
+            if nm.lower() in params
+        }
         act.update({nm: STATE[nm] for nm in STATE})
         act.update({nm.lower(): STATE[nm] for nm in STATE})
         return act
 
     routines = list(dict.fromkeys(wl["routine"] for wl in workloads.values()))
-    base, use_base = (("ArModel", "yaeos__models_ar") if family == "ar"
-                      else ("GeModel", "yaeos__models_ge"))
+    base, use_base = (
+        ("ArModel", "yaeos__models_ar")
+        if family == "ar"
+        else ("GeModel", "yaeos__models_ge")
+    )
     consts = "pr, R" if family == "ar" else "pr"
-    L = [f"module {mname}",
-         f"   !! yaeos {base} wrapper of the thermodiff kernels of {model} {key}.",
-         "   !! Generated by thermodiff.yaeos_model -- do not edit.",
-         "   !! residual dispatch: mask of present() outputs, one bit per output in the"
-         " order of the yaeos interface;",
-         "   !! every workload mask calls its kernel with the dummies directly, any other"
-         " combination goes through the",
-         f"   !! most complete kernel ({full}) with temporaries.",
-         f"   use yaeos__constants, only: {consts}",
-         f"   use {use_base}, only: {base}"]
+    L = [
+        f"module {mname}",
+        f"   !! yaeos {base} wrapper of the thermodiff kernels of {model} {key}.",
+        "   !! Generated by thermodiff.yaeos_model -- do not edit.",
+        "   !! residual dispatch: mask of present() outputs, one bit per output in the"
+        " order of the yaeos interface;",
+        "   !! every workload mask calls its kernel with the dummies directly, any other"
+        " combination goes through the",
+        f"   !! most complete kernel ({full}) with temporaries.",
+        f"   use yaeos__constants, only: {consts}",
+        f"   use {use_base}, only: {base}",
+    ]
     L += _wrap(f"use {kernel_module}, only: " + ", ".join(routines), "   ")
-    L += ["   implicit none", "   private", f"   public :: {tname}", "",
-          f"   type, extends({base}) :: {tname}"]
+    L += [
+        "   implicit none",
+        "   private",
+        f"   public :: {tname}",
+        "",
+        f"   type, extends({base}) :: {tname}",
+    ]
     for p, rank in params.items():
         dims = "" if rank == 0 else "(" + ", ".join([":"] * rank) + ")"
         L.append(f"      real(pr), allocatable :: {p}{dims}")
     L.append("   contains")
     if family == "ar":
-        L += [f"      procedure :: residual_helmholtz => {proc}_ar",
-              f"      procedure :: get_v0 => {proc}_v0"]
+        L += [
+            f"      procedure :: residual_helmholtz => {proc}_ar",
+            f"      procedure :: get_v0 => {proc}_v0",
+        ]
     else:
         L += [f"      procedure :: excess_gibbs => {proc}_ge"]
     L += [f"   end type {tname}", "", "contains", ""]
@@ -212,14 +288,20 @@ def yaeos_model_module(model, key, family, workloads, kernel_module, *, v0_expr=
         dl = []
         for nm in yaeos_names:
             r = OUTPUT_RANK[nm]
-            dims = "" if r == 0 else "(size(n))" if r == 1 else "(size(n), size(n))"
+            dims = (
+                ""
+                if r == 0
+                else "(size(n))" if r == 1 else "(size(n), size(n))"
+            )
             dl.append(f"real(pr){opt}, intent(out) :: {nm}{dims}")
         return dl
 
     act = actual("self%")
     ind = "      "
     L += _wrap(head, "   ")
-    L += [f"{ind}class({tname}), intent(in) :: self"] + [ind + d for d in state_decl]
+    L += [f"{ind}class({tname}), intent(in) :: self"] + [
+        ind + d for d in state_decl
+    ]
     L += [ind + d for d in out_decls()]
     L += [f"{ind}integer :: mask"]
     terms = [f"merge({bit[nm]}, 0, present({nm}))" for nm in yaeos_names]
@@ -232,19 +314,27 @@ def yaeos_model_module(model, key, family, workloads, kernel_module, *, v0_expr=
         L.append(f"{ind}case ({mask})  ! {wid}: {', '.join(present)}")
         outs = {o: outmap[o] for o in wl["outputs"]}
         L += _wrap(_call(wl["routine"], wl["args"], outs, act), ind + "   ")
-    L += [f"{ind}case default",
-          f"{ind}   call {proc}_full(self, {state_args}, {sig})",
-          f"{ind}end select", f"   end subroutine {proc}_{family}", ""]
+    L += [
+        f"{ind}case default",
+        f"{ind}   call {proc}_full(self, {state_args}, {sig})",
+        f"{ind}end select",
+        f"   end subroutine {proc}_{family}",
+        "",
+    ]
 
     # default branch: most complete kernel into temporaries, copy the present outputs
     fw = workloads[full]
     L += _wrap(f"subroutine {proc}_full(self, {state_args}, {sig})", "   ")
     L += [f"{ind}!! Any output combination: workload {full} into temporaries."]
-    L += [f"{ind}class({tname}), intent(in) :: self"] + [ind + d for d in state_decl]
+    L += [f"{ind}class({tname}), intent(in) :: self"] + [
+        ind + d for d in state_decl
+    ]
     L += [ind + d for d in out_decls()]
     for nm in yaeos_names:
         r = OUTPUT_RANK[nm]
-        dims = "" if r == 0 else "(size(n))" if r == 1 else "(size(n), size(n))"
+        dims = (
+            "" if r == 0 else "(size(n))" if r == 1 else "(size(n), size(n))"
+        )
         L.append(f"{ind}real(pr) :: {nm}_{dims}")
     outs = {o: outmap[o] + "_" for o in fw["outputs"]}
     L += _wrap(_call(fw["routine"], fw["args"], outs, act), ind)
@@ -253,11 +343,13 @@ def yaeos_model_module(model, key, family, workloads, kernel_module, *, v0_expr=
     L += [f"   end subroutine {proc}_full", ""]
 
     if family == "ar":
-        L += [f"   function {proc}_v0(self, n, p, t) result(v0)",
-              f"{ind}!! Initial liquid volume for the yaeos volume solver (not timed).",
-              f"{ind}class({tname}), intent(in) :: self",
-              f"{ind}real(pr), intent(in) :: n(:), p, t",
-              f"{ind}real(pr) :: v0"]
+        L += [
+            f"   function {proc}_v0(self, n, p, t) result(v0)",
+            f"{ind}!! Initial liquid volume for the yaeos volume solver (not timed).",
+            f"{ind}class({tname}), intent(in) :: self",
+            f"{ind}real(pr), intent(in) :: n(:), p, t",
+            f"{ind}real(pr) :: v0",
+        ]
         L += _wrap(f"v0 = {v0_expr}", ind)
         L += [f"   end function {proc}_v0", ""]
     L += [f"end module {mname}", ""]

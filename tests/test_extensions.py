@@ -277,7 +277,9 @@ def test_aux_index_never_clashes_case_insensitively():
     """Fortran is case insensitive: no loop index may be named like ``R``."""
     import re
 
-    with open(os.path.join(os.path.dirname(__file__), "data/models/rkpr/rkpr.model")) as fh:
+    with open(
+        os.path.join(os.path.dirname(__file__), "data/models/rkpr/rkpr.model")
+    ) as fh:
         text = fh.read()
     code = compile_model(text, derivatives="dn,dndn", param_symmetry=True)
     loop_vars = set(re.findall(r"do (\w+) = ", code))
@@ -307,7 +309,9 @@ function
 # loop-invariant hoisting (hoist_invariants)
 # ---------------------------------------------------------------------------
 
-RKPR_PATH = os.path.join(os.path.dirname(__file__), "data/models/rkpr/rkpr.model")
+RKPR_PATH = os.path.join(
+    os.path.dirname(__file__), "data/models/rkpr/rkpr.model"
+)
 
 RKPR_DRIVER = """
 module yaeos__constants
@@ -368,7 +372,9 @@ def _run_rkpr(work, settings):
     (work / "drive.f90").write_text(head + code + "\nprogram drive" + tail)
     subprocess.run(
         [GFORTRAN, "-O0", "-ffree-line-length-0", "drive.f90", "-o", "drive"],
-        cwd=work, check=True, capture_output=True,
+        cwd=work,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(["./drive"], cwd=work, check=True)
     return np.loadtxt(work / "out.txt"), code
@@ -417,8 +423,12 @@ def test_hoisting_moves_rkpr_power_out_of_double_loop():
 
 def test_hoisting_is_deterministic_and_off_by_default():
     text = _rkpr_text()
-    first = compile_model(text, derivatives="dn,dndn", **EXTENDED_VARIANTS["a6h"])
-    second = compile_model(text, derivatives="dn,dndn", **EXTENDED_VARIANTS["a6h"])
+    first = compile_model(
+        text, derivatives="dn,dndn", **EXTENDED_VARIANTS["a6h"]
+    )
+    second = compile_model(
+        text, derivatives="dn,dndn", **EXTENDED_VARIANTS["a6h"]
+    )
     assert first == second
     assert compile_model(text, derivatives="dn,dndn") == compile_model(
         text, derivatives="dn,dndn", hoist_invariants=False
@@ -444,8 +454,11 @@ def test_hoisted_slot_index_never_clashes_with_an_argument():
     )
     for settings in (dict(), dict(param_symmetry=True, hessian_symmetry=True)):
         code = compile_model(
-            text, derivatives="dn,dndn", optional_derivatives=True,
-            hoist_invariants=True, **settings,
+            text,
+            derivatives="dn,dndn",
+            optional_derivatives=True,
+            hoist_invariants=True,
+            **settings,
         )
         loop_vars = {v.lower() for v in re.findall(r"do (\w+) = ", code)}
         args = {a.lower() for a in re.findall(r"intent\(in\) :: (\w+)", code)}
@@ -457,8 +470,21 @@ def test_hoisted_slot_index_never_clashes_with_an_argument():
 # sum_free_alpha, fuse_temps, nest_sums)
 # ---------------------------------------------------------------------------
 
-CHAIN_VARIANTS = ["c3", "c6", "c6l", "c6f", "c6n", "c6s", "c6x", "c6r", "c6m", "it12", "it13",
-                  "it20", "it22"]
+CHAIN_VARIANTS = [
+    "c3",
+    "c6",
+    "c6l",
+    "c6f",
+    "c6n",
+    "c6s",
+    "c6x",
+    "c6r",
+    "c6m",
+    "it12",
+    "it13",
+    "it20",
+    "it22",
+]
 
 
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
@@ -489,6 +515,7 @@ def test_chain_rule_nodes_of_pr76():
 def test_nested_nodes_extracts_inner_sums():
     """sum_i n_i f_i(sum_k ...) gets the inner index-free sum as its own node."""
     from thermodiff.chain import _nest_inner_nodes
+
     i, k = sp.Idx("i", (1, 3)), sp.Idx("k", (1, 3))
     n, d = sp.IndexedBase("n"), sp.IndexedBase("d")
     inner = sp.Sum(n[k] * d[k] ** 3, (k, 1, 3))
@@ -517,13 +544,22 @@ def test_c6n_hessian_has_analytic_structure():
 
 
 def test_loop_passes_are_deterministic_and_off_by_default():
-    first = compile_model(PR76_SYM, derivatives="dn,dndn", **EXTENDED_VARIANTS["c6n"])
-    second = compile_model(PR76_SYM, derivatives="dn,dndn", **EXTENDED_VARIANTS["c6n"])
+    first = compile_model(
+        PR76_SYM, derivatives="dn,dndn", **EXTENDED_VARIANTS["c6n"]
+    )
+    second = compile_model(
+        PR76_SYM, derivatives="dn,dndn", **EXTENDED_VARIANTS["c6n"]
+    )
     assert first == second
     plain = compile_model(PR76_SYM, derivatives="dn,dndn")
     assert plain == compile_model(
-        PR76_SYM, derivatives="dn,dndn", chain_rule=False, hoist_loops=False,
-        sum_free_alpha=False, fuse_temps=False, nest_sums=False,
+        PR76_SYM,
+        derivatives="dn,dndn",
+        chain_rule=False,
+        hoist_loops=False,
+        sum_free_alpha=False,
+        fuse_temps=False,
+        nest_sums=False,
     )
 
 
@@ -601,10 +637,29 @@ function
 """,
 }
 _REVIEW_INITS = {
-    "tv_factor": {"n": "0.3d0+0.11d0*i", "Tc": "190d0+37d0*i", "b": "0.02d0+0.003d0*i", "V": "2d0*sum(x_n)"},
-    "zero_comp": {"n": "0.3d0+0.11d0*i", "Tc": "190d0+37d0*i", "ac": "merge(0d0, 1d0+0.1d0*i, i == 2)"},
-    "names": {"n": "0.3d0+0.11d0*i", "Tc": "190d0+37d0*i", "kij": "0.01d0*(i+j)*merge(0d0,1d0,i==j)"},
-    "nested": {"n": "0.3d0+0.11d0*i", "m": "1d0+0.2d0*i", "d": "0.3d0+0.02d0*i", "q": "0.8d0+0.3d0*i", "V": "4d0*sum(x_n)"},
+    "tv_factor": {
+        "n": "0.3d0+0.11d0*i",
+        "Tc": "190d0+37d0*i",
+        "b": "0.02d0+0.003d0*i",
+        "V": "2d0*sum(x_n)",
+    },
+    "zero_comp": {
+        "n": "0.3d0+0.11d0*i",
+        "Tc": "190d0+37d0*i",
+        "ac": "merge(0d0, 1d0+0.1d0*i, i == 2)",
+    },
+    "names": {
+        "n": "0.3d0+0.11d0*i",
+        "Tc": "190d0+37d0*i",
+        "kij": "0.01d0*(i+j)*merge(0d0,1d0,i==j)",
+    },
+    "nested": {
+        "n": "0.3d0+0.11d0*i",
+        "m": "1d0+0.2d0*i",
+        "d": "0.3d0+0.02d0*i",
+        "q": "0.8d0+0.3d0*i",
+        "V": "4d0*sum(x_n)",
+    },
 }
 
 
@@ -616,7 +671,9 @@ def test_chain_review_regressions(model):
     text = _REVIEW_MODELS[model]
     ref, _ = mh.run(text, EXTENDED_VARIANTS["a0"], _REVIEW_INITS[model])
     for variant in ("c3", "c6n", "c6m", "it12", "it13"):
-        values, _ = mh.run(text, EXTENDED_VARIANTS[variant], _REVIEW_INITS[model])
+        values, _ = mh.run(
+            text, EXTENDED_VARIANTS[variant], _REVIEW_INITS[model]
+        )
         assert np.all(np.isfinite(values)), (model, variant)
         rel = np.abs(values - ref) / np.maximum(np.abs(ref), 1e-8)
         assert rel.max() < 1e-11, (model, variant, rel.max())
@@ -629,9 +686,7 @@ _MEASURED = [
     ("pr76", "models/pr76/pr76_sym.model", v, w)
     for v in ("a3", "a6", "a10", "a6h", "a10h", "c6n", "c6m")
     for w in ("w3", "w6")
-] + [
-    ("rkpr", "models/rkpr/rkpr.model", v, "w6") for v in ("a6", "c6n", "c6m")
-]
+] + [("rkpr", "models/rkpr/rkpr.model", v, "w6") for v in ("a6", "c6n", "c6m")]
 
 
 @pytest.mark.parametrize("model,path,variant,workload", _MEASURED)
@@ -639,13 +694,22 @@ def test_measured_kernels_regenerate(model, path, variant, workload):
     from thermodiff.bench_hooks import generate_workload
 
     stored = os.path.join(
-        _ROOT, "bench2", "kernels", model, variant, f"{model}_{variant}_{workload}.f90"
+        _ROOT,
+        "bench2",
+        "kernels",
+        model,
+        variant,
+        f"{model}_{variant}_{workload}.f90",
     )
     if not os.path.exists(stored):
         pytest.skip("kernel not generated in this checkout")
     meta = generate_workload(
-        os.path.join(_ROOT, path), workload, variant, ".",
-        optional_derivatives=False, write=False,
+        os.path.join(_ROOT, path),
+        workload,
+        variant,
+        ".",
+        optional_derivatives=False,
+        write=False,
     )
     with open(stored) as fh:
         assert fh.read() == meta["source"]
@@ -678,8 +742,18 @@ function
 # ---------------------------------------------------------------------------
 
 _ROOT_MODELS = os.path.join(os.path.dirname(__file__), "data", "models")
-_NOOPT_VARIANTS = ["it13", "it14", "it15", "it16", "it17", "it18", "it19", "it20", "it21",
-                   "it22"]
+_NOOPT_VARIANTS = [
+    "it13",
+    "it14",
+    "it15",
+    "it16",
+    "it17",
+    "it18",
+    "it19",
+    "it20",
+    "it21",
+    "it22",
+]
 
 
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
@@ -691,8 +765,14 @@ def test_cmr_rank3_variants_without_optional_outputs(variant):
     if not os.path.exists(path):
         pytest.skip("cmr model not in this checkout")
     text = open(path).read()
-    inits = {"n": "0.3d0+0.11d0*i", "tc": "190d0+37d0*i", "ac": "1d0+0.2d0*i",
-             "bi": "0.03d0+0.004d0*i", "mk": "0.4d0+0.05d0*i", "V": "4d0*sum(x_n)"}
+    inits = {
+        "n": "0.3d0+0.11d0*i",
+        "tc": "190d0+37d0*i",
+        "ac": "1d0+0.2d0*i",
+        "bi": "0.03d0+0.004d0*i",
+        "mk": "0.4d0+0.05d0*i",
+        "V": "4d0*sum(x_n)",
+    }
     ref, _ = mh.run(text, EXTENDED_VARIANTS["a3"], inits, opt=False)
     values, _ = mh.run(text, EXTENDED_VARIANTS[variant], inits, opt=False)
     rel = np.abs(values - ref) / np.maximum(np.abs(ref), 1e-8)
@@ -705,8 +785,12 @@ def test_cubic_fusion_variants_without_optional_outputs(variant):
     import model_harness as mh
 
     text = _REVIEW_MODELS["names"]
-    ref, _ = mh.run(text, EXTENDED_VARIANTS["a3"], _REVIEW_INITS["names"], opt=False)
-    values, _ = mh.run(text, EXTENDED_VARIANTS[variant], _REVIEW_INITS["names"], opt=False)
+    ref, _ = mh.run(
+        text, EXTENDED_VARIANTS["a3"], _REVIEW_INITS["names"], opt=False
+    )
+    values, _ = mh.run(
+        text, EXTENDED_VARIANTS[variant], _REVIEW_INITS["names"], opt=False
+    )
     rel = np.abs(values - ref) / np.maximum(np.abs(ref), 1e-8)
     assert rel.max() < 1e-11, (variant, rel.max())
 
@@ -715,9 +799,17 @@ def test_sym_perm_puts_the_innermost_index_first():
     path = os.path.join(_ROOT_MODELS, "cmr", "cmr.model")
     if not os.path.exists(path):
         pytest.skip("cmr model not in this checkout")
-    code = compile_model(open(path).read(), derivatives="dn", optional_derivatives=False,
-                         **EXTENDED_VARIANTS["it14"])
-    reads = [line for line in code.splitlines() if "kijk(" in line and "intent" not in line]
+    code = compile_model(
+        open(path).read(),
+        derivatives="dn",
+        optional_derivatives=False,
+        **EXTENDED_VARIANTS["it14"],
+    )
+    reads = [
+        line
+        for line in code.splitlines()
+        if "kijk(" in line and "intent" not in line
+    ]
     assert reads and all("kijk(m," in line for line in reads), reads
 
 
@@ -726,10 +818,18 @@ def test_fuse_guard_keeps_one_exponential_per_pair():
     if not os.path.exists(path):
         pytest.skip("uniquac model not in this checkout")
     text = open(path).read()
-    before = compile_model(text, derivatives="dn", optional_derivatives=False,
-                           **EXTENDED_VARIANTS["it14"])
-    after = compile_model(text, derivatives="dn", optional_derivatives=False,
-                          **EXTENDED_VARIANTS["it15"])
+    before = compile_model(
+        text,
+        derivatives="dn",
+        optional_derivatives=False,
+        **EXTENDED_VARIANTS["it14"],
+    )
+    after = compile_model(
+        text,
+        derivatives="dn",
+        optional_derivatives=False,
+        **EXTENDED_VARIANTS["it15"],
+    )
     assert after.count("exp(") < before.count("exp(")
 
 
@@ -766,6 +866,7 @@ function
 # of its legacy key, except for the routine and module names.
 # ---------------------------------------------------------------------------
 
+
 def test_stage_keys_cover_legacy_keys_one_to_one():
     from thermodiff.bench_hooks import LEGACY_KEYS, STAGE_VARIANTS
 
@@ -776,15 +877,20 @@ def test_stage_keys_cover_legacy_keys_one_to_one():
         assert len(STAGE_VARIANTS[key]["id"]) <= 16
 
 
-@pytest.mark.parametrize("key", ["e0", "e2", "e3", "e5", "e7", "e8", "e2h", "p13", "p22"])
+@pytest.mark.parametrize(
+    "key", ["e0", "e2", "e3", "e5", "e7", "e8", "e2h", "p13", "p22"]
+)
 def test_stage_key_generates_legacy_code(key):
     from thermodiff.bench_hooks import LEGACY_KEYS, generate_workload
 
     path = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
-    new = generate_workload(path, "w3", key, ".", optional_derivatives=False, write=False)["source"]
+    new = generate_workload(
+        path, "w3", key, ".", optional_derivatives=False, write=False
+    )["source"]
     old_key = LEGACY_KEYS[key]
-    old = generate_workload(path, "w3", old_key, ".", optional_derivatives=False,
-                            write=False)["source"]
+    old = generate_workload(
+        path, "w3", old_key, ".", optional_derivatives=False, write=False
+    )["source"]
     assert new.replace(f"_{key}_", "_X_") == old.replace(f"_{old_key}_", "_X_")
 
 
@@ -792,17 +898,24 @@ def test_stage_key_generates_legacy_code(key):
 # Second optimisation round: p23 = p22 + contiguous_args.
 # ---------------------------------------------------------------------------
 
+
 def test_contiguous_args_only_adds_the_attribute():
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
-    base = generate_workload(path, "w6", "p22", ".", optional_derivatives=False, write=False)["source"]
-    new = generate_workload(path, "w6", "p23", ".", optional_derivatives=False, write=False)["source"]
+    base = generate_workload(
+        path, "w6", "p22", ".", optional_derivatives=False, write=False
+    )["source"]
+    new = generate_workload(
+        path, "w6", "p23", ".", optional_derivatives=False, write=False
+    )["source"]
     new = new.replace("_p23_", "_p22_")
     assert "contiguous" not in base
     decls = [l for l in new.splitlines() if "contiguous" in l]
     assert decls and all(("(:" in l) for l in decls)
-    assert any("intent(in)" in l for l in decls) and any("intent(out)" in l for l in decls)
+    assert any("intent(in)" in l for l in decls) and any(
+        "intent(out)" in l for l in decls
+    )
     assert new.replace("real(8), contiguous, ", "real(8), ") == base
 
 
@@ -828,9 +941,16 @@ def test_fuse_libm_guard_keeps_libm_maps_out_of_double_reductions():
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "rkpr", "rkpr.model")
-    old = generate_workload(path, "w0", "p23", ".", optional_derivatives=False, write=False)["source"]
-    new = generate_workload(path, "w0", "p24", ".", optional_derivatives=False, write=False)["source"]
-    assert any("**" in body and "log" not in body for body in _loops_with_nested_loop(old))
+    old = generate_workload(
+        path, "w0", "p23", ".", optional_derivatives=False, write=False
+    )["source"]
+    new = generate_workload(
+        path, "w0", "p24", ".", optional_derivatives=False, write=False
+    )["source"]
+    assert any(
+        "**" in body and "log" not in body
+        for body in _loops_with_nested_loop(old)
+    )
     for body in _loops_with_nested_loop(new):
         assert "**k(" not in body and "sqrt" not in body and "exp(" not in body
 
@@ -841,8 +961,12 @@ def test_keep_libm_tables_moves_exp_out_of_reductions():
 
     path = os.path.join(_ROOT_MODELS, "uniquac", "uniquac.model")
     acc = re.compile(r"^\s*(\w+)(\(\w+\))? = \1(\(\w+\))? \+ .*exp\(")
-    old = generate_workload(path, "g0", "p24", ".", optional_derivatives=False, write=False)["source"]
-    new = generate_workload(path, "g0", "p25", ".", optional_derivatives=False, write=False)["source"]
+    old = generate_workload(
+        path, "g0", "p24", ".", optional_derivatives=False, write=False
+    )["source"]
+    new = generate_workload(
+        path, "g0", "p25", ".", optional_derivatives=False, write=False
+    )["source"]
     assert any(acc.match(l) for l in old.splitlines())
     assert not any(acc.match(l) for l in new.splitlines())
     assert any("= exp(" in l for l in new.splitlines())
@@ -853,50 +977,85 @@ def test_table_layout_follows_parameter_subscripts():
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "nrtl", "nrtl.model")
-    old = generate_workload(path, "g4", "p25", ".", optional_derivatives=False, write=False)["source"]
-    new = generate_workload(path, "g4", "p26", ".", optional_derivatives=False, write=False)["source"]
+    old = generate_workload(
+        path, "g4", "p25", ".", optional_derivatives=False, write=False
+    )["source"]
+    new = generate_workload(
+        path, "g4", "p26", ".", optional_derivatives=False, write=False
+    )["source"]
     table = re.compile(r"mat0\(ia, ib\) = .*\bb\((\w+), (\w+)\)")
     assert table.search(old).groups() == ("ib", "ia")
     assert table.search(new).groups() == ("ia", "ib")
     lines = [l.strip() for l in new.splitlines()]
     k = next(i for i, l in enumerate(lines) if table.search(l))
-    assert lines[k - 2:k] == ["do ib = 1, nc", "do ia = 1, nc"]
+    assert lines[k - 2 : k] == ["do ib = 1, nc", "do ia = 1, nc"]
     # the O(N^3) products read the tables with the contiguous inner index
-    acc = [i for i, l in enumerate(lines) if re.match(r"t\d+\(i, j\) = t\d+\(i, j\) \+ mat0\(i, k\)", l)]
-    assert acc and all(lines[i - 1].startswith("do i = 1, ") and lines[i - 2] == "do k = 1, nc"
-                       for i in acc)
+    acc = [
+        i
+        for i, l in enumerate(lines)
+        if re.match(r"t\d+\(i, j\) = t\d+\(i, j\) \+ mat0\(i, k\)", l)
+    ]
+    assert acc and all(
+        lines[i - 1].startswith("do i = 1, ")
+        and lines[i - 2] == "do k = 1, nc"
+        for i in acc
+    )
     # symmetric pair tables (cubic) are unchanged
     cub = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
-    a = generate_workload(cub, "w5c", "p25", ".", optional_derivatives=False, write=False)["source"]
-    b = generate_workload(cub, "w5c", "p26", ".", optional_derivatives=False, write=False)["source"]
+    a = generate_workload(
+        cub, "w5c", "p25", ".", optional_derivatives=False, write=False
+    )["source"]
+    b = generate_workload(
+        cub, "w5c", "p26", ".", optional_derivatives=False, write=False
+    )["source"]
     assert a.replace("_p25_", "_X_") == b.replace("_p26_", "_X_")
 
 
 def _hessian_nest(source):
     """Lines of the loop nest that assembles ``dfdndn``."""
     lines = [l.strip() for l in source.splitlines()]
-    end = next(k for k, l in enumerate(lines) if l.startswith("dfdndn(i, j) = "))
-    start = max(k for k in range(end) if lines[k].startswith("do ") and lines[k + 1].startswith("do "))
-    return lines[start:end + 4]
+    end = next(
+        k for k, l in enumerate(lines) if l.startswith("dfdndn(i, j) = ")
+    )
+    start = max(
+        k
+        for k in range(end)
+        if lines[k].startswith("do ") and lines[k + 1].startswith("do ")
+    )
+    return lines[start : end + 4]
 
 
 def test_lowrank_hess_assembles_columns_from_vectors():
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "uniquac", "uniquac.model")
-    old = generate_workload(path, "g3", "p26", ".", optional_derivatives=False, write=False)["source"]
-    new = generate_workload(path, "g3", "p27", ".", optional_derivatives=False, write=False)["source"]
+    old = generate_workload(
+        path, "g3", "p26", ".", optional_derivatives=False, write=False
+    )["source"]
+    new = generate_workload(
+        path, "g3", "p27", ".", optional_derivatives=False, write=False
+    )["source"]
     old_nest, new_nest = _hessian_nest(old), _hessian_nest(new)
-    assert old_nest[:2] == ["do i = 1, nc", "do j = i, nc"] and "dfdndn(j, i) = res" in old_nest
-    assert new_nest[:2] == ["do j = 1, nc", "do i = 1, nc"] and "dfdndn(j, i) = res" not in new_nest
+    assert (
+        old_nest[:2] == ["do i = 1, nc", "do j = i, nc"]
+        and "dfdndn(j, i) = res" in old_nest
+    )
+    assert (
+        new_nest[:2] == ["do j = 1, nc", "do i = 1, nc"]
+        and "dfdndn(j, i) = res" not in new_nest
+    )
     body = " ".join(new_nest)
     # the separable terms q(i)*q(j), q(i)*r(j), r(i)*r(j) became two products r_l(i)*g_l(j)
     assert "q(i)*q(j)" not in body and "r(i)*r(j)" not in body
     assert "q(j)*t" in body and "r(j)*t" in body
     # NRTL has only pair terms: unchanged
     nrtl = os.path.join(_ROOT_MODELS, "nrtl", "nrtl.model")
-    a = generate_workload(nrtl, "g3", "p26", ".", optional_derivatives=False, write=False)["source"]
-    b = generate_workload(nrtl, "g3", "p27", ".", optional_derivatives=False, write=False)["source"]
+    a = generate_workload(
+        nrtl, "g3", "p26", ".", optional_derivatives=False, write=False
+    )["source"]
+    b = generate_workload(
+        nrtl, "g3", "p27", ".", optional_derivatives=False, write=False
+    )["source"]
     assert a.replace("_p26_", "_X_") == b.replace("_p27_", "_X_")
 
 
@@ -905,12 +1064,19 @@ def test_lowrank_hess_gives_the_same_hessian():
     from thermodiff.bench_hooks import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")).read()
-    inits = {"kij": "0.01d0*(i+j)*merge(0d0,1d0,i==j)", "lij": "0.003d0*(i+j)",
-             "Tc": "300d0+20d0*i", "Pc": "40d0+2d0*i", "w": "0.1d0+0.05d0*i",
-             "V": "3d0*sum(x_n)"}
+    inits = {
+        "kij": "0.01d0*(i+j)*merge(0d0,1d0,i==j)",
+        "lij": "0.003d0*(i+j)",
+        "Tc": "300d0+20d0*i",
+        "Pc": "40d0+2d0*i",
+        "w": "0.1d0+0.05d0*i",
+        "V": "3d0*sum(x_n)",
+    }
     base = dict(EXTENDED_VARIANTS["it26"])
     ref, _ = run(text, base, inits, derivs="dn,dndn", opt=False)
-    val, code = run(text, dict(base, lowrank_hess=True), inits, derivs="dn,dndn", opt=False)
+    val, code = run(
+        text, dict(base, lowrank_hess=True), inits, derivs="dn,dndn", opt=False
+    )
     assert "do j = i, nc" not in code
     assert np.max(np.abs(val - ref) / np.maximum(np.abs(ref), 1e-8)) < 1e-12
 
@@ -919,15 +1085,19 @@ def test_drop_pair_tables_inlines_the_dispersion_table():
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "pcsaft", "pcsaft.model")
-    old = generate_workload(path, "w0", "p27", ".", optional_derivatives=False, write=False)["source"]
-    new = generate_workload(path, "w0", "p28", ".", optional_derivatives=False, write=False)["source"]
+    old = generate_workload(
+        path, "w0", "p27", ".", optional_derivatives=False, write=False
+    )["source"]
+    new = generate_workload(
+        path, "w0", "p28", ".", optional_derivatives=False, write=False
+    )["source"]
     assert "mat5(" in old and "mat" not in new.replace("_p28_", "")
     lines = [l.strip() for l in new.splitlines()]
     k = next(i for i, l in enumerate(lines) if l.startswith("do x = w + 1"))
     # inner accumulators, outer factor applied once per outer iteration
-    accs = [l.split(" = ")[0] for l in lines[k - 2:k]]
-    assert lines[k - 2:k] == [f"{a} = 0.0d0" for a in accs]
-    assert [l.split(" = ")[0] for l in lines[k + 1:k + 3]] == accs
+    accs = [l.split(" = ")[0] for l in lines[k - 2 : k]]
+    assert lines[k - 2 : k] == [f"{a} = 0.0d0" for a in accs]
+    assert [l.split(" = ")[0] for l in lines[k + 1 : k + 3]] == accs
     assert "n(x)" not in lines[k + 1] and "m(x)" not in lines[k + 2]
     assert lines[k + 3] == "end do"
     assert lines[k + 4].startswith(f"t13 = t13 + {accs[0]}*")
@@ -939,22 +1109,30 @@ def test_share_elementwise_reuses_logs_between_value_and_gradient():
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "uniquac", "uniquac.model")
-    old = generate_workload(path, "g1", "p28", ".", optional_derivatives=False, write=False)["source"]
-    new = generate_workload(path, "g1", "p29", ".", optional_derivatives=False, write=False)["source"]
+    old = generate_workload(
+        path, "g1", "p28", ".", optional_derivatives=False, write=False
+    )["source"]
+    new = generate_workload(
+        path, "g1", "p29", ".", optional_derivatives=False, write=False
+    )["source"]
     # three per-component logs, computed in the value reduction and again in the gradient
     assert old.count("log(") == 7 and new.count("log(") == 4
     lines = [l.strip() for l in new.splitlines()]
     maps = [l for l in lines if re.match(r"t\d+\(k\) = log\(", l)]
     assert len(maps) == 3
     vecs = [m.split("(")[0] for m in maps]
-    grad = new[new.index("do i = 1, nc\n      res ="):]
+    grad = new[new.index("do i = 1, nc\n      res =") :]
     assert all(f"{v}(i)" in grad for v in vecs) and "log(" not in grad
     # x/y and (1/y)*x prefactors are merged: one scalar per ratio
     assert sum(bool(re.match(r"t\d+ = 1d0/t7$", l)) for l in lines) == 1
     # NRTL has no such logs: unchanged
     nrtl = os.path.join(_ROOT_MODELS, "nrtl", "nrtl.model")
-    a = generate_workload(nrtl, "g1", "p28", ".", optional_derivatives=False, write=False)["source"]
-    b = generate_workload(nrtl, "g1", "p29", ".", optional_derivatives=False, write=False)["source"]
+    a = generate_workload(
+        nrtl, "g1", "p28", ".", optional_derivatives=False, write=False
+    )["source"]
+    b = generate_workload(
+        nrtl, "g1", "p29", ".", optional_derivatives=False, write=False
+    )["source"]
     assert a.replace("_p28_", "_X_") == b.replace("_p29_", "_X_")
 
 
@@ -963,11 +1141,22 @@ def test_share_elementwise_gives_the_same_gradient():
     from thermodiff.bench_hooks import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "uniquac", "uniquac.model")).read()
-    inits = {"ua": "0.1d0*(i-j)", "ub": "10d0*(i-j)+3d0*i*j", "uc": "0.001d0*(i+j)",
-             "q": "0.8d0+0.3d0*i", "r": "0.9d0+0.2d0*i"}
+    inits = {
+        "ua": "0.1d0*(i-j)",
+        "ub": "10d0*(i-j)+3d0*i*j",
+        "uc": "0.001d0*(i+j)",
+        "q": "0.8d0+0.3d0*i",
+        "r": "0.9d0+0.2d0*i",
+    }
     base = dict(EXTENDED_VARIANTS["it28"])
     ref, ref_code = run(text, base, inits, derivs="dn,dndn", opt=False)
-    val, code = run(text, dict(base, share_elementwise=True), inits, derivs="dn,dndn", opt=False)
+    val, code = run(
+        text,
+        dict(base, share_elementwise=True),
+        inits,
+        derivs="dn,dndn",
+        opt=False,
+    )
     assert code.count("log(") < ref_code.count("log(")
     assert np.max(np.abs(val - ref) / np.maximum(np.abs(ref), 1e-8)) < 1e-12
 
@@ -976,17 +1165,29 @@ def test_scalar_chain_shrinks_the_scalar_block():
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "rkpr", "rkpr.model")
-    old = generate_workload(path, "w5c", "p29", ".", optional_derivatives=False, write=False)
-    new = generate_workload(path, "w5c", "p30", ".", optional_derivatives=False, write=False)
-    again = generate_workload(path, "w5c", "p30", ".", optional_derivatives=False, write=False)
+    old = generate_workload(
+        path, "w5c", "p29", ".", optional_derivatives=False, write=False
+    )
+    new = generate_workload(
+        path, "w5c", "p30", ".", optional_derivatives=False, write=False
+    )
+    again = generate_workload(
+        path, "w5c", "p30", ".", optional_derivatives=False, write=False
+    )
     assert new["source"] == again["source"]
     assert new["operation_count"] < 0.6 * old["operation_count"]
     # same loops as without the option: only the scalar block changes
-    loops = lambda src: [l.strip() for l in src.splitlines() if l.strip().startswith("do ")]
+    loops = lambda src: [
+        l.strip() for l in src.splitlines() if l.strip().startswith("do ")
+    ]
     assert len(loops(new["source"])) == len(loops(old["source"]))
     # the value alone needs no derivative of F: unchanged
-    a = generate_workload(path, "w0", "p29", ".", optional_derivatives=False, write=False)["source"]
-    b = generate_workload(path, "w0", "p30", ".", optional_derivatives=False, write=False)["source"]
+    a = generate_workload(
+        path, "w0", "p29", ".", optional_derivatives=False, write=False
+    )["source"]
+    b = generate_workload(
+        path, "w0", "p30", ".", optional_derivatives=False, write=False
+    )["source"]
     assert a.replace("_p29_", "_X_") == b.replace("_p30_", "_X_")
 
 
@@ -996,15 +1197,28 @@ def test_scalar_chain_falls_back_on_non_smooth_functions():
 
     a, b, x = sp.symbols("a b x")
     assert _scalar_chain(sp.Max(a, b) * x, [a, b], [a, b], [(a, a)]) is None
-    defs, value, d1, d2 = _scalar_chain(sp.log(a / b) * a, [a, b], [a, b], [(a, a), (a, b)])
+    defs, value, d1, d2 = _scalar_chain(
+        sp.log(a / b) * a, [a, b], [a, b], [(a, a), (a, b)]
+    )
     env = {}
     for symbol, expr in defs:
         env[symbol] = expr.xreplace(env)
     num = {a: 1.7, b: 0.6}
     f = sp.log(a / b) * a
-    for got, ref in [(value, f), (d1[a], f.diff(a)), (d1[b], f.diff(b)),
-                     (d2[(a, a)], f.diff(a, a)), (d2[(a, b)], f.diff(a, b))]:
-        assert abs(float(sp.sympify(got).xreplace(env).subs(num)) - float(ref.subs(num))) < 1e-12
+    for got, ref in [
+        (value, f),
+        (d1[a], f.diff(a)),
+        (d1[b], f.diff(b)),
+        (d2[(a, a)], f.diff(a, a)),
+        (d2[(a, b)], f.diff(a, b)),
+    ]:
+        assert (
+            abs(
+                float(sp.sympify(got).xreplace(env).subs(num))
+                - float(ref.subs(num))
+            )
+            < 1e-12
+        )
 
 
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
@@ -1013,9 +1227,16 @@ def test_scalar_chain_gives_the_same_derivatives():
     from thermodiff.bench_hooks import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "rkpr", "rkpr.model")).read()
-    inits = {"kij": "0.01d0*(i+j)*merge(0d0,1d0,i==j)", "lij": "0.003d0*(i+j)",
-             "Tc": "300d0+20d0*i", "ac": "2d0+0.5d0*i", "b": "0.03d0+0.004d0*i",
-             "k": "1.6d0+0.1d0*i", "delta1": "1.3d0+0.2d0*i", "V": "3d0*sum(x_n)"}
+    inits = {
+        "kij": "0.01d0*(i+j)*merge(0d0,1d0,i==j)",
+        "lij": "0.003d0*(i+j)",
+        "Tc": "300d0+20d0*i",
+        "ac": "2d0+0.5d0*i",
+        "b": "0.03d0+0.004d0*i",
+        "k": "1.6d0+0.1d0*i",
+        "delta1": "1.3d0+0.2d0*i",
+        "V": "3d0*sum(x_n)",
+    }
     base = dict(EXTENDED_VARIANTS["it29"])
     ref, ref_code = run(text, base, inits, opt=False)
     val, code = run(text, dict(base, scalar_chain=True), inits, opt=False)
@@ -1023,11 +1244,22 @@ def test_scalar_chain_gives_the_same_derivatives():
     assert np.max(np.abs(val - ref) / np.maximum(np.abs(ref), 1e-8)) < 1e-11
     # the review models (nested nodes, zero components, T-dependent factors)
     import model_harness as mh
+
     for model, text in _REVIEW_MODELS.items():
-        ref, _ = mh.run(text, EXTENDED_VARIANTS["a0"], _REVIEW_INITS[model], opt=False)
-        val, _ = mh.run(text, dict(base, scalar_chain=True), _REVIEW_INITS[model], opt=False)
+        ref, _ = mh.run(
+            text, EXTENDED_VARIANTS["a0"], _REVIEW_INITS[model], opt=False
+        )
+        val, _ = mh.run(
+            text,
+            dict(base, scalar_chain=True),
+            _REVIEW_INITS[model],
+            opt=False,
+        )
         rel = np.abs(val - ref) / np.maximum(np.abs(ref), 1e-8)
-        assert np.all(np.isfinite(val)) and rel.max() < 1e-11, (model, rel.max())
+        assert np.all(np.isfinite(val)) and rel.max() < 1e-11, (
+            model,
+            rel.max(),
+        )
 
 
 def test_split_affine_leaves_one_multiply_add_in_the_cmr_nest():
@@ -1035,9 +1267,15 @@ def test_split_affine_leaves_one_multiply_add_in_the_cmr_nest():
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "cmr", "cmr.model")
-    old = generate_workload(path, "w0", "p30", ".", optional_derivatives=False, write=False)["source"]
-    new = generate_workload(path, "w0", "p31", ".", optional_derivatives=False, write=False)["source"]
-    inner = lambda src: [l.strip() for l in src.splitlines() if "ijk(m, k, l)" in l]
+    old = generate_workload(
+        path, "w0", "p30", ".", optional_derivatives=False, write=False
+    )["source"]
+    new = generate_workload(
+        path, "w0", "p31", ".", optional_derivatives=False, write=False
+    )["source"]
+    inner = lambda src: [
+        l.strip() for l in src.splitlines() if "ijk(m, k, l)" in l
+    ]
     assert all("(1" in l for l in inner(old))
     body = inner(new)
     assert len(body) == 2 and not any("(1" in l for l in body)
@@ -1046,8 +1284,12 @@ def test_split_affine_leaves_one_multiply_add_in_the_cmr_nest():
     assert re.search(r"\(t\d+ - t\d+\(k, l\)\)", new)
     # the cubic Hessian reads kij next to the matrix-vector products: unchanged
     cub = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
-    a = generate_workload(cub, "w5c", "p30", ".", optional_derivatives=False, write=False)["source"]
-    b = generate_workload(cub, "w5c", "p31", ".", optional_derivatives=False, write=False)["source"]
+    a = generate_workload(
+        cub, "w5c", "p30", ".", optional_derivatives=False, write=False
+    )["source"]
+    b = generate_workload(
+        cub, "w5c", "p31", ".", optional_derivatives=False, write=False
+    )["source"]
     assert a.replace("_p30_", "_X_") == b.replace("_p31_", "_X_")
 
 
@@ -1057,8 +1299,13 @@ def test_split_affine_gives_the_same_derivatives():
     from thermodiff.bench_hooks import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "cmr", "cmr.model")).read()
-    inits = {"tc": "300d0+20d0*i", "ac": "2d0+0.5d0*i", "bi": "0.03d0+0.004d0*i",
-             "mk": "0.4d0+0.1d0*i", "V": "3d0*sum(x_n)"}
+    inits = {
+        "tc": "300d0+20d0*i",
+        "ac": "2d0+0.5d0*i",
+        "bi": "0.03d0+0.004d0*i",
+        "mk": "0.4d0+0.1d0*i",
+        "V": "3d0*sum(x_n)",
+    }
     base = dict(EXTENDED_VARIANTS["it30"])
     ref, ref_code = run(text, base, inits, opt=False)
     val, code = run(text, dict(base, split_affine=True), inits, opt=False)
@@ -1070,14 +1317,21 @@ def test_split_affine_gives_the_same_derivatives():
 # Third round: p32 = p31 with scalar_chain="estimate" (one pipeline pass).
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("workload", ["w0", "w1", "w5b", "w6"])
 def test_scalar_chain_estimate_reproduces_cost_choice(workload):
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
-    cost = generate_workload(path, workload, "p31", ".", optional_derivatives=False, write=False)
-    est = generate_workload(path, workload, "p32", ".", optional_derivatives=False, write=False)
-    assert est["source"].replace("_p32_", "_X_") == cost["source"].replace("_p31_", "_X_")
+    cost = generate_workload(
+        path, workload, "p31", ".", optional_derivatives=False, write=False
+    )
+    est = generate_workload(
+        path, workload, "p32", ".", optional_derivatives=False, write=False
+    )
+    assert est["source"].replace("_p32_", "_X_") == cost["source"].replace(
+        "_p31_", "_X_"
+    )
     assert est["scalar_chain_used"] == cost["scalar_chain_used"]
 
 
@@ -1085,19 +1339,33 @@ def test_split_acc_uses_two_accumulators_in_the_cmr_nest():
     from thermodiff.bench_hooks import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "cmr", "cmr.model")
-    old = generate_workload(path, "w0", "p32", ".", optional_derivatives=False, write=False)["source"]
-    new = generate_workload(path, "w0", "p33", ".", optional_derivatives=False, write=False)["source"]
+    old = generate_workload(
+        path, "w0", "p32", ".", optional_derivatives=False, write=False
+    )["source"]
+    new = generate_workload(
+        path, "w0", "p33", ".", optional_derivatives=False, write=False
+    )["source"]
     assert "do m = 1, nc - 1, 2" not in old
     lines = [l.strip() for l in new.splitlines()]
     k = lines.index("do m = 1, nc - 1, 2")
-    assert lines[k + 1:k + 5] == [
-        "t15 = t15 + lijk(m, k, l)*n(m)", "t17 = t17 + lijk(m + 1, k, l)*n(m + 1)",
-        "t16 = t16 + kijk(m, k, l)*t11(m)", "t18 = t18 + kijk(m + 1, k, l)*t11(m + 1)"]
-    assert lines[k + 6] == "do m = m, nc" and lines[k + 10:k + 12] == ["t15 = t15 + t17", "t16 = t16 + t18"]
+    assert lines[k + 1 : k + 5] == [
+        "t15 = t15 + lijk(m, k, l)*n(m)",
+        "t17 = t17 + lijk(m + 1, k, l)*n(m + 1)",
+        "t16 = t16 + kijk(m, k, l)*t11(m)",
+        "t18 = t18 + kijk(m + 1, k, l)*t11(m + 1)",
+    ]
+    assert lines[k + 6] == "do m = m, nc" and lines[k + 10 : k + 12] == [
+        "t15 = t15 + t17",
+        "t16 = t16 + t18",
+    ]
     # no rank-3 parameter elsewhere: the other models are unchanged
     cub = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
-    a = generate_workload(cub, "w6", "p32", ".", optional_derivatives=False, write=False)["source"]
-    b = generate_workload(cub, "w6", "p33", ".", optional_derivatives=False, write=False)["source"]
+    a = generate_workload(
+        cub, "w6", "p32", ".", optional_derivatives=False, write=False
+    )["source"]
+    b = generate_workload(
+        cub, "w6", "p33", ".", optional_derivatives=False, write=False
+    )["source"]
     assert a.replace("_p32_", "_X_") == b.replace("_p33_", "_X_")
 
 
@@ -1107,10 +1375,17 @@ def test_split_acc_gives_the_same_derivatives():
     from thermodiff.bench_hooks import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "cmr", "cmr.model")).read()
-    inits = {"tc": "300d0+20d0*i", "ac": "2d0+0.5d0*i", "bi": "0.03d0+0.004d0*i",
-             "mk": "0.4d0+0.1d0*i", "V": "3d0*sum(x_n)"}
+    inits = {
+        "tc": "300d0+20d0*i",
+        "ac": "2d0+0.5d0*i",
+        "bi": "0.03d0+0.004d0*i",
+        "mk": "0.4d0+0.1d0*i",
+        "V": "3d0*sum(x_n)",
+    }
     base = dict(EXTENDED_VARIANTS["it32"])
-    ref, ref_code = run(text, base, inits, opt=False)  # nc = 3 and 7: remainder taken
+    ref, ref_code = run(
+        text, base, inits, opt=False
+    )  # nc = 3 and 7: remainder taken
     val, code = run(text, dict(base, split_acc=2), inits, opt=False)
     assert "nc - 1, 2" in code and "nc - 1, 2" not in ref_code
     assert np.max(np.abs(val - ref) / np.maximum(np.abs(ref), 1e-8)) < 1e-12

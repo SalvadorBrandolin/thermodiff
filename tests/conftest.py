@@ -14,7 +14,16 @@ PR76_MODEL = os.path.join(SESSION_ROOT, "models", "pr76", "pr76.model")
 
 #: Frozen generation order of the ten workloads.
 WORKLOAD_ORDER = [
-    "w0", "w1", "w2", "w3", "w4", "w5a", "w5b", "w5c", "w5d", "w6",
+    "w0",
+    "w1",
+    "w2",
+    "w3",
+    "w4",
+    "w5a",
+    "w5b",
+    "w5c",
+    "w5d",
+    "w6",
 ]
 
 #: Frozen variant order.

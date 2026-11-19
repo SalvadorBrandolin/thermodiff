@@ -134,7 +134,7 @@ def _rename_use(use_text, renamed):
     if marker < 0:
         return use_text
     head = use_text[: marker + len("only")]
-    rest = use_text[marker + len("only"):].lstrip()
+    rest = use_text[marker + len("only") :].lstrip()
     if rest.startswith(":"):
         rest = rest[1:]
     names = [name.strip() for name in rest.split(",") if name.strip()]
@@ -239,7 +239,9 @@ def _build_declaration(raw, resolver, dimensions, filename, kind):
             raw.line,
             filename,
         )
-    declaration = Declaration(base, rank, letters, dims, raw.line, symmetric, positive)
+    declaration = Declaration(
+        base, rank, letters, dims, raw.line, symmetric, positive
+    )
     if kind == "variables":
         _register_variable(declaration, resolver, filename)
     return declaration
@@ -318,16 +320,19 @@ def _register_parameter(declaration, resolver, filename):
         resolver.add_base(
             base,
             declaration.rank,
-            _indexed_base(base, declaration.rank, declaration.dims, resolver,
-                          positive=declaration.positive),
+            _indexed_base(
+                base,
+                declaration.rank,
+                declaration.dims,
+                resolver,
+                positive=declaration.positive,
+            ),
         )
 
 
 def _bound_indices(expr):
     """Return the summation indices bound anywhere inside ``expr``."""
-    return {
-        limit[0] for total in expr.atoms(sp.Sum) for limit in total.limits
-    }
+    return {limit[0] for total in expr.atoms(sp.Sum) for limit in total.limits}
 
 
 def _fresh_index(resolver, avoid):

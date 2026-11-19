@@ -60,8 +60,18 @@ CONTRACT_ARGS = {
     "w5c": _BASE_ARGS + ["f", "dfdn", "dfdndn"],
     "w5d": _BASE_ARGS + ["f", "dfdn", "dfdndT", "dfdndV"],
     "w6": _BASE_ARGS
-    + ["f", "dfdT", "dfdV", "dfdn", "dfdT2", "dfdV2", "dfdndn",
-       "dfdTdV", "dfdndT", "dfdndV"],
+    + [
+        "f",
+        "dfdT",
+        "dfdV",
+        "dfdn",
+        "dfdT2",
+        "dfdV2",
+        "dfdndn",
+        "dfdTdV",
+        "dfdndT",
+        "dfdndV",
+    ],
 }
 
 #: Expected output ranks per workload (0 = scalar, 1 = (:), 2 = (:, :)).
@@ -75,9 +85,18 @@ EXPECTED_RANKS = {
     "w5b": {"f": 0, "dfdT": 0, "dfdV": 0, "dfdT2": 0, "dfdTdV": 0},
     "w5c": {"f": 0, "dfdn": 1, "dfdndn": 2},
     "w5d": {"f": 0, "dfdn": 1, "dfdndT": 1, "dfdndV": 1},
-    "w6": {"f": 0, "dfdT": 0, "dfdV": 0, "dfdn": 1, "dfdT2": 0,
-           "dfdV2": 0, "dfdndn": 2, "dfdTdV": 0, "dfdndT": 1,
-           "dfdndV": 1},
+    "w6": {
+        "f": 0,
+        "dfdT": 0,
+        "dfdV": 0,
+        "dfdn": 1,
+        "dfdT2": 0,
+        "dfdV2": 0,
+        "dfdndn": 2,
+        "dfdTdV": 0,
+        "dfdndT": 1,
+        "dfdndV": 1,
+    },
 }
 
 
@@ -114,9 +133,7 @@ def _interface(source):
     """Return everything but the local temporaries and the body."""
     name, args = _signature(source)
     declarations = [
-        line.strip()
-        for line in source.splitlines()
-        if "intent(" in line
+        line.strip() for line in source.splitlines() if "intent(" in line
     ]
     return name, args, declarations
 
@@ -138,26 +155,39 @@ class TestHooksContract:
         assert WORKLOADS["w3"] == "dn"
         assert WORKLOADS["w5c"] == "dn,dndn"
         assert WORKLOADS["w5d"] == "dn,dndV,dndT"
-        assert (
-            WORKLOADS["w6"]
-            == "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"
-        )
+        assert WORKLOADS["w6"] == "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"
 
     def test_metadata_keys_and_metrics(self, tmp_path):
-        metadata = generate_workload(
-            PR76_MODEL, "w3", "v2", str(tmp_path)
-        )
+        metadata = generate_workload(PR76_MODEL, "w3", "v2", str(tmp_path))
         required = {
-            "model", "variant", "variant_id", "variant_token", "workload",
-            "derivatives", "subroutine_name", "optional_derivatives",
-            "array_cse", "share", "spliced_uses", "path",
-            "generation_time_s", "parse_time_s", "diff_time_s",
-            "emit_time_s", "lines", "bytes", "operation_count",
-            "operation_count_tool", "n_temporaries", "source",
+            "model",
+            "variant",
+            "variant_id",
+            "variant_token",
+            "workload",
+            "derivatives",
+            "subroutine_name",
+            "optional_derivatives",
+            "array_cse",
+            "share",
+            "spliced_uses",
+            "path",
+            "generation_time_s",
+            "parse_time_s",
+            "diff_time_s",
+            "emit_time_s",
+            "lines",
+            "bytes",
+            "operation_count",
+            "operation_count_tool",
+            "n_temporaries",
+            "source",
         }
         assert required <= set(metadata)
         assert metadata["optional_derivatives"] is True  # D-014 default
-        assert metadata["operation_count_tool"] == "sympy.count_ops(visual=False)"
+        assert (
+            metadata["operation_count_tool"] == "sympy.count_ops(visual=False)"
+        )
         assert isinstance(metadata["operation_count"], int)
         assert metadata["generation_time_s"] >= 0.0
         assert metadata["parse_time_s"] >= 0.0
@@ -255,9 +285,7 @@ class TestPr76FrozenContract:
         use_at = lines.index("use yaeos__constants, only: R")
         assert lines[use_at + 1] == "implicit none"
         # Nothing but the (possibly continued) subroutine statement above.
-        assert all(
-            "intent(" not in line for line in lines[:use_at]
-        )
+        assert all("intent(" not in line for line in lines[:use_at])
         assert lines[0].startswith("subroutine ")
 
 
@@ -277,7 +305,9 @@ class TestPr76Compilation:
 
     @pytest.mark.parametrize("variant", VARIANT_ORDER)
     @pytest.mark.parametrize("workload", WORKLOAD_ORDER)
-    def test_files_compile_standalone(self, pr76_generated, tmp_path, variant, workload):
+    def test_files_compile_standalone(
+        self, pr76_generated, tmp_path, variant, workload
+    ):
         # Each metric file compiles on its own (protocol 4.4 warning b).
         self._prepare_stub(tmp_path)
         path = pr76_generated["meta"][(variant, workload)]["path"]
@@ -430,8 +460,16 @@ class TestDriverScript:
             SESSION_ROOT, "scripts", "generate-symbolic-variants.py"
         )
         workloads = (
-            "w0", "w1", "w2", "w3", "w4", "w5a", "w5b", "w5c",
-            "w5d", "w6",
+            "w0",
+            "w1",
+            "w2",
+            "w3",
+            "w4",
+            "w5a",
+            "w5b",
+            "w5c",
+            "w5d",
+            "w6",
         )
         # Generate every one of the 30 variant/workload combinations in two
         # fresh processes, with distinct seeds. All output stays under tmp_path.
@@ -443,8 +481,13 @@ class TestDriverScript:
                     env = dict(os.environ, PYTHONHASHSEED=seed)
                     result = subprocess.run(
                         [
-                            sys.executable, script, "--variants", variant,
-                            "--workloads", workload, "--out-root",
+                            sys.executable,
+                            script,
+                            "--variants",
+                            variant,
+                            "--workloads",
+                            workload,
+                            "--out-root",
                             str(out_root),
                         ],
                         capture_output=True,
@@ -456,7 +499,8 @@ class TestDriverScript:
                     assert len(files) == 1
                     generated_bytes.append(files[0].read_bytes())
                 assert generated_bytes[0] == generated_bytes[1], (
-                    variant, workload
+                    variant,
+                    workload,
                 )
 
 
@@ -514,7 +558,9 @@ def _pr76_ar(state):
     a = []
     b = []
     for p in range(nc):
-        kappa = 0.37464 + 1.54226 * state["w"][p] - 0.26993 * state["w"][p] ** 2
+        kappa = (
+            0.37464 + 1.54226 * state["w"][p] - 0.26993 * state["w"][p] ** 2
+        )
         ac = 0.45723553 * R_GAS**2 * state["Tc"][p] ** 2 / state["Pc"][p]
         alpha = (1.0 + kappa * (1.0 - math.sqrt(T / state["Tc"][p]))) ** 2
         a.append(ac * alpha)
@@ -526,7 +572,10 @@ def _pr76_ar(state):
             bij = 0.5 * (b[p] + b[q]) * (1.0 - state["lij"][p][q])
             bmix += n[p] * n[q] * bij
             dattract += (
-                n[p] * n[q] * math.sqrt(a[p] * a[q]) * (1.0 - state["kij"][p][q])
+                n[p]
+                * n[q]
+                * math.sqrt(a[p] * a[q])
+                * (1.0 - state["kij"][p][q])
             )
     bmix = bmix / ntot
     d1 = 1.0 + math.sqrt(2.0)
@@ -538,8 +587,10 @@ def _pr76_ar(state):
 
 def _at(state, **changes):
     """Evaluate the reference with the given state changes."""
-    new = {key: list(value) if isinstance(value, list) else value
-           for key, value in state.items()}
+    new = {
+        key: list(value) if isinstance(value, list) else value
+        for key, value in state.items()
+    }
     for key, value in changes.items():
         new[key] = value
     return _pr76_ar(new)
@@ -558,12 +609,14 @@ def _fd_reference(state):
     base = _at(state)
 
     def d_temp():
-        return (_at(state, T=state["T"] + h1)
-                - _at(state, T=state["T"] - h1)) / (2 * h1)
+        return (
+            _at(state, T=state["T"] + h1) - _at(state, T=state["T"] - h1)
+        ) / (2 * h1)
 
     def d_vol():
-        return (_at(state, V=state["V"] + h1)
-                - _at(state, V=state["V"] - h1)) / (2 * h1)
+        return (
+            _at(state, V=state["V"] + h1) - _at(state, V=state["V"] - h1)
+        ) / (2 * h1)
 
     def d2_temp():
         return (
@@ -622,7 +675,8 @@ def _fd_reference(state):
                     n[q] += dq
                     samples.append(_at(state, n=n))
             values.append(
-                (samples[0] - samples[1] - samples[2] + samples[3]) / (4 * h2**2)
+                (samples[0] - samples[1] - samples[2] + samples[3])
+                / (4 * h2**2)
             )
     return values
 

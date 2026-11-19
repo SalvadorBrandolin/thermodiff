@@ -61,12 +61,8 @@ def _interface(code):
         signature.append(line.strip())
         if line.rstrip().endswith(")"):
             break
-    inputs = [
-        line.strip() for line in lines if "intent(in)" in line
-    ]
-    outputs = [
-        line.strip() for line in lines if "intent(out)" in line
-    ]
+    inputs = [line.strip() for line in lines if "intent(in)" in line]
+    outputs = [line.strip() for line in lines if "intent(out)" in line]
     return " ".join(signature), inputs, outputs
 
 
@@ -97,9 +93,7 @@ class TestShareFlag:
     def test_v1_loop_indices_are_declared(self):
         # Regression: with share=False the sums live inside the outputs
         # and their loop indices must still be declared integers.
-        code = to_fortran(
-            toy_diff(), derivatives="none,dT,dV,dn", **V1
-        )
+        code = to_fortran(toy_diff(), derivatives="none,dT,dV,dn", **V1)
         assert "integer :: i, k" in code
 
     def test_emit_module_forwards_share(self):
@@ -140,7 +134,9 @@ class TestStatsHook:
         assert counts["v1"]["n_temporaries"] == 0
         assert counts["v2"]["n_temporaries"] >= 1
         assert counts["v3"]["n_temporaries"] >= 1
-        assert counts["v1"]["operation_count"] > counts["v2"]["operation_count"]
+        assert (
+            counts["v1"]["operation_count"] > counts["v2"]["operation_count"]
+        )
 
     def test_stats_none_by_default(self):
         assert to_fortran(toy_diff()) == to_fortran(toy_diff(), stats=None)
@@ -151,8 +147,7 @@ class TestVariantInterfaces:
 
     @pytest.mark.parametrize(
         "workload",
-        ["none", "dn", "dn,dndV,dndT",
-         "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"],
+        ["none", "dn", "dn,dndV,dndT", "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"],
     )
     def test_headers_identical_across_variants(self, workload):
         diff = toy_diff()
@@ -170,8 +165,7 @@ class TestVariantInterfaces:
 
     @pytest.mark.parametrize(
         "workload",
-        ["dn", "dn,dndV,dndT",
-         "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"],
+        ["dn", "dn,dndV,dndT", "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"],
     )
     def test_optional_order_matches_plain_order(self, workload):
         diff = toy_diff()
