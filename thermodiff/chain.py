@@ -1525,6 +1525,107 @@ def _scalar_dag(F, mode):
     return out
 
 
+@dataclass(frozen=True)
+class _PropagationState:
+    """Forward-propagation state of :func:`_propagate` (mutated in place).
+
+    Attributes
+    ----------
+    position : dict
+        Leaf -> its position in the leaf list.
+    pairs_set : set
+        The requested Hessian entries, as ``(leaf, leaf)`` in leaf order.
+    grad : dict
+        Node or leaf -> ``{leaf: derivative}``; filled node by node.
+    hess : dict
+        Node or leaf -> ``{(leaf, leaf): derivative}``; filled node by node.
+    value : dict
+        Node symbol -> its expression in terms of the leaves.
+    """
+
+    position: dict
+    pairs_set: set
+    grad: dict
+    hess: dict
+    value: dict
+
+
+def _is_explicit(derivative) -> bool:
+    """Tell whether a derivative has no unevaluated ``Derivative``/``Subs``."""
+    return not (derivative.has(sp.Derivative) or derivative.has(sp.Subs))
+
+
+def _add_first_partial(phi, parent, state, grad_u, hess_u):
+    """Add ``phi_p`` times the gradient and Hessian of ``parent``.
+
+    Returns ``False`` when the local partial is not explicit.
+    """
+    first = sp.diff(phi, parent)
+    if not _is_explicit(first):
+        return False
+    first = first.xreplace(state.value)
+    if first != 0:
+        for leaf, term in state.grad[parent].items():
+            grad_u[leaf] = grad_u.get(leaf, 0) + first * term
+        for key, term in state.hess[parent].items():
+            hess_u[key] = hess_u.get(key, 0) + first * term
+    return True
+
+
+def _add_second_partial(phi, parent_p, parent_q, state, hess_u):
+    """Add ``phi_pq p_l q_m`` to the Hessian entries ``hess_u``.
+
+    Returns ``False`` when the local partial is not explicit.
+    """
+    second = sp.diff(phi, parent_p, parent_q)
+    if second == 0:
+        return True
+    if not _is_explicit(second):
+        return False
+    second = second.xreplace(state.value)
+    position = state.position
+    for leaf_l, term_p in state.grad[parent_p].items():
+        for leaf_m, term_q in state.grad[parent_q].items():
+            if position[leaf_l] <= position[leaf_m]:
+                key = (leaf_l, leaf_m)
+            else:
+                key = (leaf_m, leaf_l)
+            if key not in state.pairs_set:
+                continue
+            if parent_p == parent_q:
+                if position[leaf_l] > position[leaf_m]:
+                    continue
+                term = second * term_p * term_q
+            elif leaf_l != leaf_m:
+                term = second * term_p * term_q
+            else:
+                term = 2 * second * term_p * term_q
+            hess_u[key] = hess_u.get(key, 0) + term
+    return True
+
+
+def _propagate_node(phi, state):
+    """Return ``(gradient, Hessian)`` of a node, or ``None`` if not explicit.
+
+    The result holds the structural non-zeros only.
+    """
+    parents = sorted(
+        (p for p in phi.free_symbols if state.grad.get(p)),
+        key=sp.default_sort_key,
+    )
+    grad_u, hess_u = {}, {}
+    for position, parent in enumerate(parents):
+        if not _add_first_partial(phi, parent, state, grad_u, hess_u):
+            return None
+        for other in parents[position:]:
+            if not _add_second_partial(phi, parent, other, state, hess_u):
+                return None
+    return (
+        {leaf: term for leaf, term in grad_u.items() if term != 0},
+        {key: term for key, term in hess_u.items() if term != 0},
+    )
+
+
 def _propagate(F, leaves, first, pairs, mode):
     """Forward second-order propagation of ``F`` over the DAG of ``mode``.
 
@@ -1536,60 +1637,25 @@ def _propagate(F, leaves, first, pairs, mode):
     expressions of ``[F] + [F_l for l in first] + [F_lm for (l, m) in
     pairs]``, or ``None`` when a local partial is not explicit.
     """
-    pos = {leaf: k for k, leaf in enumerate(leaves)}
     active = set(first) | {leaf for pair in pairs for leaf in pair}
-    pairs_set = set(pairs)
-    grad = {leaf: {leaf: sp.S.One} for leaf in leaves if leaf in active}
-    hess = {leaf: {} for leaf in leaves if leaf in active}
-    value = {}
-
-    def ordered(a, b):
-        return (a, b) if pos[a] <= pos[b] else (b, a)
-
-    for u, phi in _scalar_dag(F, mode):
-        phi_v = phi.xreplace(value)
-        value[u] = phi_v
-        parents = sorted(
-            (p for p in phi.free_symbols if grad.get(p)),
-            key=sp.default_sort_key,
-        )
-        g_u, h_u = {}, {}
-        for a, p in enumerate(parents):
-            d1 = sp.diff(phi, p)
-            if d1.has(sp.Derivative) or d1.has(sp.Subs):
-                return None
-            d1 = d1.xreplace(value)
-            if d1 != 0:
-                for leaf, x in grad[p].items():
-                    g_u[leaf] = g_u.get(leaf, 0) + d1 * x
-                for key, x in hess[p].items():
-                    h_u[key] = h_u.get(key, 0) + d1 * x
-            for q in parents[a:]:
-                d2 = sp.diff(phi, p, q)
-                if d2 == 0:
-                    continue
-                if d2.has(sp.Derivative) or d2.has(sp.Subs):
-                    return None
-                d2 = d2.xreplace(value)
-                for l_, x in grad[p].items():
-                    for m_, y in grad[q].items():
-                        key = ordered(l_, m_)
-                        if key not in pairs_set:
-                            continue
-                        if p == q:
-                            if pos[l_] > pos[m_]:
-                                continue
-                            term = d2 * x * y
-                        else:
-                            term = d2 * x * y if l_ != m_ else 2 * d2 * x * y
-                        h_u[key] = h_u.get(key, 0) + term
-        grad[u] = {leaf: x for leaf, x in g_u.items() if x != 0}
-        hess[u] = {key: x for key, x in h_u.items() if x != 0}
-    top = u
+    state = _PropagationState(
+        position={leaf: pos for pos, leaf in enumerate(leaves)},
+        pairs_set=set(pairs),
+        grad={leaf: {leaf: sp.S.One} for leaf in leaves if leaf in active},
+        hess={leaf: {} for leaf in leaves if leaf in active},
+        value={},
+    )
+    for symbol, phi in _scalar_dag(F, mode):
+        state.value[symbol] = phi.xreplace(state.value)
+        propagated = _propagate_node(phi, state)
+        if propagated is None:
+            return None
+        state.grad[symbol], state.hess[symbol] = propagated
+    top = symbol
     return (
-        [value[top]]
-        + [grad[top].get(leaf, sp.S.Zero) for leaf in first]
-        + [hess[top].get(pair, sp.S.Zero) for pair in pairs]
+        [state.value[top]]
+        + [state.grad[top].get(leaf, sp.S.Zero) for leaf in first]
+        + [state.hess[top].get(pair, sp.S.Zero) for pair in pairs]
     )
 
 
