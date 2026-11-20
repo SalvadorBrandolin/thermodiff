@@ -746,6 +746,321 @@ def _fuse_component_maps(definitions, namer):
     return out
 
 
+_MAP = "map"
+_REDUCTION = "red"
+
+
+def _is_plain_outer_candidate(definition):
+    """Whether ``definition`` has no annotation that blocks outer fusion.
+
+    Parameters
+    ----------
+    definition : TempDef
+        Definition to test.
+
+    Returns
+    -------
+    bool
+        ``True`` without ``Piecewise``, folded-loop bounds, mirror, symv,
+        fused-nest or column-major annotations.
+    """
+    body = definition.body
+    return (
+        not body.has(sp.Piecewise)
+        and not any(
+            isinstance(symbol, _LoopStart) for symbol in body.atoms(sp.Symbol)
+        )
+        and not (
+            definition.mirror
+            or definition.mirror_sum
+            or definition.symv
+            or isinstance(definition, FusedNest)
+            or definition.colmajor
+        )
+    )
+
+
+def _outer_kind(definition):
+    """Classify a definition for outer-loop fusion.
+
+    Parameters
+    ----------
+    definition : TempDef
+        Definition to classify.
+
+    Returns
+    -------
+    str or None
+        ``"map"`` for a per-component map, ``"red"`` for a scalar reduction
+        whose outermost loop runs over ``1..nc``, ``None`` if not fusable.
+    """
+    if isinstance(definition, ComponentFusedMap):
+        return _MAP
+    if not _is_plain_outer_candidate(definition):
+        return None
+    if (
+        len(definition.free) == 1
+        and not definition.limits
+        and not definition.body.has(sp.Sum)
+    ):
+        return _MAP
+    if not definition.free and definition.limits:
+        _index, low, high = definition.limits[0]
+        if low == 1 and str(high) == "nc":
+            return _REDUCTION
+    return None
+
+
+def _outer_index(definition):
+    """Return the index of the loop that outer fusion would share."""
+    if _outer_kind(definition) == _MAP:
+        return definition.free[0]
+    return definition.limits[0][0]
+
+
+def _is_libm_map(definition):
+    """Whether ``definition`` is a map that calls a libm routine."""
+    if _outer_kind(definition) != _MAP:
+        return False
+    if isinstance(definition, ComponentFusedMap):
+        return any(_calls_libm(value) for _k, _t, value in definition.steps)
+    return _calls_libm(definition.body)
+
+
+def _is_double_reduction(definition):
+    """Whether ``definition`` is a reduction with an inner loop."""
+    return _outer_kind(definition) == _REDUCTION and len(definition.limits) > 1
+
+
+def _is_libm_reduction(definition, libm_reductions):
+    """Whether ``definition`` is a single reduction calling libm."""
+    return (
+        libm_reductions
+        and _outer_kind(definition) == _REDUCTION
+        and len(definition.limits) == 1
+        and _calls_libm(definition.body)
+    )
+
+
+def _is_libm_member(definition, libm_reductions):
+    """Whether ``definition`` is a libm map or (optionally) reduction."""
+    return _is_libm_map(definition) or _is_libm_reduction(
+        definition, libm_reductions
+    )
+
+
+def _libm_clash(definition, group, libm_reductions):
+    """Whether ``definition`` cannot join ``group`` under ``libm_guard``.
+
+    Parameters
+    ----------
+    definition : TempDef
+        Candidate member.
+    group : list
+        Current group members.
+    libm_reductions : bool
+        Also treat single reductions that call libm as libm members.
+
+    Returns
+    -------
+    bool
+        ``True`` when a double reduction would meet a libm member.
+    """
+    if _is_double_reduction(definition):
+        return any(
+            _is_libm_member(member, libm_reductions) for member in group
+        )
+    if _is_libm_member(definition, libm_reductions):
+        return any(_is_double_reduction(member) for member in group)
+    return False
+
+
+def _produced_names(definition):
+    """Return the base names of the arrays ``definition`` writes."""
+    if isinstance(definition, ComponentFusedMap):
+        return {_temp_name(target) for target, _ in definition.members}
+    return {_temp_name(definition.target)}
+
+
+def _outer_reads(definition):
+    """Return ``(indexed reads, free symbols)`` of a definition's values."""
+    if isinstance(definition, ComponentFusedMap):
+        values = [value for _k, _t, value in definition.steps]
+        return (
+            [ref for value in values for ref in value.atoms(sp.Indexed)],
+            set().union(*[value.free_symbols for value in values]),
+        )
+    return (
+        list(definition.body.atoms(sp.Indexed)),
+        definition.body.free_symbols,
+    )
+
+
+def _loop_start_renames(definition, old, new):
+    """Return the substitution of ``old`` by ``new`` for a definition.
+
+    The opaque lower bound ``old + 1`` of a triangular loop follows too.
+    """
+    mapping = {old: new}
+    for limit in definition.limits:
+        for bound in (limit[1], limit[2]):
+            for symbol in sp.sympify(bound).atoms(sp.Symbol):
+                if isinstance(symbol, _LoopStart) and symbol.outer == old:
+                    mapping[symbol] = _LoopStart(new)
+    return mapping
+
+
+def _rename_outer_member(definition, old, new):
+    """Return ``definition`` with the outer index ``old`` renamed ``new``.
+
+    Parameters
+    ----------
+    definition : TempDef
+        Candidate member.
+    old, new : sympy.Idx
+        Current and group outer index.
+
+    Returns
+    -------
+    TempDef
+        ``definition`` itself if ``old == new``, else a shallow copy.
+    """
+    if old == new:
+        return definition
+    mapping = _loop_start_renames(definition, old, new)
+    renamed = definition.copy()
+    if isinstance(renamed, ComponentFusedMap):
+        renamed.steps = [
+            (kind, target.xreplace(mapping), value.xreplace(mapping))
+            for kind, target, value in renamed.steps
+        ]
+        renamed.free = [new]
+    elif _outer_kind(renamed) == _MAP:
+        renamed.target = renamed.target.xreplace(mapping)
+        renamed.body = renamed.body.xreplace(mapping)
+        renamed.free = [new]
+    else:
+        renamed.body = renamed.body.xreplace(mapping)
+        renamed.limits = [
+            (
+                (
+                    bound.xreplace(mapping)
+                    if hasattr(bound, "xreplace")
+                    else bound
+                ),
+                sp.sympify(low).xreplace(mapping),
+                sp.sympify(high).xreplace(mapping),
+            )
+            for bound, low, high in renamed.limits
+        ]
+    return renamed
+
+
+class _OuterGroups:
+    """Output list and the group of members being fused.
+
+    Attributes
+    ----------
+    out : list
+        Definitions already emitted, in order.
+    group : list
+        Members of the open group; cleared (same list object) on flush.
+    """
+
+    def __init__(self):
+        self.out = []
+        self.group = []
+
+    def flush(self):
+        """Emit the open group, as an outer nest if it has 2+ members."""
+        group = self.group
+        if len(group) <= 1:
+            self.out.extend(group)
+        else:
+            limits = []
+            for member in group:
+                limits += [lim for lim in member.limits if lim not in limits]
+            self.out.append(
+                OuterFusedNest(
+                    target=group[0].target,
+                    free=[],
+                    limits=limits,
+                    body=sp.S.Zero,
+                    members=list(group),
+                    outer=_outer_index(group[0]),
+                )
+            )
+        group.clear()
+
+
+def _joined_member(definition, kind, group, libm_guard, libm_reductions):
+    """Return the renamed member that joins ``group``, or ``None``.
+
+    Parameters
+    ----------
+    definition : TempDef
+        Fusable definition (``kind`` is not ``None``).
+    kind : str
+        Result of ``_outer_kind(definition)``.
+    group : list
+        Non-empty open group.
+    libm_guard, libm_reductions : bool
+        The libm options of ``_fuse_outer_loops``.
+
+    Returns
+    -------
+    TempDef or None
+        ``None`` if the group must be flushed before ``definition``.
+    """
+    outer = _outer_index(group[0])
+    inner = (
+        [limit[0] for limit in definition.limits[1:]]
+        if kind == _REDUCTION
+        else []
+    )
+    if outer in inner:
+        return None
+    if libm_guard and _libm_clash(definition, group, libm_reductions):
+        return None
+    candidate = _rename_outer_member(
+        definition, _outer_index(definition), outer
+    )
+    arrays = set().union(*[_produced_names(member) for member in group])
+    accumulators = {
+        _temp_name(member.target)
+        for member in group
+        if _outer_kind(member) == _REDUCTION
+    }
+    reads, symbols = _outer_reads(candidate)
+    at_outer = all(
+        ref.indices == (outer,) for ref in reads if str(ref.base) in arrays
+    )
+    if at_outer and not any(str(sym) in accumulators for sym in symbols):
+        return candidate
+    return None
+
+
+def _moves_ahead_of_group(definition, group):
+    """Whether an unfusable definition is an independent scalar.
+
+    Such a scalar is emitted before the open group instead of ending it.
+    """
+    if not (
+        group
+        and not definition.free
+        and not definition.limits
+        and _is_plain_outer_candidate(definition)
+    ):
+        return False
+    names = set().union(*[_produced_names(member) for member in group])
+    reads_group = any(
+        str(symbol) in names for symbol in definition.body.free_symbols
+    ) or any(
+        str(ref.base) in names for ref in definition.body.atoms(sp.Indexed)
+    )
+    return not reads_group
+
+
 def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
     """Fuse consecutive loop nests that share the outer loop ``1..nc``.
 
@@ -764,174 +1079,26 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
     ``libm_reductions`` the same holds for a single reduction whose body calls
     a libm routine (``sum_w (m(w) - 1) log(g(w))``).
     """
-
-    def plain(d):
-        body = d.body
-        return (
-            not body.has(sp.Piecewise)
-            and not any(
-                isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)
-            )
-            and not (
-                d.mirror
-                or d.mirror_sum
-                or d.symv
-                or isinstance(d, FusedNest)
-                or d.colmajor
-            )
-        )
-
-    def kind(d):
-        if isinstance(d, ComponentFusedMap):
-            return "map"
-        if not plain(d):
-            return None
-        if len(d.free) == 1 and not d.limits and not d.body.has(sp.Sum):
-            return "map"
-        if not d.free and d.limits:
-            b, low, high = d.limits[0]
-            if low == 1 and str(high) == "nc":
-                return "red"
-        return None
-
-    def outer_of(d):
-        return d.free[0] if kind(d) == "map" else d.limits[0][0]
-
-    def libm_map(d):
-        if kind(d) != "map":
-            return False
-        if isinstance(d, ComponentFusedMap):
-            return any(_calls_libm(v) for _k, _t, v in d.steps)
-        return _calls_libm(d.body)
-
-    def double_red(d):
-        return kind(d) == "red" and len(d.limits) > 1
-
-    def libm_red(d):
-        return (
-            libm_reductions
-            and kind(d) == "red"
-            and len(d.limits) == 1
-            and _calls_libm(d.body)
-        )
-
-    def clash(d):
-        """libm_guard: d cannot join the current group."""
-        if not libm_guard:
-            return False
-        return (
-            double_red(d) and any(libm_map(g) or libm_red(g) for g in group)
-        ) or (
-            (libm_map(d) or libm_red(d)) and any(double_red(g) for g in group)
-        )
-
-    def produced(d):
-        if isinstance(d, ComponentFusedMap):
-            return {_temp_name(t) for t, _ in d.members}
-        return {_temp_name(d.target)}
-
-    def reads(d):
-        if isinstance(d, ComponentFusedMap):
-            return [
-                x for _k, _t, v in d.steps for x in v.atoms(sp.Indexed)
-            ], set().union(*[v.free_symbols for _k, _t, v in d.steps])
-        return list(d.body.atoms(sp.Indexed)), d.body.free_symbols
-
-    def rename(d, old, new):
-        if old == new:
-            return d
-        m = {old: new}
-        # the opaque lower bound ``old + 1`` of a triangular loop follows too
-        for lim in d.limits:
-            for bound in (lim[1], lim[2]):
-                for sym in sp.sympify(bound).atoms(sp.Symbol):
-                    if isinstance(sym, _LoopStart) and sym.outer == old:
-                        m[sym] = _LoopStart(new)
-        d = d.copy()
-        if isinstance(d, ComponentFusedMap):
-            d.steps = [
-                (k, t.xreplace(m), v.xreplace(m)) for k, t, v in d.steps
-            ]
-            d.free = [new]
-        elif kind(d) == "map":
-            d.target = d.target.xreplace(m)
-            d.body = d.body.xreplace(m)
-            d.free = [new]
+    groups = _OuterGroups()
+    for definition in definitions:
+        kind = _outer_kind(definition)
+        if kind is None:
+            if not _moves_ahead_of_group(definition, groups.group):
+                groups.flush()
+            groups.out.append(definition)
+        elif not groups.group:
+            groups.group.append(definition)
         else:
-            d.body = d.body.xreplace(m)
-            d.limits = [
-                (
-                    b.xreplace(m) if hasattr(b, "xreplace") else b,
-                    sp.sympify(lo).xreplace(m),
-                    sp.sympify(hi).xreplace(m),
-                )
-                for b, lo, hi in d.limits
-            ]
-        return d
-
-    out, group = [], []
-
-    def flush():
-        if len(group) <= 1:
-            out.extend(group)
-        else:
-            limits = []
-            for g in group:
-                limits += [lim for lim in g.limits if lim not in limits]
-            out.append(
-                OuterFusedNest(
-                    target=group[0].target,
-                    free=[],
-                    limits=limits,
-                    body=sp.S.Zero,
-                    members=list(group),
-                    outer=outer_of(group[0]),
-                )
+            member = _joined_member(
+                definition, kind, groups.group, libm_guard, libm_reductions
             )
-        group.clear()
-
-    for d in definitions:
-        k = kind(d)
-        if k is not None and group:
-            x = outer_of(group[0])
-            inner = [lim[0] for lim in d.limits[1:]] if k == "red" else []
-            if x in inner or clash(d):
-                flush()
-                group.append(d)
-                continue
-            cand = rename(d, outer_of(d), x)
-            arrays_ = set().union(*[produced(g) for g in group])
-            accs = {_temp_name(g.target) for g in group if kind(g) == "red"}
-            idx_reads, syms = reads(cand)
-            ok = all(
-                x_.indices == (x,)
-                for x_ in idx_reads
-                if str(x_.base) in arrays_
-            )
-            ok = ok and not any(str(sy) in accs for sy in syms)
-            if ok:
-                group.append(cand)
-                continue
-            flush()
-            group.append(d)
-            continue
-        if k is not None:
-            group.append(d)
-            continue
-        # not fusable: independent scalars move ahead, anything else ends the group
-        if group and not d.free and not d.limits and plain(d):
-            names = set().union(*[produced(g) for g in group])
-            if not any(
-                str(sy) in names for sy in d.body.free_symbols
-            ) and not any(
-                str(x_.base) in names for x_ in d.body.atoms(sp.Indexed)
-            ):
-                out.append(d)
-                continue
-        flush()
-        out.append(d)
-    flush()
-    return out
+            if member is None:
+                groups.flush()
+                groups.group.append(definition)
+            else:
+                groups.group.append(member)
+    groups.flush()
+    return groups.out
 
 
 def _drop_pair_tables(definitions, outputs, namer, arrays):
