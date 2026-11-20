@@ -99,17 +99,19 @@ class TempDef:
         Parameters
         ----------
         **changes
-            Replacements, using the old dict key names.
+            Replacement values, keyed by attribute name.
 
         Returns
         -------
         TempDef
             A new record of the same class; lists are shared.
+
+        Raises
+        ------
+        TypeError
+            If a name is not a field of this record.
         """
-        return replace(
-            self,
-            **{self._KEY_TO_ATTR[key]: val for key, val in changes.items()},
-        )
+        return replace(self, **changes)
 
 
 @dataclass(eq=True, kw_only=True)

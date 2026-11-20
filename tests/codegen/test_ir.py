@@ -63,7 +63,7 @@ def test_every_annotation_name_is_reported():
     }
 
 
-def test_copy_replaces_fields_with_old_names_and_shares_lists():
+def test_copy_replaces_fields_by_attribute_name_and_shares_lists():
     record = make(mirror=True)
     other = record.copy(body=sp.Integer(2), factored=True)
     assert other is not record
@@ -72,6 +72,13 @@ def test_copy_replaces_fields_with_old_names_and_shares_lists():
     assert other.free is record.free
     assert record.body == BODY and record.factored is None
     assert type(other) is TempDef
+
+
+def test_copy_rejects_old_key_names():
+    with pytest.raises(TypeError):
+        make().copy(split_acc=2)
+    with pytest.raises(TypeError):
+        make().copy(compfused=True)
 
 
 def test_copy_of_wrappers_keeps_the_class():
@@ -85,7 +92,7 @@ def test_copy_of_wrappers_keeps_the_class():
         sibling=[make()],
         accs=[sp.Symbol("t1")],
     )
-    split = sibling.copy(split_acc=2, accs2=[sp.Symbol("t2")])
+    split = sibling.copy(accumulators=2, accs2=[sp.Symbol("t2")])
     assert split.accumulators == 2
     assert split.present_keys() == BASE_KEYS | {
         "sibling",

@@ -1484,7 +1484,7 @@ def _split_accumulators(definitions, namer):
             rank3(g.body) for g in d.sibling
         ):
             d = d.copy(
-                split_acc=2,
+                accumulators=2,
                 accs2=[sp.Symbol(str(namer("t"))) for _ in d.accs],
             )
         elif lone(d) and rank3(d.body):
