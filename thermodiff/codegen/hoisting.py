@@ -1,5 +1,7 @@
 """Invariant and affine hoisting for the Fortran code generator."""
 
+from typing import NamedTuple
+
 import sympy as sp
 
 from thermodiff.codegen.common import (
@@ -516,14 +518,351 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
     return new_definitions, new_outputs
 
 
+#: Keys a record may carry and still be split (``present_keys`` subset).
+_AFFINE_FLAGS = frozenset({"target", "free", "limits", "body", "mirror"})
+_AFFINE_SLOT = sp.Idx("__affine")
+
+
+class _AffineMatch(NamedTuple):
+    """Parts of a sum ``(const + var) * others`` over one ``nc`` loop."""
+
+    index: sp.Idx
+    low: sp.Basic
+    high: sp.Basic
+    add: sp.Add
+    others: list
+
+
+def _alpha(body, index):
+    """``body`` with the loop ``index`` renamed to a common slot."""
+    return body.xreplace({index: _AFFINE_SLOT})
+
+
+def _is_affine_shape(definition):
+    """Whether ``definition`` is a one-loop ``nc`` sum with a Mul body."""
+    free = set(definition.free)
+    if (
+        not free
+        or len(definition.limits) != 1
+        or not isinstance(definition.target, sp.Indexed)
+        or not definition.present_keys() <= _AFFINE_FLAGS
+    ):
+        return False
+    _, low, high = definition.limits[0]
+    body = definition.body
+    return not (
+        low != 1
+        or str(high) != "nc"
+        or not isinstance(body, sp.Mul)
+        or body.has(sp.Piecewise)
+        or any(isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol))
+    )
+
+
+def _affine_match(definition):
+    """Split the body of ``definition`` as ``(const + var) * others``.
+
+    Returns
+    -------
+    _AffineMatch or None
+        ``None`` unless exactly one ``Add`` factor depends on the free
+        indices and no other factor does.
+    """
+    if not _is_affine_shape(definition):
+        return None
+    free = set(definition.free)
+    body = definition.body
+    adds = [
+        f
+        for f in body.args
+        if isinstance(f, sp.Add) and f.atoms(sp.Idx) & free
+    ]
+    others = [
+        f for f in body.args if not (isinstance(f, sp.Add) and f in adds)
+    ]
+    if len(adds) != 1 or any(f.atoms(sp.Idx) & free for f in others):
+        return None
+    index, low, high = definition.limits[0]
+    return _AffineMatch(index, low, high, adds[0], others)
+
+
+def _split_terms(add, free):
+    """``(const, var)`` terms of ``add`` by dependence on ``free``."""
+    const = [a for a in add.args if not (a.atoms(sp.Idx) & free)]
+    var = [a for a in add.args if a.atoms(sp.Idx) & free]
+    return const, var
+
+
+def _would_split(definition):
+    """Whether ``definition`` would be split (no side effects)."""
+    match = _affine_match(definition)
+    if match is None:
+        return False
+    const, var = _split_terms(match.add, set(definition.free))
+    if not const or not var:
+        return False
+    inner = sp.Add(*var)
+    if inner.could_extract_minus_sign():
+        inner = -inner
+    factors = sp.Mul.make_args(inner * sp.Mul(*match.others))
+    only = [
+        f
+        for f in factors
+        if f.atoms(sp.Idx) == {match.index} and not f.is_Number
+    ]
+    if len(only) >= 2:
+        factors = [f for f in factors if f not in only] + [
+            sp.Indexed(sp.IndexedBase("__vec"), match.index)
+        ]
+    return sp.count_ops(sp.Mul(*factors)) < sp.count_ops(definition.body)
+
+
+def _matrix_bases(expr):
+    """Names of the bases of the rank-2 or higher arrays read by ``expr``."""
+    return {str(x.base) for x in expr.atoms(sp.Indexed) if len(x.indices) >= 2}
+
+
+def _loop_shape(definition):
+    """Free count and limits of a sum, or ``None`` for other records."""
+    if not definition.free or not definition.limits:
+        return None
+    return (
+        len(definition.free),
+        tuple((lo, hi) for _b, lo, hi in definition.limits),
+    )
+
+
+def _blocked_by_pairs(defs, outs):
+    """Names of the sums whose matrix a rank-2 output reads too."""
+    pair_bases = set()
+    for expr in outs:
+        if len(_free_indices(expr)) >= 2:
+            pair_bases |= _matrix_bases(expr)
+    return {
+        _temp_name(d.target)
+        for d in defs
+        if d.free and d.limits and _matrix_bases(d.body) & pair_bases
+    }
+
+
+def _blocked_by_runs(defs):
+    """Names of the sums of a run of equal loops that cannot all split."""
+    blocked = set()
+    run = []
+    for d in defs + [None]:
+        if (
+            d is not None
+            and run
+            and _loop_shape(d) is not None
+            and _loop_shape(d) == _loop_shape(run[0])
+        ):
+            run.append(d)
+            continue
+        if len(run) > 1 and not all(_would_split(e) for e in run):
+            blocked |= {_temp_name(e.target) for e in run}
+        run = [d] if d is not None and _loop_shape(d) is not None else []
+    return blocked
+
+
+def _close_blocked_matrices(sums, blocked):
+    """Block the sums that read a matrix read by a blocked sum (fixpoint)."""
+    changed = True
+    while changed:
+        changed = False
+        held = set().union(
+            *[
+                _matrix_bases(d.body)
+                for d in sums
+                if _temp_name(d.target) in blocked
+            ]
+        )
+        for d in sums:
+            name = _temp_name(d.target)
+            if name not in blocked and _matrix_bases(d.body) & held:
+                blocked.add(name)
+                changed = True
+
+
+def _blocked_sums(defs, outs):
+    """Names of the sums that must not be split.
+
+    Sums over the same loops next to each other share one loop nest
+    (fuse_loops, sib_fuse, sym_matvec): split all of them or none.  Neither
+    split a sum whose matrix a rank-2 output reads too (the Hessian of the
+    cubics reads kij next to the matrix-vector products that share it).
+    Sums that read the same matrix go together: all split or none.
+    """
+    blocked = _blocked_by_pairs(defs, outs)
+    blocked |= _blocked_by_runs(defs)
+    sums = [d for d in defs if d.free and d.limits]
+    for d in sums:
+        if _temp_name(d.target) not in blocked and not _would_split(d):
+            blocked.add(_temp_name(d.target))
+    _close_blocked_matrices(sums, blocked)
+    return blocked
+
+
+class _AffineState:
+    """Per-call state of :func:`_split_affine`.
+
+    Parameters
+    ----------
+    definitions : list of TempDef
+        The definitions; copied, and edited in place afterwards.
+    namer : _Namer
+        Generator of temporary names.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Attributes
+    ----------
+    defs : list of TempDef
+        The working definitions.
+    """
+
+    def __init__(self, definitions, namer, arrays):
+        self.defs = list(definitions)
+        self.namer = namer
+        self.arrays = arrays
+
+    def vector_of(self, product, index, position):
+        """Indexed vector holding ``product`` (over ``index`` only).
+
+        Returns
+        -------
+        (sympy.Indexed, int)
+            The reference and the next insertion position.  A new vector
+            consumes a namer number and is inserted at ``position`` even if
+            the caller later drops it (see :func:`_split_at`).
+        """
+        key = _alpha(product, index)
+        for d in self.defs:
+            if (
+                len(d.free) == 1
+                and not d.limits
+                and d.present_keys() <= _AFFINE_FLAGS
+                and isinstance(d.target, sp.Indexed)
+                and _alpha(d.body, d.free[0]) == key
+            ):
+                return sp.Indexed(d.target.base, index), position
+        target = _new_shared_temp(self.namer, [index], self.arrays)
+        self.defs.insert(
+            position,
+            TempDef(target=target, free=[index], limits=[], body=product),
+        )
+        return sp.Indexed(target.base, index), position + 1
+
+    def vectorise(self, body, index, position):
+        """Replace the factors over ``index`` only by one vector."""
+        factors = sp.Mul.make_args(body)
+        only = [
+            f
+            for f in factors
+            if f.atoms(sp.Idx) == {index} and not f.is_Number
+        ]
+        if len(only) < 2:
+            return body, position
+        vec, position = self.vector_of(sp.Mul(*only), index, position)
+        rest = [f for f in factors if f not in only]
+        return sp.Mul(*rest) * vec, position
+
+    def scalar_for(self, position, body, limit):
+        """Scalar sum of ``body`` over ``limit``: reuse or create it.
+
+        Returns
+        -------
+        (sympy.Symbol, int)
+            The scalar and the next insertion position.
+        """
+        index, low, high = limit
+        key = _alpha(body, index)
+        for e in self.defs[:position]:
+            if (
+                not e.free
+                and len(e.limits) == 1
+                and e.present_keys() <= _AFFINE_FLAGS
+                and isinstance(e.target, sp.Symbol)
+                and tuple(e.limits[0][1:]) == (low, high)
+                and _alpha(e.body, e.limits[0][0]) == key
+            ):
+                return e.target, position
+        scalar = _new_shared_temp(self.namer, [], self.arrays)
+        self.defs.insert(
+            position,
+            TempDef(
+                target=scalar, free=[], limits=[(index, low, high)], body=body
+            ),
+        )
+        return scalar, position + 1
+
+
+def _reread(expr, name, scalar, coeff, sign):
+    """Rewrite the reads of the split table ``name`` in ``expr``."""
+    base = scalar if float(coeff) == 1.0 else coeff * scalar
+    rep = {
+        x: base + sign * x
+        for x in expr.atoms(sp.Indexed)
+        if str(x.base) == name
+    }
+    return expr.xreplace(rep) if rep else expr
+
+
+def _split_at(state, k, outs):
+    """Try to split the definition at ``k``.
+
+    Returns
+    -------
+    (int, list)
+        The index to continue from and the (possibly rewritten) outputs.
+    """
+    defs = state.defs
+    d = defs[k]
+    match = _affine_match(d)
+    if match is None:
+        return k + 1, outs
+    const, var = _split_terms(match.add, set(d.free))
+    if not const or not var:
+        return k + 1, outs
+    m = match.index
+    weight = sp.Mul(*match.others)
+    inner = sp.Add(*var)
+    sign = 1
+    if inner.could_extract_minus_sign():
+        inner, sign = -inner, -1
+    position = k
+    new_body, position = state.vectorise(inner * weight, m, position)
+    if sp.count_ops(new_body) >= sp.count_ops(d.body):
+        # The vectors made for nothing leave the definitions, but their
+        # namer number and their entry in ``arrays`` stay (and shift every
+        # later temporary name).  Candidate cleanup; it changes the output.
+        del defs[k:position]
+        return k + 1, outs
+    coeff = sp.Add(*const)
+    if not coeff.is_Number:
+        weight, coeff = coeff * weight, sp.S.One
+    s_body, position = state.vectorise(weight, m, position)
+    scalar, position = state.scalar_for(position, s_body, d.limits[0])
+    table = d.copy(body=new_body)
+    defs[position] = table
+    name = _temp_name(d.target)
+    for q, e in enumerate(defs):
+        if e is not table:
+            defs[q] = e.copy(body=_reread(e.body, name, scalar, coeff, sign))
+    outs = [_reread(e, name, scalar, coeff, sign) for e in outs]
+    return position + 1, outs
+
+
 def _split_affine(definitions, outputs, namer, arrays):
-    """Take the part of a summation body that does not depend on the free
-    indices out of the loop nest.
+    """Take the free-index-invariant part of a sum out of the loop nest.
+
+    The part of a summation body that does not depend on the free indices
+    leaves the loop nest.
 
     In ``t(k, l) = sum_m (1 - L(m, k, l)) n(m)`` (the O(N^3) nest of CMR,
     reportes/brechas/ronda2-ge-cmr.md) the term ``n(m)`` does not depend on
     ``k, l``: ``t(k, l) = S - sum_m L(m, k, l) n(m)`` with the scalar
-    ``S = sum_m n(m)`` computed once, so the innermost body is one multiply-add.
+    ``S = sum_m n(m)`` computed once, so the innermost body is one
+    multiply-add.
     A definition with free indices and one summation, whose body is a product
     ``A * w`` with an ``A = a + b`` such that ``a`` and ``w`` do not depend on
     the free indices, keeps ``sum_m b w`` (sign folded in) and its readers read
@@ -536,260 +875,16 @@ def _split_affine(definitions, outputs, namer, arrays):
 
     Returns ``(definitions, outputs)``.
     """
-    slot = sp.Idx("__affine")
-    flags_ok = {"target", "free", "limits", "body", "mirror"}
-
-    def alpha(body, index):
-        return body.xreplace({index: slot})
-
-    defs = list(definitions)
+    state = _AffineState(definitions, namer, arrays)
     outs = list(outputs)
-
-    def vector_of(product, index, position):
-        """Indexed vector holding ``product`` (over ``index`` only)."""
-        key = alpha(product, index)
-        for d in defs:
-            if (
-                len(d.free) == 1
-                and not d.limits
-                and d.present_keys() <= flags_ok
-                and isinstance(d.target, sp.Indexed)
-                and alpha(d.body, d.free[0]) == key
-            ):
-                return sp.Indexed(d.target.base, index), position
-        target = _new_shared_temp(namer, [index], arrays)
-        defs.insert(
-            position,
-            TempDef(target=target, free=[index], limits=[], body=product),
-        )
-        return sp.Indexed(target.base, index), position + 1
-
-    def vectorise(body, index, position):
-        factors = sp.Mul.make_args(body)
-        only = [
-            f
-            for f in factors
-            if f.atoms(sp.Idx) == {index} and not f.is_Number
-        ]
-        if len(only) < 2:
-            return body, position
-        vec, position = vector_of(sp.Mul(*only), index, position)
-        rest = [f for f in factors if f not in only]
-        return sp.Mul(*rest) * vec, position
-
-    def eligible(d):
-        """Whether ``d`` would be split (same tests as below, no side effects)."""
-        free = set(d.free)
-        if (
-            not free
-            or len(d.limits) != 1
-            or not isinstance(d.target, sp.Indexed)
-            or not d.present_keys() <= flags_ok
-        ):
-            return False
-        m, low, high = d.limits[0]
-        body = d.body
-        if (
-            low != 1
-            or str(high) != "nc"
-            or not isinstance(body, sp.Mul)
-            or body.has(sp.Piecewise)
-            or any(isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol))
-        ):
-            return False
-        adds = [
-            f
-            for f in body.args
-            if isinstance(f, sp.Add) and f.atoms(sp.Idx) & free
-        ]
-        others = [
-            f for f in body.args if not (isinstance(f, sp.Add) and f in adds)
-        ]
-        if len(adds) != 1 or any(f.atoms(sp.Idx) & free for f in others):
-            return False
-        var = [a for a in adds[0].args if a.atoms(sp.Idx) & free]
-        if len(var) == len(adds[0].args) or not var:
-            return False
-        inner = sp.Add(*var)
-        if inner.could_extract_minus_sign():
-            inner = -inner
-        factors = sp.Mul.make_args(inner * sp.Mul(*others))
-        only = [
-            f for f in factors if f.atoms(sp.Idx) == {m} and not f.is_Number
-        ]
-        if len(only) >= 2:
-            factors = [f for f in factors if f not in only] + [
-                sp.Indexed(sp.IndexedBase("__vec"), m)
-            ]
-        return sp.count_ops(sp.Mul(*factors)) < sp.count_ops(body)
-
-    # sums over the same loops next to each other share one loop nest
-    # (fuse_loops, sib_fuse, sym_matvec): split all of them or none.  Neither
-    # split a sum whose matrix a rank-2 output reads too (the Hessian of the
-    # cubics reads kij next to the matrix-vector products that share it).
-    blocked = set()
-    pair_bases = {
-        str(x.base)
-        for e in outs
-        if len(_free_indices(e)) >= 2
-        for x in e.atoms(sp.Indexed)
-        if len(x.indices) >= 2
-    }
-    for d in defs:
-        if (
-            d.free
-            and d.limits
-            and any(
-                str(x.base) in pair_bases
-                for x in d.body.atoms(sp.Indexed)
-                if len(x.indices) >= 2
-            )
-        ):
-            blocked.add(_temp_name(d.target))
-    run = []
-
-    def shape(d):
-        if not d.free or not d.limits:
-            return None
-        return (len(d.free), tuple((lo, hi) for _b, lo, hi in d.limits))
-
-    for d in defs + [None]:
-        if (
-            d is not None
-            and run
-            and shape(d) is not None
-            and shape(d) == shape(run[0])
-        ):
-            run.append(d)
-            continue
-        if len(run) > 1 and not all(eligible(e) for e in run):
-            blocked |= {_temp_name(e.target) for e in run}
-        run = [d] if d is not None and shape(d) is not None else []
-
-    # sums that read the same matrix go together: all split or none
-    def matrices(d):
-        return {
-            str(x.base)
-            for x in d.body.atoms(sp.Indexed)
-            if len(x.indices) >= 2
-        }
-
-    sums = [d for d in defs if d.free and d.limits]
-    for d in sums:
-        if _temp_name(d.target) not in blocked and not eligible(d):
-            blocked.add(_temp_name(d.target))
-    changed = True
-    while changed:
-        changed = False
-        held = set().union(
-            *[matrices(d) for d in sums if _temp_name(d.target) in blocked]
-        )
-        for d in sums:
-            if _temp_name(d.target) not in blocked and matrices(d) & held:
-                blocked.add(_temp_name(d.target))
-                changed = True
-
+    blocked = _blocked_sums(state.defs, outs)
     k = 0
-    while k < len(defs):
-        d = defs[k]
-        if _temp_name(d.target) in blocked:
+    while k < len(state.defs):
+        if _temp_name(state.defs[k].target) in blocked:
             k += 1
             continue
-        free = set(d.free)
-        if (
-            not free
-            or len(d.limits) != 1
-            or not isinstance(d.target, sp.Indexed)
-            or not d.present_keys() <= flags_ok
-        ):
-            k += 1
-            continue
-        m, low, high = d.limits[0]
-        body = d.body
-        if (
-            low != 1
-            or str(high) != "nc"
-            or not isinstance(body, sp.Mul)
-            or body.has(sp.Piecewise)
-            or any(isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol))
-        ):
-            k += 1
-            continue
-        adds = [
-            f
-            for f in body.args
-            if isinstance(f, sp.Add) and f.atoms(sp.Idx) & free
-        ]
-        others = [
-            f for f in body.args if not (isinstance(f, sp.Add) and f in adds)
-        ]
-        if len(adds) != 1 or any(f.atoms(sp.Idx) & free for f in others):
-            k += 1
-            continue
-        const = [a for a in adds[0].args if not (a.atoms(sp.Idx) & free)]
-        var = [a for a in adds[0].args if a.atoms(sp.Idx) & free]
-        if not const or not var:
-            k += 1
-            continue
-        weight = sp.Mul(*others)
-        inner = sp.Add(*var)
-        sign = 1
-        if inner.could_extract_minus_sign():
-            inner, sign = -inner, -1
-        position = k
-        new_body, position = vectorise(inner * weight, m, position)
-        if sp.count_ops(new_body) >= sp.count_ops(body):
-            del defs[k:position]  # vectors made for nothing
-            k += 1
-            continue
-        coeff = sp.Add(*const)
-        if not coeff.is_Number:
-            weight, coeff = coeff * weight, sp.S.One
-        s_body, position = vectorise(weight, m, position)
-        key = alpha(s_body, m)
-        scalar = None
-        for e in defs[:position]:
-            if (
-                not e.free
-                and len(e.limits) == 1
-                and e.present_keys() <= flags_ok
-                and isinstance(e.target, sp.Symbol)
-                and tuple(e.limits[0][1:]) == (low, high)
-                and alpha(e.body, e.limits[0][0]) == key
-            ):
-                scalar = e.target
-                break
-        if scalar is None:
-            scalar = _new_shared_temp(namer, [], arrays)
-            defs.insert(
-                position,
-                TempDef(
-                    target=scalar,
-                    free=[],
-                    limits=[(m, low, high)],
-                    body=s_body,
-                ),
-            )
-            position += 1
-        table = d.copy(body=new_body)
-        defs[position] = table
-        name = _temp_name(d.target)
-
-        def reread(expr):
-            base_ = scalar if float(coeff) == 1.0 else coeff * scalar
-            rep = {
-                x: base_ + sign * x
-                for x in expr.atoms(sp.Indexed)
-                if str(x.base) == name
-            }
-            return expr.xreplace(rep) if rep else expr
-
-        for q, e in enumerate(defs):
-            if e is not table:
-                defs[q] = e.copy(body=reread(e.body))
-        outs = [reread(e) for e in outs]
-        k = position + 1
-    return defs, outs
+        k, outs = _split_at(state, k, outs)
+    return state.defs, outs
 
 
 def _split_factored(definition, limits):
