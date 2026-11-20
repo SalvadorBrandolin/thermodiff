@@ -1,4 +1,5 @@
 # Style
+mypy
 flake8-nb
 flake8-black
 flake8-builtins
