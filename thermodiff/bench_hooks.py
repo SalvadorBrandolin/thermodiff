@@ -31,7 +31,9 @@ v3 "full"    True        True     _indexed_cse + the two above
 
 import os
 import time
+import warnings
 
+from thermodiff.codegen.options import CodegenOptions
 from thermodiff.fortran import to_fortran
 from thermodiff.model.emit import build_diff
 from thermodiff.model.ir import build_ir
@@ -1094,6 +1096,40 @@ def _splice_uses(code, uses):
     return "\n".join(lines) + "\n"
 
 
+def _normalised_options(settings, optional_derivatives):
+    """Build the validated options of a variant, silencing the warning.
+
+    The benchmark variants deliberately enable options that some
+    combinations ignore, so the ``UserWarning`` of
+    :meth:`CodegenOptions.validate` is expected noise here; the ignored
+    names are returned instead so that they are still recorded.
+
+    Parameters
+    ----------
+    settings : dict
+        Variant settings as returned by :func:`variant_settings`.
+    optional_derivatives : bool
+        Declare every output as ``optional, intent(out)``.
+
+    Returns
+    -------
+    tuple
+        The normalised :class:`CodegenOptions` and the tuple of the names
+        of the options that were ignored and disabled.
+    """
+    codegen_settings = {
+        key: settings[key]
+        for key in ("array_cse", "share", *_EXTRA_KEYS)
+        if key in settings
+    }
+    options = CodegenOptions.from_legacy(
+        **codegen_settings, optional_derivatives=optional_derivatives
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        return options.validate()
+
+
 def generate_workload(
     model_path,
     workload,
@@ -1135,7 +1171,8 @@ def generate_workload(
         ``share``, ``spliced_uses``, ``path``, ``generation_time_s``,
         ``parse_time_s``, ``diff_time_s``, ``emit_time_s``, ``lines``,
         ``bytes``, ``operation_count``, ``operation_count_tool``,
-        ``n_temporaries`` and ``source`` (the emitted file content).
+        ``n_temporaries``, ``ignored_options`` (names of the options the
+        combination ignored) and ``source`` (the emitted file content).
     """
     workload = _normalise_workload(workload)
     settings = variant_settings(variant)
@@ -1157,7 +1194,10 @@ def generate_workload(
     model_name = ir.model_name or name
     routine = subroutine_name or f"{model_name}_{settings['key']}_{workload}"
 
-    stats = {}
+    options, ignored_options = _normalised_options(
+        settings, optional_derivatives
+    )
+    stats = {"ignored_options": ignored_options}
     phase = time.perf_counter()
     code = to_fortran(
         diff,
@@ -1166,12 +1206,9 @@ def generate_workload(
         subroutine_name=routine,
         integer_args=ir.dimensions,
         module_symbols=ir.imported,
-        optional_derivatives=optional_derivatives,
-        array_cse=settings["array_cse"],
-        share=settings["share"],
+        options=options,
         stats=stats,
         symmetric_params=getattr(ir, "symmetric", ()),
-        **{key: settings[key] for key in _EXTRA_KEYS if key in settings},
     )
     emit_time_s = time.perf_counter() - phase
 
@@ -1197,6 +1234,7 @@ def generate_workload(
         "array_cse": settings["array_cse"],
         "share": settings["share"],
         **{key: settings[key] for key in _EXTRA_KEYS if key in settings},
+        "ignored_options": ignored_options,
         "spliced_uses": list(ir.uses),
         "path": path,
         "generation_time_s": generation_time_s,
