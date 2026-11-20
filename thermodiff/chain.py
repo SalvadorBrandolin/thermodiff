@@ -34,6 +34,10 @@ number outside every summation, pressure as a variable) the caller falls
 back to the plain derivatives.
 """
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+
 import sympy as sp
 
 from thermodiff.diffplz import DiffPlz
@@ -45,9 +49,6 @@ __all__ = [
     "summation_nodes",
     "abstract_component_functions",
 ]
-
-#: index used by the definitions of the component-function vectors
-COMPONENT_SLOT = sp.Idx("ic")
 
 #: derivative attribute -> (variables) ; "n" means a mole-number index
 _ATTR_VARS = {
@@ -160,11 +161,9 @@ def _bound_all(total):
     return bound
 
 
-#: indices used by the definitions of the pair-function matrices
-PAIR_SLOTS = (sp.Idx("ia"), sp.Idx("ib"))
-
-#: prefixes of the generated arrays (changed if the model uses them)
-_PREFIX = {"cmp": "cmp", "mat": "mat"}
+#: keys of :attr:`NameScheme.prefixes`
+CMP_KIND = "cmp"
+MAT_KIND = "mat"
 
 _SLOT_CANDIDATES = [
     "ic",
@@ -184,29 +183,76 @@ _SLOT_CANDIDATES = [
     "vc",
 ]
 _PREFIX_CANDIDATES = {
-    "cmp": ["cmp", "cpf", "cfn", "cvec"],
-    "mat": ["mat", "pmt", "pfn", "pmat"],
+    CMP_KIND: ["cmp", "cpf", "cfn", "cvec"],
+    MAT_KIND: ["mat", "pmt", "pfn", "pmat"],
 }
 
 
-def _configure_names(expression):
+#: structure key under which the scheme of a chain-rule run is returned
+NAME_SCHEME_KEY = "_name_scheme"
+
+
+@dataclass(frozen=True)
+class NameScheme:
+    """Slot index names and array prefixes of one chain-rule run.
+
+    Attributes
+    ----------
+    component_slot : sympy.Idx
+        Index of the definitions of the component-function vectors.
+    pair_slots : tuple of sympy.Idx
+        Indices of the definitions of the pair-function matrices.
+    prefixes : mapping of str to str
+        Prefix of the generated arrays, keyed by :data:`CMP_KIND` and
+        :data:`MAT_KIND`; read-only.
+    """
+
+    component_slot: sp.Idx
+    pair_slots: tuple[sp.Idx, sp.Idx]
+    prefixes: Mapping[str, str]
+
+
+#: the names used when the model does not clash with them
+DEFAULT_NAME_SCHEME = NameScheme(
+    component_slot=sp.Idx("ic"),
+    pair_slots=(sp.Idx("ia"), sp.Idx("ib")),
+    prefixes=MappingProxyType({CMP_KIND: "cmp", MAT_KIND: "mat"}),
+)
+
+
+def _name_scheme(expression: sp.Expr) -> NameScheme:
     """Choose slot indices and array prefixes that the model does not use.
 
     Fortran is case insensitive, so the comparison is done in lower case.
+    When every prefix candidate is used by the model, the default prefix
+    is kept.
+
+    Parameters
+    ----------
+    expression : sympy.Expr
+        The function whose symbols the names must not clash with.
+
+    Returns
+    -------
+    NameScheme
+        The slots and prefixes for this expression.
     """
-    global COMPONENT_SLOT, PAIR_SLOTS
     used = {"nc", "res"}
     used |= {str(x).lower() for x in expression.atoms(sp.Symbol)}
     used |= {str(x).lower() for x in expression.atoms(sp.IndexedBase)}
     used |= {str(x).lower() for x in expression.atoms(sp.Idx)}
     slots = [name for name in _SLOT_CANDIDATES if name not in used]
-    COMPONENT_SLOT = sp.Idx(slots[0])
-    PAIR_SLOTS = (sp.Idx(slots[1]), sp.Idx(slots[2]))
+    prefixes = dict(DEFAULT_NAME_SCHEME.prefixes)
     for kind, candidates in _PREFIX_CANDIDATES.items():
         for prefix in candidates:
             if not any(name.startswith(prefix) for name in used):
-                _PREFIX[kind] = prefix
+                prefixes[kind] = prefix
                 break
+    return NameScheme(
+        component_slot=sp.Idx(slots[0]),
+        pair_slots=(sp.Idx(slots[1]), sp.Idx(slots[2])),
+        prefixes=MappingProxyType(prefixes),
+    )
 
 
 class _Param:
@@ -214,7 +260,7 @@ class _Param:
 
     def __init__(self, name, body, rank, symmetric=False):
         self.name = name
-        self.body = body  # in terms of COMPONENT_SLOT / PAIR_SLOTS
+        self.body = body  # in terms of the name scheme slots
         self.rank = rank
         self.symmetric = symmetric
         self.func = sp.Function(name)
@@ -248,6 +294,7 @@ def abstract_component_functions(
     pairs=True,
     split_sqrt=False,
     table_layout=False,
+    scheme=DEFAULT_NAME_SCHEME,
 ):
     """Abstract per-component and per-pair functions of temperature.
 
@@ -273,6 +320,9 @@ def abstract_component_functions(
     (``G(l, k) = exp(-c(l, k) tau(l, k))`` for ``G_lk``) instead of the
     alphabetical order of the summation indices, so the table is written and
     read in the parameters' own (column-major) layout.
+
+    ``scheme`` gives the slot indices and array prefixes of the new
+    functions (:class:`NameScheme`).
     """
     from thermodiff.fortran import _canonical_symmetric, _swap
 
@@ -290,36 +340,33 @@ def abstract_component_functions(
     def make(body, indices):
         indices = sorted(indices, key=str)
         if len(indices) == 1:
-            canon = body.xreplace({indices[0]: COMPONENT_SLOT})
+            canon = body.xreplace({indices[0]: scheme.component_slot})
             key = ("c", canon)
             if key not in registry:
                 registry[key] = _Param(
-                    f"{_PREFIX['cmp']}{len(registry)}", canon, 1
+                    f"{scheme.prefixes[CMP_KIND]}{len(registry)}", canon, 1
                 )
             return registry[key].func(indices[0], T)
         a, b = indices
-        canon = body.xreplace({a: PAIR_SLOTS[0], b: PAIR_SLOTS[1]})
+        slot_a, slot_b = scheme.pair_slots
+        canon = body.xreplace({a: slot_a, b: slot_b})
         canon = _canonical_symmetric(canon, symmetric_params)
         if (
             table_layout
             and _subscript_order(body, a, b) == (b, a)
-            and _swap(canon, PAIR_SLOTS[0], PAIR_SLOTS[1], symmetric_params)
-            != canon
+            and _swap(canon, slot_a, slot_b, symmetric_params) != canon
         ):
             a, b = b, a
-            canon = body.xreplace({a: PAIR_SLOTS[0], b: PAIR_SLOTS[1]})
+            canon = body.xreplace({a: slot_a, b: slot_b})
             canon = _canonical_symmetric(canon, symmetric_params)
         inner = abstract_component_functions(
-            canon, registry, symmetric_params, pairs=False
+            canon, registry, symmetric_params, pairs=False, scheme=scheme
         )
         key = ("p", canon)
         if key not in registry:
-            sym = (
-                _swap(canon, PAIR_SLOTS[0], PAIR_SLOTS[1], symmetric_params)
-                == canon
-            )
+            sym = _swap(canon, slot_a, slot_b, symmetric_params) == canon
             registry[key] = _Param(
-                f"{_PREFIX['mat']}{len(registry)}", inner, 2, sym
+                f"{scheme.prefixes[MAT_KIND]}{len(registry)}", inner, 2, sym
             )
         if canon.has(T):
             return registry[key].func(a, b, T)
@@ -335,7 +382,7 @@ def abstract_component_functions(
         into per-component functions and a temperature-free pair factor.
         """
         inner = abstract_component_functions(
-            group, registry, symmetric_params, pairs=False
+            group, registry, symmetric_params, pairs=False, scheme=scheme
         )
         expanded = sp.expand_power_base(inner, force=True)
         factors = (
@@ -352,11 +399,13 @@ def abstract_component_functions(
                 else:
                     # e.g. sqrt(cmp0(k, T)): a new component function
                     (index,) = fidx
-                    canon = f.xreplace({index: COMPONENT_SLOT})
+                    canon = f.xreplace({index: scheme.component_slot})
                     key = ("c", canon)
                     if key not in registry:
                         registry[key] = _Param(
-                            f"{_PREFIX['cmp']}{len(registry)}", canon, 1
+                            f"{scheme.prefixes[CMP_KIND]}{len(registry)}",
+                            canon,
+                            1,
                         )
                     out.append(registry[key].func(index, T))
             else:
@@ -431,15 +480,20 @@ def abstract_component_functions(
 
 
 def component_definitions(
-    registry, order, inline_rates=False, pair_cse=False, pair_rates=False
+    registry,
+    order,
+    inline_rates=False,
+    pair_cse=False,
+    pair_rates=False,
+    scheme=DEFAULT_NAME_SCHEME,
 ):
     """Values and temperature derivatives of the abstracted functions.
 
     Returns
     -------
     defs : list of (name, body, rank, symmetric)
-        ``body`` is in terms of :data:`COMPONENT_SLOT` (rank 1) or
-        :data:`PAIR_SLOTS` (rank 2), with the component functions it uses
+        ``body`` is in terms of ``scheme.component_slot`` (rank 1) or
+        ``scheme.pair_slots`` (rank 2), with the component functions it uses
         already replaced by their arrays.  Rank-1 definitions come first.
     mapping : callable
         Replaces the abstract functions and their derivatives by arrays.
@@ -469,7 +523,7 @@ def component_definitions(
                         and d in (1, 2)
                     ):
                         G = pair_dep_rates[str(f.func)].xreplace(
-                            dict(zip(PAIR_SLOTS, idx))
+                            dict(zip(scheme.pair_slots, idx))
                         )
                         m = sp.Indexed(names[(str(f.func), 0)], *idx)
                         if d == 1:
@@ -512,7 +566,9 @@ def component_definitions(
                 continue
             for q in earlier:
                 if q.body.has(T) and q.body != p.body:
-                    new_body = p.body.subs(q.body, q.func(*PAIR_SLOTS, T))
+                    new_body = p.body.subs(
+                        q.body, q.func(*scheme.pair_slots, T)
+                    )
                     if new_body != p.body:
                         p.body = new_body
             earlier.append(p)
@@ -549,11 +605,12 @@ def component_definitions(
             continue
         if G.has(sp.log) or any(len(t.atoms(sp.Idx)) > 1 for t in terms):
             continue
-        ga = sp.Add(*[t for t in terms if PAIR_SLOTS[0] in t.atoms(sp.Idx)])
-        gb = sp.Add(*[t for t in terms if PAIR_SLOTS[1] in t.atoms(sp.Idx)])
+        slot_a, slot_b = scheme.pair_slots
+        ga = sp.Add(*[t for t in terms if slot_a in t.atoms(sp.Idx)])
+        gb = sp.Add(*[t for t in terms if slot_b in t.atoms(sp.Idx)])
         g0 = sp.Add(*[t for t in terms if not t.atoms(sp.Idx)])
-        ca = ga.xreplace({PAIR_SLOTS[0]: COMPONENT_SLOT})
-        cb = gb.xreplace({PAIR_SLOTS[1]: COMPONENT_SLOT})
+        ca = ga.xreplace({slot_a: scheme.component_slot})
+        cb = gb.xreplace({slot_b: scheme.component_slot})
         if sp.simplify(ca - cb) != 0:
             continue
         rate_vecs = []
@@ -591,7 +648,9 @@ def component_definitions(
         for p in params.values():
             if p.rank != rank:
                 continue
-            slots = (COMPONENT_SLOT,) if rank == 1 else PAIR_SLOTS
+            slots = (
+                (scheme.component_slot,) if rank == 1 else scheme.pair_slots
+            )
             arrays_ = [
                 sp.Indexed(names[(p.name, d)], *slots)
                 for d in range(order + 1)
@@ -610,7 +669,7 @@ def component_definitions(
                     )
                 elif p.name in rates:
                     g0, vecs = rates[p.name]
-                    a_, b_ = PAIR_SLOTS
+                    a_, b_ = scheme.pair_slots
                     rate = g0 + vecs[0][a_] + vecs[0][b_]
                     if d == 1:
                         value = arrays_[0] * rate
@@ -647,19 +706,23 @@ def component_definitions(
     return defs, mapping
 
 
-def split_sum_terms(expr):
+def split_sum_terms(expr, scheme=DEFAULT_NAME_SCHEME):
     """Expand summation bodies and split sums of terms into sums of sums.
 
     ``sum_kl n_k n_l (g_k + g_l) M_kl`` becomes
     ``sum_kl n_k g_k n_l M_kl + sum_kl n_k n_l g_l M_kl``; then the factors
     that depend only on the outer index can be moved out of the inner sum
     and every term becomes a dot product with a vector sum
-    (:func:`thermodiff.fortran._nest_double_sums`).  Exact.
+    (:func:`thermodiff.fortran._nest_double_sums`).  Exact.  ``scheme``
+    gives the prefixes of the abstracted arrays, which count as functions
+    of ``T``.
     """
 
     def depends_on_t(e):
         return e.has(T) or any(
-            str(b).startswith((_PREFIX["cmp"], _PREFIX["mat"]))
+            str(b).startswith(
+                (scheme.prefixes[CMP_KIND], scheme.prefixes[MAT_KIND])
+            )
             for b in e.atoms(sp.IndexedBase)
         )
 
@@ -1087,7 +1150,7 @@ def chain_rule_derivatives(
         return None
     if expression.has(P):
         return None
-    _configure_names(expression)
+    scheme = _name_scheme(expression)
     factored = factor_sums(expression)
     outer, nodes = summation_nodes(factored)
     if not nodes:
@@ -1135,6 +1198,7 @@ def chain_rule_derivatives(
                 symmetric_params,
                 split_sqrt=split_sqrt,
                 table_layout=table_layout,
+                scheme=scheme,
             ),
         )
         for symbol, total in nodes
@@ -1331,11 +1395,16 @@ def chain_rule_derivatives(
         inline_rates=split_sums,
         pair_cse=pair_cse,
         pair_rates=pair_rates,
+        scheme=scheme,
     )
     value0 = mapping(resolve(outer)) if sc is None else sc_value
     if split_sums:
-        value0 = split_sum_terms(value0)
-    out = {"value": value0, "_component_defs": defs}
+        value0 = split_sum_terms(value0, scheme)
+    out = {
+        "value": value0,
+        "_component_defs": defs,
+        NAME_SCHEME_KEY: scheme,
+    }
     if sc is not None:
         # the scalars keep the node symbols; the nodes they read go apart
         out["_scalar_defs"] = [
@@ -1349,7 +1418,7 @@ def chain_rule_derivatives(
             if symbol in read:
                 body = mapping(resolve(symbol))
                 if split_sums:
-                    body = split_sum_terms(body)
+                    body = split_sum_terms(body, scheme)
                 nodes_read.append((symbol, body))
         out["_scalar_nodes"] = nodes_read
         out["_scalar_estimate"] = scalar_estimate
@@ -1366,7 +1435,7 @@ def chain_rule_derivatives(
                 value = total_second(x, y)
             value = mapping(resolve(value))
             if split_sums:
-                value = split_sum_terms(value)
+                value = split_sum_terms(value, scheme)
             target[attr] = value
 
     assemble(out)
@@ -1376,7 +1445,7 @@ def chain_rule_derivatives(
         Fk, Fx, F2 = Fk_plain, Fx_plain, F2_plain
         plain = {"value": mapping(resolve(outer))}
         if split_sums:
-            plain["value"] = split_sum_terms(plain["value"])
+            plain["value"] = split_sum_terms(plain["value"], scheme)
         assemble(plain)
         out["_plain"] = plain
     return out

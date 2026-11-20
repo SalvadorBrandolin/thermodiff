@@ -4556,12 +4556,15 @@ def _plain_structure(
     propagated : bool
         Whether ``structured`` carried a ``_plain`` set.
     """
+    from thermodiff.chain import NAME_SCHEME_KEY
+
     if structured is None:
         return _chain_structure(ctx, opts), False
     if "_plain" not in structured:
         return structured, False
     plain = dict(structured["_plain"])
     plain["_component_defs"] = structured["_component_defs"]
+    plain[NAME_SCHEME_KEY] = structured[NAME_SCHEME_KEY]
     return plain, True
 
 
@@ -5047,11 +5050,16 @@ def _emit_code(
     arrays = {}
     component_array_defs = []
     if component_defs:
-        from thermodiff.chain import COMPONENT_SLOT, PAIR_SLOTS
+        from thermodiff.chain import NAME_SCHEME_KEY
 
+        scheme = structured[NAME_SCHEME_KEY]
         for comp_name, comp_body, comp_rank, comp_sym in component_defs:
             arrays[comp_name] = comp_rank
-            free_ = [COMPONENT_SLOT] if comp_rank == 1 else list(PAIR_SLOTS)
+            free_ = (
+                [scheme.component_slot]
+                if comp_rank == 1
+                else list(scheme.pair_slots)
+            )
             base_ = sp.IndexedBase(comp_name, shape=(nc,) * comp_rank)
             component_array_defs.append(
                 {

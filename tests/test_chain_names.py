@@ -29,22 +29,12 @@ PR_W6_E8_SHA256 = (
 
 def configured_names(expression):
     """Return ``(component slot, pair slots, prefixes)`` chosen."""
-    saved = (
-        chain.COMPONENT_SLOT,
-        chain.PAIR_SLOTS,
-        dict(chain._PREFIX),
+    scheme = chain._name_scheme(expression)
+    return (
+        str(scheme.component_slot),
+        tuple(str(slot) for slot in scheme.pair_slots),
+        dict(scheme.prefixes),
     )
-    try:
-        chain._configure_names(expression)
-        return (
-            str(chain.COMPONENT_SLOT),
-            tuple(str(slot) for slot in chain.PAIR_SLOTS),
-            dict(chain._PREFIX),
-        )
-    finally:
-        chain.COMPONENT_SLOT, chain.PAIR_SLOTS = saved[0], saved[1]
-        chain._PREFIX.clear()
-        chain._PREFIX.update(saved[2])
 
 
 def test_free_expression_uses_default_names():
