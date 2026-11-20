@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from benchmarks import td_bench
-from benchmarks.td_bench import hooks
+from benchmarks.td_bench import hooks, registry
 
 SNAPSHOT_PATH = Path(__file__).parent / "data" / "variant_settings.json"
 SNAPSHOT = json.loads(SNAPSHOT_PATH.read_text())
@@ -65,3 +65,17 @@ def test_aliases_cover_snapshot():
     """Every legacy alias target is a resolvable key."""
     for legacy in SNAPSHOT["LEGACY_KEYS"].values():
         assert legacy in SNAPSHOT["resolved"]
+
+
+def test_resolve_settings_walks_parents_and_overrides():
+    """Parent settings come first; a child delta overrides in place."""
+    stages = {
+        entry.key: entry
+        for entry in (
+            registry.stage("root", base=None, one=1, two=2),
+            registry.stage("child", base="root", two=3, three=4),
+        )
+    }
+    resolved = registry.resolve_settings("child", stages)
+    assert list(resolved.items()) == [("one", 1), ("two", 3), ("three", 4)]
+    assert registry.resolve_settings("root", stages) == {"one": 1, "two": 2}
