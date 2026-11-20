@@ -1278,6 +1278,182 @@ def _nest_inner_nodes(nodes):
     return result, inner_map
 
 
+#: derivative attribute -> variable, for the first derivatives of a node
+_FIRST_VARIABLE = MappingProxyType({"dni": "n", "dt": "T", "dv": "V"})
+#: derivative attribute -> pair of variables, for the second derivatives
+_SECOND_VARIABLES = MappingProxyType(
+    {
+        "dnidnj": ("n", "n"),
+        "dt2": ("T", "T"),
+        "dv2": ("V", "V"),
+        "dtdv": ("T", "V"),
+        "dtdni": ("n", "T"),
+        "dvdni": ("n", "V"),
+    }
+)
+#: variable -> attribute of its first derivative
+_FIRST_ATTRIBUTE = MappingProxyType({"n": "dni", "T": "dt", "V": "dv"})
+#: pair of variables (in any order) -> attribute of the second derivative
+_SECOND_ATTRIBUTE = MappingProxyType(
+    {
+        ("n", "n"): "dnidnj",
+        ("T", "T"): "dt2",
+        ("V", "V"): "dv2",
+        ("T", "V"): "dtdv",
+        ("V", "T"): "dtdv",
+        ("n", "T"): "dtdni",
+        ("T", "n"): "dtdni",
+        ("n", "V"): "dvdni",
+        ("V", "n"): "dvdni",
+    }
+)
+
+
+@dataclass(frozen=True)
+class _NestedContext:
+    """Inputs shared by the recursion of :func:`_nested_node_derivatives`.
+
+    Attributes
+    ----------
+    bodies : dict
+        Node symbol -> body, in terms of the inner node symbols.
+    inner_map : dict
+        Node symbol -> set of the inner node symbols of its body.
+    needed : list of str
+        Node derivative attributes to compute.
+    indexes : list
+        Index order of the :class:`~thermodiff.diffplz.DiffPlz`.
+    """
+
+    bodies: dict
+    inner_map: dict
+    needed: list
+    indexes: list
+
+
+def _plain_node_entry(body, needed, indexes):
+    """Return ``{"value": body, attribute: derivative}`` of one body.
+
+    The inner node symbols of ``body`` are held fixed (partial derivatives).
+    """
+    diff = (
+        DiffPlz(
+            body,
+            internal_functions=[],
+            indexes=indexes,
+            name="s",
+            derivatives=needed,
+        )
+        if needed
+        else None
+    )
+    entry = {"value": body}
+    for attr in needed:
+        entry[attr] = _node_derivative(diff, attr)
+    return entry
+
+
+def _first_of(entry, variable, index):
+    """Return the first derivative of ``entry`` in ``variable``.
+
+    For the mole numbers the derivative is renamed to ``index``.
+    """
+    value = entry.get(_FIRST_ATTRIBUTE[variable], sp.S.Zero)
+    if variable == "n" and index != i:
+        value = value.xreplace({i: index})
+    return value
+
+
+def _second_of(entry, variable_x, variable_y):
+    """Return the second derivative of ``entry`` in two variables."""
+    key = _SECOND_ATTRIBUTE[(variable_x, variable_y)]
+    return entry.get(key, sp.S.Zero)
+
+
+def _body_gradient_partials(gradient, kids, firsts, indexes):
+    """Return ``{kid: {attribute: P_attribute}}`` of ``B_k = dS/dZ_k``."""
+    partials = {}
+    for kid in kids:
+        diff = (
+            DiffPlz(
+                gradient[kid],
+                internal_functions=[],
+                indexes=indexes,
+                name="s",
+                derivatives=firsts,
+            )
+            if firsts
+            else None
+        )
+        partials[kid] = {attr: _node_derivative(diff, attr) for attr in firsts}
+    return partials
+
+
+def _total_first_derivative(attr, partial, gradient, kid_d, kids):
+    """``D_x S = P_x + sum_k B_k D_x Z_k``."""
+    variable = _FIRST_VARIABLE[attr]
+    value = partial[attr]
+    for kid in kids:
+        value += gradient[kid] * _first_of(kid_d[kid], variable, i)
+    return value
+
+
+def _total_second_derivative(attr, partial, gradient, partials, kid_d, kids):
+    """``D_xy S`` of the module docstring, for the attribute ``attr``."""
+    variable_x, variable_y = _SECOND_VARIABLES[attr]
+    index_x = i
+    index_y = j if (variable_x == "n" and variable_y == "n") else i
+    value = partial[attr]
+    for kid in kids:
+        pbx = _first_of(partials[kid], variable_x, index_x)
+        pby = _first_of(partials[kid], variable_y, index_y)
+        value += pbx * _first_of(kid_d[kid], variable_y, index_y)
+        value += pby * _first_of(kid_d[kid], variable_x, index_x)
+        for other in kids:
+            value += (
+                sp.diff(gradient[kid], other)
+                * _first_of(kid_d[kid], variable_x, index_x)
+                * _first_of(kid_d[other], variable_y, index_y)
+            )
+        value += gradient[kid] * _second_of(kid_d[kid], variable_x, variable_y)
+    return value
+
+
+def _compute_nested_entry(symbol, context, done):
+    """Return the total derivatives of one node, filling ``done``.
+
+    The inner nodes are computed first (recursively); a node without inner
+    nodes keeps its plain partial derivatives.
+    """
+    if symbol in done:
+        return done[symbol]
+    needed, indexes = context.needed, context.indexes
+    kids = sorted(context.inner_map.get(symbol, ()), key=str)
+    if not kids:
+        done[symbol] = _plain_node_entry(
+            context.bodies[symbol], needed, indexes
+        )
+        return done[symbol]
+    kid_d = {kid: _compute_nested_entry(kid, context, done) for kid in kids}
+    body = context.bodies[symbol]
+    partial = _plain_node_entry(body, needed, indexes)
+    firsts = sorted({attr for attr in needed if attr in _FIRST_VARIABLE})
+    gradient = {kid: sp.diff(body, kid) for kid in kids}
+    partials = _body_gradient_partials(gradient, kids, firsts, indexes)
+    entry = {"value": body}
+    for attr in needed:
+        if attr in _FIRST_VARIABLE:
+            entry[attr] = _total_first_derivative(
+                attr, partial, gradient, kid_d, kids
+            )
+        else:
+            entry[attr] = _total_second_derivative(
+                attr, partial, gradient, partials, kid_d, kids
+            )
+    done[symbol] = entry
+    return entry
+
+
 def _nested_node_derivatives(nodes, inner_map, needed, indexes):
     """Total derivatives of nodes whose bodies contain inner node symbols.
 
@@ -1288,116 +1464,16 @@ def _nested_node_derivatives(nodes, inner_map, needed, indexes):
                + sum_kl B_kl D_x Z_k D_y Z_l + sum_k B_k D_xy Z_k
     Nodes without inner nodes are left to the caller (plain DiffPlz).
     """
-    bodies = dict(nodes)
+    context = _NestedContext(dict(nodes), inner_map, needed, indexes)
     done = {}
-    first = {"dni": "n", "dt": "T", "dv": "V"}
-    second = {
-        "dnidnj": ("n", "n"),
-        "dt2": ("T", "T"),
-        "dv2": ("V", "V"),
-        "dtdv": ("T", "V"),
-        "dtdni": ("n", "T"),
-        "dvdni": ("n", "V"),
-    }
-    attr_of = {"n": "dni", "T": "dt", "V": "dv"}
-
-    def plain(symbol):
-        dz = (
-            DiffPlz(
-                bodies[symbol],
-                internal_functions=[],
-                indexes=indexes,
-                name="s",
-                derivatives=needed,
-            )
-            if needed
-            else None
-        )
-        entry = {"value": bodies[symbol]}
-        for attr in needed:
-            entry[attr] = _node_derivative(dz, attr)
-        return entry
-
-    def first_of(entry, x, index):
-        value = entry.get(attr_of[x], sp.S.Zero)
-        if x == "n" and index != i:
-            value = value.xreplace({i: index})
-        return value
-
-    def second_of(entry, x, y):
-        key = {
-            ("n", "n"): "dnidnj",
-            ("T", "T"): "dt2",
-            ("V", "V"): "dv2",
-            ("T", "V"): "dtdv",
-            ("V", "T"): "dtdv",
-            ("n", "T"): "dtdni",
-            ("T", "n"): "dtdni",
-            ("n", "V"): "dvdni",
-            ("V", "n"): "dvdni",
-        }[(x, y)]
-        return entry.get(key, sp.S.Zero)
-
-    def compute(symbol):
-        if symbol in done:
-            return done[symbol]
-        kids = sorted(inner_map.get(symbol, ()), key=str)
-        if not kids:
-            done[symbol] = plain(symbol)
-            return done[symbol]
-        kid_d = {k: compute(k) for k in kids}
-        body = bodies[symbol]
-        partial = plain(symbol)
-        firsts = sorted({a for a in needed if a in first})
-        B = {k: sp.diff(body, k) for k in kids}
-        PB = {}
-        for k in kids:
-            dz = (
-                DiffPlz(
-                    B[k],
-                    internal_functions=[],
-                    indexes=indexes,
-                    name="s",
-                    derivatives=firsts,
-                )
-                if firsts
-                else None
-            )
-            PB[k] = {a: _node_derivative(dz, a) for a in firsts}
-        entry = {"value": body}
-        for attr in needed:
-            if attr in first:
-                x = first[attr]
-                value = partial[attr]
-                for k in kids:
-                    value += B[k] * first_of(kid_d[k], x, i)
-            else:
-                x, y = second[attr]
-                ix = i
-                iy = j if (x == "n" and y == "n") else i
-                value = partial[attr]
-                for k in kids:
-                    pbx = first_of(PB[k], x, ix)
-                    pby = first_of(PB[k], y, iy)
-                    value += pbx * first_of(kid_d[k], y, iy)
-                    value += pby * first_of(kid_d[k], x, ix)
-                    for l_ in kids:
-                        value += (
-                            sp.diff(B[k], l_)
-                            * first_of(kid_d[k], x, ix)
-                            * first_of(kid_d[l_], y, iy)
-                        )
-                    value += B[k] * second_of(kid_d[k], x, y)
-            entry[attr] = value
-        done[symbol] = entry
-        return entry
-
     for symbol, _ in nodes:
         if inner_map.get(symbol):
-            compute(symbol)
-    return {s_: e for s_, e in done.items() if inner_map.get(s_)} | {
-        s_: done[s_] for s_ in done
-    }
+            _compute_nested_entry(symbol, context, done)
+    return {
+        symbol: entry
+        for symbol, entry in done.items()
+        if inner_map.get(symbol)
+    } | {symbol: done[symbol] for symbol in done}
 
 
 #: functions without a usable symbolic derivative: the outer function falls back
