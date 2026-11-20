@@ -18,7 +18,7 @@ import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable, NamedTuple, cast
 
 
 class ScalarChainMode(enum.Enum):
@@ -432,7 +432,7 @@ def _is_active(options: CodegenOptions, name: str) -> bool:
     value = getattr(options, name)
     if name == "scalar_chain":
         return value in _COERCED_SCALAR_CHAIN
-    return value != getattr(CodegenOptions(), name)
+    return cast(bool, value != getattr(CodegenOptions(), name))
 
 
 def _ignored_names(options: CodegenOptions) -> list[str]:
@@ -597,7 +597,7 @@ def _caller_stacklevel() -> int:
     (``compile_model``, ``emit_module``, the CLI) are skipped, so a warning
     points at the code that called the entry point.
     """
-    frame = sys._getframe(1)
+    frame: types.FrameType | None = sys._getframe(1)
     level = 1
     while frame is not None and _in_entry_point_module(frame):
         frame = frame.f_back
