@@ -36,6 +36,7 @@ import sympy as sp
 from sympy.core.function import DefinedFunction
 from sympy.printing.fortran import fcode
 
+from thermodiff.codegen import CodegenOptions
 from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES, resolve_derivatives
 from thermodiff.thermovars import P, T, V, i, j, n, nc
 
@@ -4364,7 +4365,7 @@ def _sympy_scalar_cse(expressions, namer, arrays):
     return reduced, definitions
 
 
-def to_fortran(
+def _to_fortran_impl(
     diff,
     derivatives=None,
     name=None,
@@ -4427,292 +4428,7 @@ def to_fortran(
     _structured=None,
     _structure_only=False,
 ):
-    """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
-
-    Parameters
-    ----------
-    diff : DiffPlz
-        The differentiated thermodynamic expression.
-    derivatives : str or list of str, optional
-        Derivatives to emit, for example ``["dT", "dV", "dn"]``.  Both the
-        friendly names and the derivative attributes (``["dt", "dv",
-        "dni"]``) are accepted, as well as the groups ``all``, ``none``,
-        ``first`` and ``second`` (see
-        :func:`thermodiff.derivatives.resolve_derivatives`).  By default
-        every non-zero derivative computed by ``diff`` is emitted.
-    name : str, optional
-        Base name used for the generated variables.  Defaults to the
-        ``name`` attribute of ``diff``.
-    subroutine_name : str, optional
-        Name of the generated subroutine.  Defaults to the base name.
-    strict : bool, optional
-        When ``True``, raise a ``ValueError`` if the expression contains
-        internal functions or unresolved derivatives instead of exposing
-        them as input arguments.  By default ``False``.
-    integer_args : list of str, optional
-        Names of extra arguments that must be declared as
-        ``integer, intent(in)`` (for example, extra dimensions).
-    module_symbols : list of str, optional
-        Names that are provided by a ``use`` statement of the enclosing
-        module.  They are neither declared as arguments nor included in
-        the subroutine signature.
-    optional_derivatives : bool, optional
-        When ``True``, every output - the function value included - is
-        declared as a Fortran ``optional`` argument and computed only
-        when the caller passes it.  A shared temporary is skipped
-        whenever none of the outputs that need it is present, so calling
-        the subroutine with a subset of the outputs also skips the work.
-    array_cse : bool, optional
-        When ``True`` (the default), index-dependent sub-expressions that
-        several outputs share are materialised into array temporaries
-        computed a single time (see :func:`_indexed_cse`).  Only
-        sub-expressions of rank up to two are materialised, because a
-        larger temporary costs more than it saves.  Disable the pass to
-        obtain the plain, fully inlined expressions.
-    share : bool, optional
-        When ``True`` (the default), summations and common scalar
-        sub-expressions shared by several outputs are computed a single
-        time as internal temporaries (:func:`_share_sums` and
-        :func:`_common_scalar_cse`).  Set it to ``False`` to disable both
-        sharing passes: every output is then emitted from its own fully
-        inlined expressions and repeated summations are re-evaluated per
-        output.  The benchmark variant "V1 none" is
-        ``array_cse=False, share=False``; "V2 partial" is
-        ``array_cse=False``; "V3 full" is ``array_cse=True``.  The flag
-        only changes the generated body: the signature, the declaration
-        block and the output order are identical for every setting.
-    stats : dict, optional
-        When given, it is filled in place with generation statistics:
-        ``operation_count`` (``sympy.count_ops`` summed over the final
-        output expressions and over the body of every shared temporary),
-        ``operation_count_tool`` (the exact tool/options used) and
-        ``n_temporaries`` (number of shared temporaries emitted).  The
-        count is a symbolic-operation count of the final expressions, not
-        a runtime estimate.
-    share_sums, scalar_cse : bool, optional
-        Fine-grained control of the two passes enabled by ``share``:
-        :func:`_share_sums` and the scalar common sub-expression pass.
-        ``None`` (the default) inherits the value of ``share``.  Used by the
-        ablation study.
-    symmetric_params : iterable of str, optional
-        Names of rank-2 parameters known to be symmetric (declared with the
-        ``symmetric`` attribute in a ``.model`` file).
-    param_symmetry : bool, optional
-        Exploit ``symmetric_params``: canonicalise their subscripts and
-        fold symmetric double summations into a triangular loop (see
-        :func:`_fold_symmetric_sums`).  Off by default.
-    hessian_symmetry : bool, optional
-        Compute only the upper triangle of the composition Hessian
-        ``dfdndn`` (``j >= i``) and mirror it.  Exact by Schwarz' theorem.
-        Off by default.
-    cse_backend : {"thermodiff", "sympy"}, optional
-        Algorithm of the scalar common sub-expression pass.
-    sum_alpha : bool, optional
-        Share summations that are equal up to the names of their bound
-        indices (alpha equivalence), not only syntactically identical ones.
-        Off by default.
-    array_pad : int, optional
-        Extra rows added to the leading dimension of rank-2 array
-        temporaries (``t(nc + pad, nc)``).  Zero (the default) keeps
-        ``t(nc, nc)``.
-    hoist_invariants : bool, optional
-        Move costly sub-expressions that do not depend on every bound index
-        of their summation out of the loop, into temporaries of lower rank
-        (see :func:`_hoist_invariants`).  Off by default.
-    chain_rule : bool, optional
-        Differentiate by the chain rule over the summation nodes of the
-        function, as a hand-written implementation does (see
-        :mod:`thermodiff.chain`).  Falls back to the plain derivatives when
-        the function does not fit the pattern.  Off by default.
-    hoist_loops : bool, optional
-        Group the terms of every loop body over free indices by their
-        index-dependent factors and compute the loop invariants once (see
-        :func:`_hoist_loop_invariants`).  Off by default.
-    sum_free_alpha : bool, optional
-        Share summations equal up to the names of their bound *and free*
-        indices (``sum_k x(i,k)`` and ``sum_l x(j,l)``).  Off by default.
-    fuse_temps : bool, optional
-        Do not materialise cheap rank-2 array temporaries that are only
-        read inside summations: their body is inserted into the summation
-        (see :func:`_fuse_temporaries`).  Off by default.
-    nest_sums : bool, optional
-        Rewrite double sums as dot products with vector sums that other
-        outputs already need (see :func:`_nest_double_sums`).  Off by
-        default.
-    split_sqrt : bool, optional
-        With ``chain_rule``: split ``sqrt(c*A_a*A_b)`` into
-        ``sqrt(c)*sqrt(A_a)*sqrt(A_b)`` for per-component temperature
-        functions.  Assumes they are non-negative (true for the attractive
-        parameters of cubic equations).  Off by default.
-    split_sums : bool, optional
-        With ``chain_rule``: expand summation bodies and split sums of terms
-        into sums, so that each term can become a dot product with a vector
-        sum.  Off by default.
-    nest_shared : bool, optional
-        With ``nest_sums``: also nest double sums whose inner sum is shared
-        by several double sums (not only by an output), and count equal
-        summations once when deciding whether to fuse a temporary.  Off by
-        default.
-    sym_matvec : bool, optional
-        With ``param_symmetry``: emit the vector sums ``v(f) = sum_b
-        P(b,f) R(b)`` with a symmetric ``P`` as a symmetric matrix-vector
-        product that reads only the upper triangle.  Off by default.
-    col_major : bool, optional
-        Order the loops of vector sums and rank-2 tables so that the arrays
-        they read are traversed along columns (see
-        :func:`_prefers_column_order`).  Off by default.
-    pair_cse, pair_rates : bool, optional
-        With ``chain_rule``: write pair functions in terms of earlier ones
-        (``tau*exp(-c tau)`` as ``tau*M``), and write the temperature
-        derivatives of pair functions with a cheap pair-dependent
-        logarithmic rate in place (``M' = M*r_ab``).  Off by default.
-    sum_transpose : bool, optional
-        With ``sum_free_alpha``: reuse a rank-2 summation that is the
-        transpose of another one.  Off by default.
-    sep_sums : bool, optional
-        Distribute products over sums in summation bodies, split the sums
-        and move out the factors that do not depend on the bound index (see
-        :func:`_separate_sums`).  Off by default.
-    sym_rank3 : bool, optional
-        With ``param_symmetry``: also canonicalise symmetric parameters of
-        rank three or more (fully symmetric tensors).  Off by default.
-    nest_general : bool, optional
-        With ``nest_sums``: also nest sums over three or more indices, and
-        use rank-2 summations as inner sums.  Off by default.
-    sym_sum2 : bool, optional
-        With ``param_symmetry``: a rank-2 summation whose body is symmetric
-        in its two free indices is computed on the upper triangle and
-        mirrored.  Off by default.
-    cse_expensive : bool, optional
-        The indexed CSE extracts a costly single-operation sub-expression
-        (``log``, ``exp``, a root) already when it is used twice.  Off by
-        default.
-    fuse_loops : bool, optional
-        Merge consecutive vector sums with the same loop structure into one
-        loop nest (see :func:`_fuse_loop_nests`); only without optional
-        outputs.  Off by default.
-    nested_nodes : bool, optional
-        With ``chain_rule``: index-free summations nested inside a node
-        become nodes too, and derivatives are composed through them (see
-        :func:`thermodiff.chain._nest_inner_nodes`).  Off by default.
-    sym_perm : bool, optional
-        Rewrite the subscripts of ``symmetric`` parameters inside loop nests
-        so that the innermost loop index comes first (contiguous access).
-        Exact by symmetry; applied after every other pass.  Off by default.
-    fuse_guard : bool, optional
-        With ``fuse_temps``: never inline an expensive rank-2 temporary
-        (transcendental body) that two or more different summations read,
-        nested ones included.  Off by default.
-    nest_cost : bool, optional
-        With ``nest_sums`` and ``nest_general``: nest every sum over three or
-        more indices into an inner rank-2 table, even when no other output
-        shares it.  Off by default.
-    comp_fuse : bool, optional
-        Fuse consecutive per-component maps (``cmp0``, ``cmp0_T``, ...) into
-        one loop with a per-element common sub-expression elimination.
-        Only without ``optional_derivatives``.  Off by default.
-    dummy_canon : bool, optional
-        Merge the terms of a summation over two or three indices that are
-        images of each other under a renaming of the bound indices (e.g.
-        ``(b_k + b_l + b_m)`` with a symmetric tensor).  Exact.  Off by
-        default.
-    float_canon : bool, optional
-        Round every floating-point constant to its double value with a single
-        representation before the common sub-expression passes.  Off by
-        default.
-    contiguous_args : bool, optional
-        Declare every assumed-shape array argument (parameters, mole numbers
-        and outputs) ``contiguous``, so the compiler can drop the stride
-        arithmetic and the multi-versioned loops.  A caller that passes a
-        non-contiguous section gets a copy-in/copy-out (still correct).
-        Off by default.
-    fuse_outer : bool, optional
-        Fuse consecutive per-component maps and scalar reductions that share
-        the outer loop ``1..nc`` into one loop.  Only without
-        ``optional_derivatives``.  Off by default.
-    fuse_libm_guard : bool, optional
-        With ``fuse_outer``, never fuse a double reduction into the outer loop
-        of a map that calls ``exp``, ``log``, ``sqrt`` or a real power, so the
-        map stays vectorisable.  Off by default.
-    keep_libm_tables : bool, optional
-        With ``fuse_temps``, never inline a rank-2 temporary that calls a libm
-        routine into a summation; it stays a table computed by its own map
-        loop.  Off by default.
-    table_layout : bool, optional
-        With ``chain_rule``, store a non-symmetric pair function in the
-        subscript order of the parameters it reads (``G(l, k)`` for
-        ``exp(-c_lk tau_lk)``) instead of the alphabetical order of the
-        summation indices, so the table is written contiguously and the sums
-        that read it take the contiguous inner index; with ``col_major`` a
-        rank-2 sum that then reads its tables with the bound index last
-        (``sum_k G(i, k) H(j, k)``) is emitted in ``jki`` order.  Off by
-        default.
-    lowrank_hess : bool or "sym", optional
-        Assemble a rank-2 output (the composition Hessian) whose residual has
-        separable terms ``c F(i) G(j)`` in rank-k form: the terms are grouped
-        by the factor over one index, ``sum_l r_l(i) G_l(j)``, with the
-        coefficient vectors ``r_l`` computed once (O(nc)); terms over one
-        index and pair terms are kept.  Applied only when it lowers the
-        per-element operation count.  ``True`` emits the full square in
-        column order without mirror; ``"sym"`` keeps the triangle and mirror
-        of ``hessian_symmetry``.  Only without ``optional_derivatives``.
-        Off by default.
-    drop_pair_tables : bool, optional
-        Do not materialise a rank-2 table read only by scalar reductions (one
-        double, triangular reduction and its diagonal sums) whose body calls
-        no libm routine: its body is inlined there.  In the scalar double
-        reductions the factors over the outer index are applied once per
-        outer iteration and the products over the inner index only become
-        vectors.  With ``fuse_libm_guard`` a single reduction that calls a
-        libm routine does not share the outer loop of a double reduction
-        either.  Only without ``optional_derivatives``.  Off by default.
-    share_elementwise : bool, optional
-        A costly rank-1 sub-expression (``log``, ``exp``, a root of a
-        per-component expression) read in two or more places -- the body of a
-        scalar reduction over ``k`` and an output over ``i`` -- is computed
-        once as a vector that every place reads.  Occurrences are compared up
-        to the index name and to the spelling of their scalar prefactors
-        (``x/y`` and ``(1/y)*x``); differently spelt scalar temporaries of the
-        shared occurrences are merged.  Only without
-        ``optional_derivatives``.  Off by default.
-    scalar_chain : bool, optional
-        With ``chain_rule``, compute the partial derivatives of the outer
-        function ``F(S_1, ..., S_m, V, T)`` by forward second-order
-        propagation over its expression DAG, followed by one common
-        sub-expression elimination, instead of differentiating the expanded
-        ``F`` (see :func:`thermodiff.chain._scalar_chain`).  They become
-        scalar temporaries computed after the reductions they read, and the
-        outputs read them.  Falls back to the plain path when ``F`` is not
-        smooth (``Piecewise``, ``Max`` ...).  ``"cost"`` generates the kernel
-        both ways and keeps the one with the lower ``operation_count``
-        (``stats["scalar_chain_used"]`` tells which).  With ``"estimate"``
-        the choice is made before the array pipeline, from the operation
-        counts of the plain partials of ``F`` (after one CSE) and of the
-        propagated definitions, so the pipeline runs once.  Only without
-        ``optional_derivatives``.  Off by default.
-    split_affine : bool, optional
-        In a summation with free indices, ``sum_m (c - P(m, k, l)) w(m)``
-        with ``c`` and ``w`` independent of the free indices becomes
-        ``c*S - sum_m P w``: the scalar ``S = sum_m w(m)`` is computed once
-        and the readers of the table read ``S - t``, so the innermost body is
-        one multiply-add; products of factors over the bound index only
-        become vectors (see :func:`_split_affine`).  Applied only when the
-        body gets cheaper; only without ``optional_derivatives``.  Off by
-        default.
-    split_acc : int or bool, optional
-        ``2``: in the inner loop of a symmetric rank-2 table filled by a sum
-        that reads a parameter of rank three (the O(N^3) nest of CMR), use two
-        scalar partial accumulators per sum (even and odd ``m``, one remainder
-        iteration, then their sum), so that gcc vectorises the reduction
-        without ``-ffast-math`` (reportes/brechas/ronda3-cmr-o3.md).  Changes
-        the summation order.  Only without ``optional_derivatives``.  Off by
-        default.
-
-    Returns
-    -------
-    str
-        The free-form Fortran source code.
-    """
+    """Generate the subroutine from legacy keywords (see ``to_fortran``)."""
     if scalar_chain in ("cost", "estimate") and not (
         chain_rule and not optional_derivatives
     ):
@@ -4721,7 +4437,7 @@ def to_fortran(
         # one pass of the array pipeline: the path is chosen from the operation
         # estimates of the two scalar blocks made by the chain-rule step
         settings = dict(locals())
-        structured_ = to_fortran(
+        structured_ = _to_fortran_impl(
             **dict(settings, scalar_chain=True, _structure_only=True)
         )
         estimate = (structured_ or {}).get("_scalar_estimate")
@@ -4729,7 +4445,7 @@ def to_fortran(
         # pipeline it is the cheaper path in every case checked (7 models)
         use = estimate is not None and estimate[1] <= 1.1 * estimate[0]
         if use:
-            code = to_fortran(
+            code = _to_fortran_impl(
                 **dict(settings, scalar_chain=True, _structured=structured_)
             )
         else:
@@ -4737,7 +4453,7 @@ def to_fortran(
             if structured_ is not None and "_plain" in structured_:
                 plain_ = dict(structured_["_plain"])
                 plain_["_component_defs"] = structured_["_component_defs"]
-            code = to_fortran(
+            code = _to_fortran_impl(
                 **dict(settings, scalar_chain=False, _structured=plain_)
             )
         if stats is not None:
@@ -4749,7 +4465,7 @@ def to_fortran(
         # loops) has fewer operations; the loops are the same by construction
         settings = dict(locals())
         stats_sc = {}
-        code_sc = to_fortran(
+        code_sc = _to_fortran_impl(
             **dict(settings, scalar_chain=True, stats=stats_sc)
         )
         structured_ = stats_sc.pop("_structured", None)
@@ -4759,7 +4475,7 @@ def to_fortran(
             plain_["_component_defs"] = structured_["_component_defs"]
             propagated = True
         stats_plain = {}
-        code_plain = to_fortran(
+        code_plain = _to_fortran_impl(
             **dict(
                 settings,
                 scalar_chain=False,
@@ -5537,3 +5253,353 @@ def to_fortran(
 
     _SYM_RANK3[0] = False
     return "\n".join(lines)
+
+
+def to_fortran(
+    diff,
+    derivatives=None,
+    name=None,
+    subroutine_name=None,
+    integer_args=None,
+    module_symbols=None,
+    symmetric_params=(),
+    stats=None,
+    options=None,
+    **legacy,
+):
+    """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
+
+    The behaviour options can be given as a :class:`CodegenOptions`
+    (``options``), as the legacy keywords documented below, or both.  The
+    resolved options are validated on every call: options that the
+    generator would silently ignore for the chosen combination are
+    disabled and reported in one ``UserWarning`` (see
+    :meth:`CodegenOptions.validate`).  For ready-made option sets use
+    ``CodegenOptions.from_preset("standard")``.
+
+    Parameters
+    ----------
+    diff : DiffPlz
+        The differentiated thermodynamic expression.
+    derivatives : str or list of str, optional
+        Derivatives to emit, for example ``["dT", "dV", "dn"]``.  Both the
+        friendly names and the derivative attributes (``["dt", "dv",
+        "dni"]``) are accepted, as well as the groups ``all``, ``none``,
+        ``first`` and ``second`` (see
+        :func:`thermodiff.derivatives.resolve_derivatives`).  By default
+        every non-zero derivative computed by ``diff`` is emitted.
+    name : str, optional
+        Base name used for the generated variables.  Defaults to the
+        ``name`` attribute of ``diff``.
+    subroutine_name : str, optional
+        Name of the generated subroutine.  Defaults to the base name.
+    strict : bool, optional
+        When ``True``, raise a ``ValueError`` if the expression contains
+        internal functions or unresolved derivatives instead of exposing
+        them as input arguments.  By default ``False``.
+    integer_args : list of str, optional
+        Names of extra arguments that must be declared as
+        ``integer, intent(in)`` (for example, extra dimensions).
+    module_symbols : list of str, optional
+        Names that are provided by a ``use`` statement of the enclosing
+        module.  They are neither declared as arguments nor included in
+        the subroutine signature.
+    optional_derivatives : bool, optional
+        When ``True``, every output - the function value included - is
+        declared as a Fortran ``optional`` argument and computed only
+        when the caller passes it.  A shared temporary is skipped
+        whenever none of the outputs that need it is present, so calling
+        the subroutine with a subset of the outputs also skips the work.
+    array_cse : bool, optional
+        When ``True`` (the default), index-dependent sub-expressions that
+        several outputs share are materialised into array temporaries
+        computed a single time (see :func:`_indexed_cse`).  Only
+        sub-expressions of rank up to two are materialised, because a
+        larger temporary costs more than it saves.  Disable the pass to
+        obtain the plain, fully inlined expressions.
+    share : bool, optional
+        When ``True`` (the default), summations and common scalar
+        sub-expressions shared by several outputs are computed a single
+        time as internal temporaries (:func:`_share_sums` and
+        :func:`_common_scalar_cse`).  Set it to ``False`` to disable both
+        sharing passes: every output is then emitted from its own fully
+        inlined expressions and repeated summations are re-evaluated per
+        output.  The benchmark variant "V1 none" is
+        ``array_cse=False, share=False``; "V2 partial" is
+        ``array_cse=False``; "V3 full" is ``array_cse=True``.  The flag
+        only changes the generated body: the signature, the declaration
+        block and the output order are identical for every setting.
+    stats : dict, optional
+        When given, it is filled in place with generation statistics:
+        ``operation_count`` (``sympy.count_ops`` summed over the final
+        output expressions and over the body of every shared temporary),
+        ``operation_count_tool`` (the exact tool/options used) and
+        ``n_temporaries`` (number of shared temporaries emitted).  The
+        count is a symbolic-operation count of the final expressions, not
+        a runtime estimate.
+    share_sums, scalar_cse : bool, optional
+        Fine-grained control of the two passes enabled by ``share``:
+        :func:`_share_sums` and the scalar common sub-expression pass.
+        ``None`` (the default) inherits the value of ``share``.  Used by the
+        ablation study.
+    symmetric_params : iterable of str, optional
+        Names of rank-2 parameters known to be symmetric (declared with the
+        ``symmetric`` attribute in a ``.model`` file).
+    param_symmetry : bool, optional
+        Exploit ``symmetric_params``: canonicalise their subscripts and
+        fold symmetric double summations into a triangular loop (see
+        :func:`_fold_symmetric_sums`).  Off by default.
+    hessian_symmetry : bool, optional
+        Compute only the upper triangle of the composition Hessian
+        ``dfdndn`` (``j >= i``) and mirror it.  Exact by Schwarz' theorem.
+        Off by default.
+    cse_backend : {"thermodiff", "sympy"}, optional
+        Algorithm of the scalar common sub-expression pass.
+    sum_alpha : bool, optional
+        Share summations that are equal up to the names of their bound
+        indices (alpha equivalence), not only syntactically identical ones.
+        Off by default.
+    array_pad : int, optional
+        Extra rows added to the leading dimension of rank-2 array
+        temporaries (``t(nc + pad, nc)``).  Zero (the default) keeps
+        ``t(nc, nc)``.
+    hoist_invariants : bool, optional
+        Move costly sub-expressions that do not depend on every bound index
+        of their summation out of the loop, into temporaries of lower rank
+        (see :func:`_hoist_invariants`).  Off by default.
+    chain_rule : bool, optional
+        Differentiate by the chain rule over the summation nodes of the
+        function, as a hand-written implementation does (see
+        :mod:`thermodiff.chain`).  Falls back to the plain derivatives when
+        the function does not fit the pattern.  Off by default.
+    hoist_loops : bool, optional
+        Group the terms of every loop body over free indices by their
+        index-dependent factors and compute the loop invariants once (see
+        :func:`_hoist_loop_invariants`).  Off by default.
+    sum_free_alpha : bool, optional
+        Share summations equal up to the names of their bound *and free*
+        indices (``sum_k x(i,k)`` and ``sum_l x(j,l)``).  Off by default.
+    fuse_temps : bool, optional
+        Do not materialise cheap rank-2 array temporaries that are only
+        read inside summations: their body is inserted into the summation
+        (see :func:`_fuse_temporaries`).  Off by default.
+    nest_sums : bool, optional
+        Rewrite double sums as dot products with vector sums that other
+        outputs already need (see :func:`_nest_double_sums`).  Off by
+        default.
+    split_sqrt : bool, optional
+        With ``chain_rule``: split ``sqrt(c*A_a*A_b)`` into
+        ``sqrt(c)*sqrt(A_a)*sqrt(A_b)`` for per-component temperature
+        functions.  Assumes they are non-negative (true for the attractive
+        parameters of cubic equations).  Off by default.
+    split_sums : bool, optional
+        With ``chain_rule``: expand summation bodies and split sums of terms
+        into sums, so that each term can become a dot product with a vector
+        sum.  Off by default.
+    nest_shared : bool, optional
+        With ``nest_sums``: also nest double sums whose inner sum is shared
+        by several double sums (not only by an output), and count equal
+        summations once when deciding whether to fuse a temporary.  Off by
+        default.
+    sym_matvec : bool, optional
+        With ``param_symmetry``: emit the vector sums ``v(f) = sum_b
+        P(b,f) R(b)`` with a symmetric ``P`` as a symmetric matrix-vector
+        product that reads only the upper triangle.  Off by default.
+    col_major : bool, optional
+        Order the loops of vector sums and rank-2 tables so that the arrays
+        they read are traversed along columns (see
+        :func:`_prefers_column_order`).  Off by default.
+    pair_cse, pair_rates : bool, optional
+        With ``chain_rule``: write pair functions in terms of earlier ones
+        (``tau*exp(-c tau)`` as ``tau*M``), and write the temperature
+        derivatives of pair functions with a cheap pair-dependent
+        logarithmic rate in place (``M' = M*r_ab``).  Off by default.
+    sum_transpose : bool, optional
+        With ``sum_free_alpha``: reuse a rank-2 summation that is the
+        transpose of another one.  Off by default.
+    sep_sums : bool, optional
+        Distribute products over sums in summation bodies, split the sums
+        and move out the factors that do not depend on the bound index (see
+        :func:`_separate_sums`).  Off by default.
+    sym_rank3 : bool, optional
+        With ``param_symmetry``: also canonicalise symmetric parameters of
+        rank three or more (fully symmetric tensors).  Off by default.
+    nest_general : bool, optional
+        With ``nest_sums``: also nest sums over three or more indices, and
+        use rank-2 summations as inner sums.  Off by default.
+    sym_sum2 : bool, optional
+        With ``param_symmetry``: a rank-2 summation whose body is symmetric
+        in its two free indices is computed on the upper triangle and
+        mirrored.  Off by default.
+    cse_expensive : bool, optional
+        The indexed CSE extracts a costly single-operation sub-expression
+        (``log``, ``exp``, a root) already when it is used twice.  Off by
+        default.
+    fuse_loops : bool, optional
+        Merge consecutive vector sums with the same loop structure into one
+        loop nest (see :func:`_fuse_loop_nests`); only without optional
+        outputs.  Off by default.
+    nested_nodes : bool, optional
+        With ``chain_rule``: index-free summations nested inside a node
+        become nodes too, and derivatives are composed through them (see
+        :func:`thermodiff.chain._nest_inner_nodes`).  Off by default.
+    sym_perm : bool, optional
+        Rewrite the subscripts of ``symmetric`` parameters inside loop nests
+        so that the innermost loop index comes first (contiguous access).
+        Exact by symmetry; applied after every other pass.  Off by default.
+    fuse_guard : bool, optional
+        With ``fuse_temps``: never inline an expensive rank-2 temporary
+        (transcendental body) that two or more different summations read,
+        nested ones included.  Off by default.
+    nest_cost : bool, optional
+        With ``nest_sums`` and ``nest_general``: nest every sum over three or
+        more indices into an inner rank-2 table, even when no other output
+        shares it.  Off by default.
+    comp_fuse : bool, optional
+        Fuse consecutive per-component maps (``cmp0``, ``cmp0_T``, ...) into
+        one loop with a per-element common sub-expression elimination.
+        Only without ``optional_derivatives``.  Off by default.
+    dummy_canon : bool, optional
+        Merge the terms of a summation over two or three indices that are
+        images of each other under a renaming of the bound indices (e.g.
+        ``(b_k + b_l + b_m)`` with a symmetric tensor).  Exact.  Off by
+        default.
+    float_canon : bool, optional
+        Round every floating-point constant to its double value with a single
+        representation before the common sub-expression passes.  Off by
+        default.
+    contiguous_args : bool, optional
+        Declare every assumed-shape array argument (parameters, mole numbers
+        and outputs) ``contiguous``, so the compiler can drop the stride
+        arithmetic and the multi-versioned loops.  A caller that passes a
+        non-contiguous section gets a copy-in/copy-out (still correct).
+        Off by default.
+    fuse_outer : bool, optional
+        Fuse consecutive per-component maps and scalar reductions that share
+        the outer loop ``1..nc`` into one loop.  Only without
+        ``optional_derivatives``.  Off by default.
+    fuse_libm_guard : bool, optional
+        With ``fuse_outer``, never fuse a double reduction into the outer loop
+        of a map that calls ``exp``, ``log``, ``sqrt`` or a real power, so the
+        map stays vectorisable.  Off by default.
+    keep_libm_tables : bool, optional
+        With ``fuse_temps``, never inline a rank-2 temporary that calls a libm
+        routine into a summation; it stays a table computed by its own map
+        loop.  Off by default.
+    table_layout : bool, optional
+        With ``chain_rule``, store a non-symmetric pair function in the
+        subscript order of the parameters it reads (``G(l, k)`` for
+        ``exp(-c_lk tau_lk)``) instead of the alphabetical order of the
+        summation indices, so the table is written contiguously and the sums
+        that read it take the contiguous inner index; with ``col_major`` a
+        rank-2 sum that then reads its tables with the bound index last
+        (``sum_k G(i, k) H(j, k)``) is emitted in ``jki`` order.  Off by
+        default.
+    lowrank_hess : bool or "sym", optional
+        Assemble a rank-2 output (the composition Hessian) whose residual has
+        separable terms ``c F(i) G(j)`` in rank-k form: the terms are grouped
+        by the factor over one index, ``sum_l r_l(i) G_l(j)``, with the
+        coefficient vectors ``r_l`` computed once (O(nc)); terms over one
+        index and pair terms are kept.  Applied only when it lowers the
+        per-element operation count.  ``True`` emits the full square in
+        column order without mirror; ``"sym"`` keeps the triangle and mirror
+        of ``hessian_symmetry``.  Only without ``optional_derivatives``.
+        Off by default.
+    drop_pair_tables : bool, optional
+        Do not materialise a rank-2 table read only by scalar reductions (one
+        double, triangular reduction and its diagonal sums) whose body calls
+        no libm routine: its body is inlined there.  In the scalar double
+        reductions the factors over the outer index are applied once per
+        outer iteration and the products over the inner index only become
+        vectors.  With ``fuse_libm_guard`` a single reduction that calls a
+        libm routine does not share the outer loop of a double reduction
+        either.  Only without ``optional_derivatives``.  Off by default.
+    share_elementwise : bool, optional
+        A costly rank-1 sub-expression (``log``, ``exp``, a root of a
+        per-component expression) read in two or more places -- the body of a
+        scalar reduction over ``k`` and an output over ``i`` -- is computed
+        once as a vector that every place reads.  Occurrences are compared up
+        to the index name and to the spelling of their scalar prefactors
+        (``x/y`` and ``(1/y)*x``); differently spelt scalar temporaries of the
+        shared occurrences are merged.  Only without
+        ``optional_derivatives``.  Off by default.
+    scalar_chain : bool, optional
+        With ``chain_rule``, compute the partial derivatives of the outer
+        function ``F(S_1, ..., S_m, V, T)`` by forward second-order
+        propagation over its expression DAG, followed by one common
+        sub-expression elimination, instead of differentiating the expanded
+        ``F`` (see :func:`thermodiff.chain._scalar_chain`).  They become
+        scalar temporaries computed after the reductions they read, and the
+        outputs read them.  Falls back to the plain path when ``F`` is not
+        smooth (``Piecewise``, ``Max`` ...).  ``"cost"`` generates the kernel
+        both ways and keeps the one with the lower ``operation_count``
+        (``stats["scalar_chain_used"]`` tells which).  With ``"estimate"``
+        the choice is made before the array pipeline, from the operation
+        counts of the plain partials of ``F`` (after one CSE) and of the
+        propagated definitions, so the pipeline runs once.  Only without
+        ``optional_derivatives``.  Off by default.
+    split_affine : bool, optional
+        In a summation with free indices, ``sum_m (c - P(m, k, l)) w(m)``
+        with ``c`` and ``w`` independent of the free indices becomes
+        ``c*S - sum_m P w``: the scalar ``S = sum_m w(m)`` is computed once
+        and the readers of the table read ``S - t``, so the innermost body is
+        one multiply-add; products of factors over the bound index only
+        become vectors (see :func:`_split_affine`).  Applied only when the
+        body gets cheaper; only without ``optional_derivatives``.  Off by
+        default.
+    split_acc : int or bool, optional
+        ``2``: in the inner loop of a symmetric rank-2 table filled by a sum
+        that reads a parameter of rank three (the O(N^3) nest of CMR), use two
+        scalar partial accumulators per sum (even and odd ``m``, one remainder
+        iteration, then their sum), so that gcc vectorises the reduction
+        without ``-ffast-math`` (reportes/brechas/ronda3-cmr-o3.md).  Changes
+        the summation order.  Only without ``optional_derivatives``.  Off by
+        default.
+
+    options : CodegenOptions, optional
+        Behaviour options.  Defaults to ``CodegenOptions()``, that is the
+        defaults of the keywords below.  Keywords passed explicitly in the
+        same call override the matching field of ``options``.
+    **legacy
+        Behaviour keywords, documented in the entries of this section that
+        follow the ``symmetric_params`` entry and in the field names of
+        :class:`CodegenOptions` (``strict``, ``optional_derivatives``,
+        ``array_cse``, ``share``, ``chain_rule``, ...).  Each overrides the
+        field of the same name.  An unknown keyword raises ``TypeError``.
+
+    Returns
+    -------
+    str
+        The free-form Fortran source code.
+
+    Warns
+    -----
+    UserWarning
+        Once per call, when validation disables ignored options.
+
+    Raises
+    ------
+    TypeError
+        For an unknown keyword.
+    ValueError
+        For an invalid option value (see
+        :meth:`CodegenOptions.validate`).
+    """
+    base = CodegenOptions() if options is None else options
+    resolved = base.replace(**legacy) if legacy else base
+    normalised, _ignored = resolved.validate()
+    return _to_fortran_impl(
+        diff,
+        derivatives=derivatives,
+        name=name,
+        subroutine_name=subroutine_name,
+        integer_args=integer_args,
+        module_symbols=module_symbols,
+        symmetric_params=symmetric_params,
+        stats=stats,
+        **normalised.to_legacy(),
+    )
+
+
+# Keep the full keyword list visible to ``inspect.signature`` and IDEs.
+to_fortran.__wrapped__ = _to_fortran_impl
