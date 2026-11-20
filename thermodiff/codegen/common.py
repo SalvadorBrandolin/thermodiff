@@ -1,6 +1,9 @@
 """Shared helpers for the Fortran code generator."""
 
 import re
+from collections.abc import Callable, Container, Iterable
+from collections.abc import Set as AbstractSet
+from typing import TypeVar
 
 import sympy as sp
 from sympy.printing.fortran import fcode
@@ -66,15 +69,20 @@ def _sanitize(name: str) -> str:
     return clean
 
 
+_K = TypeVar("_K")
+_V = TypeVar("_V")
+
 #: Memo entry of :func:`_free_indices`: the ``Idx`` atoms of a subtree and
 #: the summation variables of every ``Sum`` inside it.
-_IndexInfo = tuple[frozenset, frozenset]
+_IndexInfo = tuple[frozenset[sp.Idx], frozenset[sp.Idx]]
 
 
-def _node_index_info(node: sp.Basic, memo: dict) -> _IndexInfo:
+def _node_index_info(
+    node: sp.Basic, memo: dict[sp.Basic, _IndexInfo]
+) -> _IndexInfo:
     """Combine the memoised index info of the children of ``node``."""
-    indices = set()
-    bound = set()
+    indices: set[sp.Idx] = set()
+    bound: set[sp.Idx] = set()
     for child in node.args:
         child_indices, child_bound = memo[child]
         indices |= child_indices
@@ -86,7 +94,7 @@ def _node_index_info(node: sp.Basic, memo: dict) -> _IndexInfo:
     return frozenset(indices), frozenset(bound)
 
 
-def _fill_index_memo(expr: sp.Basic, memo: dict) -> None:
+def _fill_index_memo(expr: sp.Basic, memo: dict[sp.Basic, _IndexInfo]) -> None:
     """Memoise the index info of every subtree of ``expr``, bottom-up."""
     stack = [expr]
     while stack:
@@ -102,7 +110,9 @@ def _fill_index_memo(expr: sp.Basic, memo: dict) -> None:
         stack.pop()
 
 
-def _free_indices(expr: sp.Expr, memo: dict | None = None) -> set:
+def _free_indices(
+    expr: sp.Expr, memo: dict[sp.Basic, _IndexInfo] | None = None
+) -> set[sp.Idx]:
     """Return the indices that are free in ``expr``.
 
     An index is free when it is not the summation index of any
@@ -123,6 +133,7 @@ def _free_indices(expr: sp.Expr, memo: dict | None = None) -> set:
     set
         A new set with the free indices.
     """
+    bound: AbstractSet[sp.Idx]
     if memo is None:
         bound = {
             limit[0] for total in expr.atoms(sp.Sum) for limit in total.limits
@@ -133,14 +144,14 @@ def _free_indices(expr: sp.Expr, memo: dict | None = None) -> set:
     return set(indices - bound)
 
 
-def _order_free(free: set, indexes) -> list:
+def _order_free(free: set[sp.Idx], indexes: Iterable[sp.Idx]) -> list[sp.Idx]:
     """Order free indices deterministically.
 
     Derivative indices (``i`` and ``j``) come first, then the user supplied
     ``indexes`` in their given order, then any remaining index sorted by
     name.
     """
-    ordered = []
+    ordered: list[sp.Idx] = []
     for idx in (i, j):
         if idx in free and idx not in ordered:
             ordered.append(idx)
@@ -167,9 +178,9 @@ def _kron_to_piecewise(expr: sp.Expr) -> sp.Expr:
 class _Namer:
     """Generate sequential temporary variable names."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._count = 0
-        self.created = []
+        self.created: list[sp.Symbol] = []
 
     def __call__(self, prefix: str = "t") -> sp.Symbol:
         self._count += 1
@@ -180,16 +191,18 @@ class _Namer:
 
 def _print_expr(expr: sp.Expr) -> str:
     """Print ``expr`` as a single Fortran expression."""
-    return fcode(expr, **_FCODE_SETTINGS).strip()
+    return str(fcode(expr, **_FCODE_SETTINGS).strip())
 
 
-def _indent_lines(text: str, depth: int) -> list:
+def _indent_lines(text: str, depth: int) -> list[str]:
     """Indent every non-empty line of ``text`` by ``depth`` levels."""
     prefix = _INDENT * depth
     return [prefix + line for line in text.splitlines() if line.strip()]
 
 
-def _new_shared_temp(namer, free_order, arrays):
+def _new_shared_temp(
+    namer: _Namer, free_order: list[sp.Idx], arrays: dict[str, int]
+) -> sp.Basic:
     """Create a temporary for a shared sub-expression.
 
     Parameters
@@ -235,12 +248,14 @@ _AUX_INDEX_NAMES = ["p", "q", "r", "u", "w", "x", "y", "z"] + [
 _MAX_ARRAY_CSE_RANK = 2
 
 
-def _index_symbols(expr) -> list:
+def _index_symbols(expr: sp.Basic) -> list[sp.Idx]:
     """Return the model indices appearing in ``expr``, sorted by name."""
     return sorted(expr.atoms(sp.Idx), key=str)
 
 
-def _index_set(expr, memo: dict) -> frozenset:
+def _index_set(
+    expr: sp.Basic, memo: dict[sp.Basic, frozenset[sp.Idx]]
+) -> frozenset[sp.Idx]:
     """Return the ``sp.Idx`` atoms of ``expr``, memoised bottom-up.
 
     Parameters
@@ -276,19 +291,23 @@ def _index_set(expr, memo: dict) -> frozenset:
     return memo[expr]
 
 
-def _sorted_indices(expr, memo: dict) -> list:
+def _sorted_indices(
+    expr: sp.Basic, memo: dict[sp.Basic, frozenset[sp.Idx]]
+) -> list[sp.Idx]:
     """Like :func:`_index_symbols`, but reusing the ``memo`` index sets."""
     return sorted(_index_set(expr, memo), key=str)
 
 
-def _memoised_call(function, key, memo: dict):
+def _memoised_call(
+    function: Callable[[_K], _V], key: _K, memo: dict[_K, _V]
+) -> _V:
     """Return ``function(key)``, cached in the per-call ``memo``."""
     if key not in memo:
         memo[key] = function(key)
     return memo[key]
 
 
-def _is_expensive(expr) -> bool:
+def _is_expensive(expr: sp.Basic) -> bool:
     """Whether evaluating ``expr`` involves a costly operation.
 
     A function call (``log``, ``exp``, ...), a power whose exponent is not a
@@ -305,7 +324,7 @@ def _is_expensive(expr) -> bool:
     return False
 
 
-def _canonical_floats(expr):
+def _canonical_floats(expr: sp.Basic) -> sp.Basic:
     """Round every floating-point constant to its double value, with one
     representation per value.  Constants that SymPy carried with different
     precisions (``5.96554738597035e-7`` and ``5.96554738597034e-7`` from the
@@ -317,7 +336,7 @@ def _canonical_floats(expr):
     return expr.xreplace({f: sp.Float(repr(float(f)), 17) for f in floats})
 
 
-def _calls_libm(expr) -> bool:
+def _calls_libm(expr: sp.Basic) -> bool:
     """Whether ``expr`` calls a vectorisable libm routine (``exp``, ``log``,
     ``sqrt``, a real power): a function other than ``Piecewise`` or a power whose
     exponent is not an integer."""
@@ -329,16 +348,18 @@ def _calls_libm(expr) -> bool:
     return False
 
 
-def _temp_name(target) -> str:
+def _temp_name(target: sp.Basic) -> str:
     """Return the base name of a shared temporary."""
     if isinstance(target, sp.Indexed):
         return str(target.base)
     return str(target)
 
 
-def _referenced_temp_names(expr, temp_names) -> set:
+def _referenced_temp_names(
+    expr: sp.Basic, temp_names: Container[str]
+) -> set[str]:
     """Return the names of the temporaries referenced by ``expr``."""
-    names = set()
+    names: set[str] = set()
     for symbol in expr.atoms(sp.Symbol):
         if str(symbol) in temp_names:
             names.add(str(symbol))
@@ -349,14 +370,14 @@ def _referenced_temp_names(expr, temp_names) -> set:
     return names
 
 
-class _LoopStart(sp.Symbol):
+class _LoopStart(sp.Symbol):  # type: ignore[misc]  # sympy is Any
     """Lower bound ``outer + 1`` of a folded triangular loop.
 
     It is an opaque symbol so that no common sub-expression pass can hoist
     the bound out of the loop header; it prints as ``outer + 1``.
     """
 
-    def __new__(cls, outer):
-        obj = super().__new__(cls, f"{outer} + 1")
+    def __new__(cls, outer: sp.Basic) -> "_LoopStart":
+        obj: _LoopStart = super().__new__(cls, f"{outer} + 1")
         obj.outer = outer
         return obj
