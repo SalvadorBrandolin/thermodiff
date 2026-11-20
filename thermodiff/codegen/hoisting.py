@@ -639,9 +639,11 @@ def _blocked_by_pairs(defs, outs):
         if len(_free_indices(expr)) >= 2:
             pair_bases |= _matrix_bases(expr)
     return {
-        _temp_name(d.target)
-        for d in defs
-        if d.free and d.limits and _matrix_bases(d.body) & pair_bases
+        _temp_name(definition.target)
+        for definition in defs
+        if definition.free
+        and definition.limits
+        and _matrix_bases(definition.body) & pair_bases
     }
 
 
@@ -649,18 +651,22 @@ def _blocked_by_runs(defs):
     """Names of the sums of a run of equal loops that cannot all split."""
     blocked = set()
     run = []
-    for d in defs + [None]:
+    for definition in defs + [None]:
         if (
-            d is not None
+            definition is not None
             and run
-            and _loop_shape(d) is not None
-            and _loop_shape(d) == _loop_shape(run[0])
+            and _loop_shape(definition) is not None
+            and _loop_shape(definition) == _loop_shape(run[0])
         ):
-            run.append(d)
+            run.append(definition)
             continue
-        if len(run) > 1 and not all(_would_split(e) for e in run):
-            blocked |= {_temp_name(e.target) for e in run}
-        run = [d] if d is not None and _loop_shape(d) is not None else []
+        if len(run) > 1 and not all(_would_split(member) for member in run):
+            blocked |= {_temp_name(member.target) for member in run}
+        run = (
+            [definition]
+            if definition is not None and _loop_shape(definition) is not None
+            else []
+        )
     return blocked
 
 
@@ -671,14 +677,14 @@ def _close_blocked_matrices(sums, blocked):
         changed = False
         held = set().union(
             *[
-                _matrix_bases(d.body)
-                for d in sums
-                if _temp_name(d.target) in blocked
+                _matrix_bases(definition.body)
+                for definition in sums
+                if _temp_name(definition.target) in blocked
             ]
         )
-        for d in sums:
-            name = _temp_name(d.target)
-            if name not in blocked and _matrix_bases(d.body) & held:
+        for definition in sums:
+            name = _temp_name(definition.target)
+            if name not in blocked and _matrix_bases(definition.body) & held:
                 blocked.add(name)
                 changed = True
 
@@ -694,10 +700,16 @@ def _blocked_sums(defs, outs):
     """
     blocked = _blocked_by_pairs(defs, outs)
     blocked |= _blocked_by_runs(defs)
-    sums = [d for d in defs if d.free and d.limits]
-    for d in sums:
-        if _temp_name(d.target) not in blocked and not _would_split(d):
-            blocked.add(_temp_name(d.target))
+    sums = [
+        definition
+        for definition in defs
+        if definition.free and definition.limits
+    ]
+    for definition in sums:
+        if _temp_name(definition.target) not in blocked and not _would_split(
+            definition
+        ):
+            blocked.add(_temp_name(definition.target))
     _close_blocked_matrices(sums, blocked)
     return blocked
 
@@ -736,15 +748,15 @@ class _AffineState:
             the caller later drops it (see :func:`_split_at`).
         """
         key = _alpha(product, index)
-        for d in self.defs:
+        for definition in self.defs:
             if (
-                len(d.free) == 1
-                and not d.limits
-                and d.present_keys() <= _AFFINE_FLAGS
-                and isinstance(d.target, sp.Indexed)
-                and _alpha(d.body, d.free[0]) == key
+                len(definition.free) == 1
+                and not definition.limits
+                and definition.present_keys() <= _AFFINE_FLAGS
+                and isinstance(definition.target, sp.Indexed)
+                and _alpha(definition.body, definition.free[0]) == key
             ):
-                return sp.Indexed(d.target.base, index), position
+                return sp.Indexed(definition.target.base, index), position
         target = _new_shared_temp(self.namer, [index], self.arrays)
         self.defs.insert(
             position,
@@ -776,16 +788,16 @@ class _AffineState:
         """
         index, low, high = limit
         key = _alpha(body, index)
-        for e in self.defs[:position]:
+        for other in self.defs[:position]:
             if (
-                not e.free
-                and len(e.limits) == 1
-                and e.present_keys() <= _AFFINE_FLAGS
-                and isinstance(e.target, sp.Symbol)
-                and tuple(e.limits[0][1:]) == (low, high)
-                and _alpha(e.body, e.limits[0][0]) == key
+                not other.free
+                and len(other.limits) == 1
+                and other.present_keys() <= _AFFINE_FLAGS
+                and isinstance(other.target, sp.Symbol)
+                and tuple(other.limits[0][1:]) == (low, high)
+                and _alpha(other.body, other.limits[0][0]) == key
             ):
-                return e.target, position
+                return other.target, position
         scalar = _new_shared_temp(self.namer, [], self.arrays)
         self.defs.insert(
             position,
@@ -816,11 +828,11 @@ def _split_at(state, k, outs):
         The index to continue from and the (possibly rewritten) outputs.
     """
     defs = state.defs
-    d = defs[k]
-    match = _affine_match(d)
+    definition = defs[k]
+    match = _affine_match(definition)
     if match is None:
         return k + 1, outs
-    const, var = _split_terms(match.add, set(d.free))
+    const, var = _split_terms(match.add, set(definition.free))
     if not const or not var:
         return k + 1, outs
     m = match.index
@@ -831,7 +843,7 @@ def _split_at(state, k, outs):
         inner, sign = -inner, -1
     position = k
     new_body, position = state.vectorise(inner * weight, m, position)
-    if sp.count_ops(new_body) >= sp.count_ops(d.body):
+    if sp.count_ops(new_body) >= sp.count_ops(definition.body):
         # The vectors made for nothing leave the definitions, but their
         # namer number and their entry in ``arrays`` stay (and shift every
         # later temporary name).  Candidate cleanup; it changes the output.
@@ -841,22 +853,21 @@ def _split_at(state, k, outs):
     if not coeff.is_Number:
         weight, coeff = coeff * weight, sp.S.One
     s_body, position = state.vectorise(weight, m, position)
-    scalar, position = state.scalar_for(position, s_body, d.limits[0])
-    table = d.copy(body=new_body)
+    scalar, position = state.scalar_for(position, s_body, definition.limits[0])
+    table = definition.copy(body=new_body)
     defs[position] = table
-    name = _temp_name(d.target)
-    for q, e in enumerate(defs):
-        if e is not table:
-            defs[q] = e.copy(body=_reread(e.body, name, scalar, coeff, sign))
-    outs = [_reread(e, name, scalar, coeff, sign) for e in outs]
+    name = _temp_name(definition.target)
+    for q, other in enumerate(defs):
+        if other is not table:
+            defs[q] = other.copy(
+                body=_reread(other.body, name, scalar, coeff, sign)
+            )
+    outs = [_reread(expr, name, scalar, coeff, sign) for expr in outs]
     return position + 1, outs
 
 
 def _split_affine(definitions, outputs, namer, arrays):
     """Take the free-index-invariant part of a sum out of the loop nest.
-
-    The part of a summation body that does not depend on the free indices
-    leaves the loop nest.
 
     In ``t(k, l) = sum_m (1 - L(m, k, l)) n(m)`` (the O(N^3) nest of CMR,
     reportes/brechas/ronda2-ge-cmr.md) the term ``n(m)`` does not depend on
