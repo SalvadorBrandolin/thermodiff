@@ -12,7 +12,6 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from thermodiff import fortran
 from thermodiff.codegen import pipeline
 from thermodiff.model.compile import compile_model
 
@@ -158,7 +157,7 @@ def test_failed_generation_does_not_poison_later_ones(
     cases, references, monkeypatch
 ):
     """A generation raising in a late stage leaves no state behind."""
-    original = fortran._emit_code
+    original = pipeline._emit_code
     calls = {"count": 0}
 
     def failing_emit(*args, **kwargs):
@@ -170,7 +169,7 @@ def test_failed_generation_does_not_poison_later_ones(
             patch.setattr(pipeline, "_emit_code", failing_emit)
             with pytest.raises(RuntimeError, match="injected failure"):
                 generate(victim)
-        assert fortran._emit_code is original
+        assert pipeline._emit_code is original
         for case in cases:
             assert_matches(case, generate(case), references)
     assert calls["count"] >= 3
