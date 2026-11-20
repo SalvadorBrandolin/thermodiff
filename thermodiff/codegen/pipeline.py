@@ -858,14 +858,11 @@ def _pair_components(ctx: _EmitContext, state: _EmitState) -> None:
     _component_arrays(state)
 
 
-def _parameter_scalars(state: _EmitState) -> set:
-    """Return the names of the scalar parameters found in ``scans``."""
-    # NOTE: ``n`` is compared by name because ``expr`` has been rebuilt by
-    # the ``nc`` replacement, which also rewrites the shape of the ``n``
-    # IndexedBase.
+def _index_and_base_names(scans: list) -> tuple[set, set]:
+    """Return the names of the indices and of the arrays found in ``scans``."""
     index_syms = set()
     indexed_bases = set()
-    for scan in state.scans:
+    for scan in scans:
         for indexed in scan.indexed:
             index_syms.update(indexed.indices)
         for total in scan.sums:
@@ -873,23 +870,37 @@ def _parameter_scalars(state: _EmitState) -> set:
                 index_syms.add(limit[0])
         index_syms.update(scan.idxs)
         indexed_bases.update(scan.bases)
+    return (
+        {str(idx) for idx in index_syms},
+        {str(base_) for base_ in indexed_bases},
+    )
 
-    index_names = {str(idx) for idx in index_syms}
-    base_names = {str(base_) for base_ in indexed_bases}
 
+def _is_declared_elsewhere(sym: sp.Symbol, state: _EmitState) -> bool:
+    """Tell whether ``sym`` is not an argument scalar of the routine."""
+    name = str(sym)
+    if sym in (T, V, P) or name == "nc":
+        return True
+    if isinstance(sym, _LoopStart):
+        return True
+    if name in state.module_symbols or name in state.integer_args:
+        return True
+    return name in state.sc_temp_names
+
+
+def _parameter_scalars(state: _EmitState) -> set:
+    """Return the names of the scalar parameters found in ``scans``."""
+    # NOTE: ``n`` is compared by name because ``expr`` has been rebuilt by
+    # the ``nc`` replacement, which also rewrites the shape of the ``n``
+    # IndexedBase.
+    index_names, base_names = _index_and_base_names(state.scans)
     param_scalars = set()
     for scan in state.scans:
         for sym in scan.symbols:
             name = str(sym)
             if name in index_names or name in base_names:
                 continue
-            if sym in (T, V, P) or name == "nc":
-                continue
-            if isinstance(sym, _LoopStart):
-                continue
-            if name in state.module_symbols or name in state.integer_args:
-                continue
-            if name in state.sc_temp_names:
+            if _is_declared_elsewhere(sym, state):
                 continue
             param_scalars.add(name)
     return param_scalars
