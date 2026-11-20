@@ -14,11 +14,17 @@ the present ones under the old dict key names.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar
 
 import sympy as sp
+
+Limit = tuple[sp.Basic, sp.Basic, sp.Basic]
+"""Reduction limit ``(index, low, high)``."""
+
+Namer = Callable[[str], sp.Symbol]
+"""Fresh-symbol generator: maps a name prefix to a new symbol."""
 
 _BASE_KEYS: Mapping[str, str] = {
     "target": "target",
@@ -59,14 +65,14 @@ class TempDef:
     """
 
     target: sp.Basic
-    free: list
-    limits: list
+    free: list[sp.Basic]
+    limits: list[Limit]
     body: sp.Basic
     mirror: bool | None = None
     mirror_sum: bool | None = None
     colsum: bool | None = None
     colmajor: bool | None = None
-    symv: tuple | None = None
+    symv: tuple[Any, Any] | None = None
     symv_acc: sp.Symbol | None = None
     factored: bool | None = None
     acc: sp.Symbol | None = None
@@ -122,7 +128,7 @@ class FusedNest(TempDef):
         Member definitions fused into one loop nest.
     """
 
-    fused: list
+    fused: list[TempDef]
 
     _KEY_TO_ATTR: ClassVar[Mapping[str, str]] = {
         **_BASE_KEYS,
@@ -143,8 +149,8 @@ class ComponentFusedMap(TempDef):
         ``OuterFusedNest.members``).
     """
 
-    steps: list
-    members: list
+    steps: list[tuple[Any, Any, Any]]
+    members: list[tuple[Any, Any]]
 
     _KEY_TO_ATTR: ClassVar[Mapping[str, str]] = {
         **_BASE_KEYS,
@@ -167,7 +173,7 @@ class OuterFusedNest(TempDef):
         The shared outer index.
     """
 
-    members: list
+    members: list[TempDef]
     outer: sp.Idx
 
     _KEY_TO_ATTR: ClassVar[Mapping[str, str]] = {
@@ -193,10 +199,10 @@ class SiblingNest(TempDef):
         Second accumulator symbols when split.
     """
 
-    sibling: list
-    accs: list
+    sibling: list[TempDef]
+    accs: list[sp.Symbol]
     accumulators: int | None = None
-    accs2: list | None = None
+    accs2: list[sp.Symbol] | None = None
 
     _KEY_TO_ATTR: ClassVar[Mapping[str, str]] = {
         **_BASE_KEYS,
