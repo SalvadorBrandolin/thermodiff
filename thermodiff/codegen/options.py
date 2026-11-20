@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import os
+import sys
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -576,6 +578,52 @@ def _preset_settings() -> Mapping[Preset, Mapping[str, object]]:
 PRESET_SETTINGS: Mapping[Preset, Mapping[str, object]] = _preset_settings()
 
 
+_PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ENTRY_POINT_DIRS = (
+    os.path.join(_PACKAGE_DIR, "codegen"),
+    os.path.join(_PACKAGE_DIR, "model"),
+)
+
+
+def _caller_stacklevel() -> int:
+    """Return the ``warnings.warn`` stacklevel of the first outside frame.
+
+    Frames of this module and of ``thermodiff.model`` (``compile_model``,
+    ``emit_module``, the CLI) are skipped, so a warning points at the code
+    that called the entry point.
+    """
+    frame = sys._getframe(1)
+    level = 1
+    while frame is not None and (
+        os.path.dirname(os.path.abspath(frame.f_code.co_filename))
+        in _ENTRY_POINT_DIRS
+    ):
+        frame = frame.f_back
+        level += 1
+    return level
+
+
+def _explicit_names(
+    options: CodegenOptions | None,
+    base: CodegenOptions,
+    given: Mapping[str, Any],
+) -> set[str]:
+    """Return the option names the caller chose, as opposed to a preset.
+
+    These are the non-``None`` overrides plus, when ``options`` was passed,
+    its fields that differ from the defaults.
+    """
+    names = set(given)
+    if options is not None:
+        defaults = CodegenOptions()
+        names.update(
+            field.name
+            for field in dataclasses.fields(base)
+            if getattr(base, field.name) != getattr(defaults, field.name)
+        )
+    return names
+
+
 def resolve_codegen_options(
     preset: Preset | str = Preset.STANDARD,
     options: CodegenOptions | None = None,
@@ -583,11 +631,19 @@ def resolve_codegen_options(
 ) -> CodegenOptions:
     """Resolve the options of an entry point from its three sources.
 
+    The result is normalised: options that the chosen combination makes
+    ineffective are disabled (see :meth:`CodegenOptions.validate`), so the
+    validation of ``to_fortran`` finds nothing left to report.  Only the
+    ignored options that the caller set explicitly (a non-``None`` override
+    or a field of ``options`` that differs from the defaults) are reported,
+    in one ``UserWarning`` pointing at the caller of the entry point;
+    options coming from the preset are disabled silently.
+
     Parameters
     ----------
     preset : Preset or str, optional
-        Preset to start from; ``"standard"`` by default.  Ignored in
-        favour of ``options`` only when it is the default.
+        Preset to start from; ``"standard"`` by default.  Combining a
+        different preset with ``options`` is an error.
     options : CodegenOptions, optional
         Explicit options to start from instead of a preset.
     **overrides
@@ -597,13 +653,13 @@ def resolve_codegen_options(
     Returns
     -------
     CodegenOptions
-        The resulting options.  They are not validated: ``to_fortran``
-        does that.
+        The resulting normalised options.
 
     Raises
     ------
     ValueError
-        If a non-default ``preset`` is given together with ``options``.
+        If a non-default ``preset`` is given together with ``options``, or
+        for the errors of :meth:`CodegenOptions.validate`.
     TypeError
         If an override name is not an option.
     """
@@ -617,4 +673,17 @@ def resolve_codegen_options(
     if unknown:
         raise TypeError(f"unknown codegen option(s): {', '.join(unknown)}")
     given = {k: v for k, v in overrides.items() if v is not None}
-    return base.replace(**given)
+    resolved = base.replace(**given)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        normalised, ignored = resolved.validate()
+    explicit = _explicit_names(options, base, given)
+    reported = [name for name in ignored if name in explicit]
+    if reported:
+        warnings.warn(
+            "options ignored by the current combination and disabled: "
+            + ", ".join(reported),
+            UserWarning,
+            stacklevel=_caller_stacklevel(),
+        )
+    return normalised

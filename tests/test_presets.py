@@ -1,5 +1,7 @@
 """Tests of the code-generation presets of the entry points."""
 
+import warnings
+
 import model_harness as harness
 import numpy as np
 import pytest
@@ -194,16 +196,12 @@ class TestCli:
             tmp_path, capsys, "--preset", preset
         ) == compile_model(SMALL_MODEL, preset=preset)
 
-    @pytest.mark.filterwarnings("ignore:options ignored")
     def test_no_share_overrides_fastest(self, tmp_path, capsys):
         shared = self._run(tmp_path, capsys, "--preset", "fastest")
         emitted = self._run(
             tmp_path, capsys, "--preset", "fastest", "--no-share"
         )
-        with pytest.warns(UserWarning):
-            expected = compile_model(
-                SMALL_MODEL, preset="fastest", share=False
-            )
+        expected = compile_model(SMALL_MODEL, preset="fastest", share=False)
         assert emitted == expected
         assert emitted != shared
 
@@ -247,3 +245,64 @@ def test_preset_agrees_with_minimal_numerically(
         np.testing.assert_allclose(
             values, reference, rtol=RTOL_BY_PRESET[preset], atol=ATOL
         )
+
+
+class TestExplicitOptionWarnings:
+    """Only options the caller set explicitly are reported as ignored."""
+
+    def test_preset_options_are_disabled_silently(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            resolved = resolve_codegen_options("standard", share=False)
+        assert not resolved.sum_alpha
+        assert not resolved.sum_free_alpha
+
+    def test_explicit_option_is_reported(self):
+        with pytest.warns(UserWarning, match="sum_alpha") as record:
+            resolved = resolve_codegen_options(
+                "minimal", sum_alpha=True, share=False
+            )
+        assert len(record) == 1
+        assert not resolved.sum_alpha
+        assert record[0].filename == __file__
+
+    def test_explicit_options_object_is_reported(self):
+        with pytest.warns(UserWarning, match="sum_alpha"):
+            resolve_codegen_options(
+                options=CodegenOptions(sum_alpha=True, share=False)
+            )
+
+    def test_fastest_with_optional_derivatives_is_silent(self):
+        gated = (
+            "lowrank_hess",
+            "drop_pair_tables",
+            "share_elementwise",
+            "split_affine",
+            "fuse_loops",
+            "sib_fuse",
+            "diag_table",
+            "comp_fuse",
+            "fuse_outer",
+            "split_acc",
+            "scalar_chain",
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            resolved = resolve_codegen_options(
+                "fastest", optional_derivatives=True
+            )
+        defaults = CodegenOptions()
+        for name in gated:
+            assert getattr(resolved, name) == getattr(defaults, name), name
+
+    def test_entry_point_warning_points_at_the_caller(self):
+        with pytest.warns(UserWarning, match="sum_alpha") as record:
+            compile_model(
+                SMALL_MODEL, preset="minimal", sum_alpha=True, share=False
+            )
+        assert record[0].filename == __file__
+
+    def test_to_fortran_stays_silent_on_resolved_options(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            compile_model(SMALL_MODEL, share=False)
