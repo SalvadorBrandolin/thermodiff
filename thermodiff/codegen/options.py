@@ -574,3 +574,47 @@ def _preset_settings() -> Mapping[Preset, Mapping[str, object]]:
 
 
 PRESET_SETTINGS: Mapping[Preset, Mapping[str, object]] = _preset_settings()
+
+
+def resolve_codegen_options(
+    preset: Preset | str = Preset.STANDARD,
+    options: CodegenOptions | None = None,
+    **overrides: Any,
+) -> CodegenOptions:
+    """Resolve the options of an entry point from its three sources.
+
+    Parameters
+    ----------
+    preset : Preset or str, optional
+        Preset to start from; ``"standard"`` by default.  Ignored in
+        favour of ``options`` only when it is the default.
+    options : CodegenOptions, optional
+        Explicit options to start from instead of a preset.
+    **overrides
+        Option names and values applied on top.  A value of ``None`` means
+        "not given" and leaves the starting value untouched.
+
+    Returns
+    -------
+    CodegenOptions
+        The resulting options.  They are not validated: ``to_fortran``
+        does that.
+
+    Raises
+    ------
+    ValueError
+        If a non-default ``preset`` is given together with ``options``.
+    TypeError
+        If an override name is not an option.
+    """
+    if options is not None:
+        if Preset(preset) is not Preset.STANDARD:
+            raise ValueError("pass either 'preset' or 'options', not both")
+        base = options
+    else:
+        base = CodegenOptions.from_preset(preset)
+    unknown = sorted(set(overrides) - set(_FIELD_ORDER))
+    if unknown:
+        raise TypeError(f"unknown codegen option(s): {', '.join(unknown)}")
+    given = {k: v for k, v in overrides.items() if v is not None}
+    return base.replace(**given)
