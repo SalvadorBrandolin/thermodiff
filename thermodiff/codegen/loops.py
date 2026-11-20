@@ -1,5 +1,7 @@
 """Loop fusion and table rewrites for the Fortran code generator."""
 
+from dataclasses import dataclass, field
+
 import sympy as sp
 
 from thermodiff.codegen.common import (
@@ -1254,6 +1256,315 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
     return out
 
 
+_PLAIN_SCALAR_FLAGS = frozenset(
+    {"target", "free", "limits", "body", "mirror", "factored", "acc"}
+)
+_ELEMENT_SLOT = sp.Idx("__elem")
+
+
+def _is_plain_scalar(definition) -> bool:
+    """Whether ``definition`` is a plain scalar without a summation.
+
+    Parameters
+    ----------
+    definition : TempDef
+        Definition to test.
+
+    Returns
+    -------
+    bool
+        ``True`` for a scalar symbol target with no free index, no limits,
+        no annotation beyond the plain ones and no ``Sum`` in the body.
+    """
+    return (
+        isinstance(definition.target, sp.Symbol)
+        and not definition.free
+        and not definition.limits
+        and definition.present_keys() <= _PLAIN_SCALAR_FLAGS
+        and not definition.body.has(sp.Sum)
+    )
+
+
+def _canonical_scalar(scalar, scalar_def, memo, max_ops):
+    """Expand a plain scalar temporary into its recursive definition.
+
+    Parameters
+    ----------
+    scalar : sympy.Symbol
+        Plain scalar temporary (a key of ``scalar_def``).
+    scalar_def : dict
+        Plain scalar definitions by target.
+    memo : dict
+        Per-call cache of the expansions already computed; it also guards
+        against cycles.
+    max_ops : int
+        Expansions with more operations are replaced by the symbol itself.
+
+    Returns
+    -------
+    sympy.Expr
+        The expanded value.
+    """
+    if scalar in memo:
+        return memo[scalar]
+    memo[scalar] = scalar  # cycle guard
+    body = scalar_def[scalar].body
+    replacements = {
+        symbol: _canonical_scalar(symbol, scalar_def, memo, max_ops)
+        for symbol in body.free_symbols
+        if symbol in scalar_def
+    }
+    value = body.xreplace(replacements)
+    if sp.count_ops(value) > max_ops:
+        value = scalar
+    memo[scalar] = value
+    return value
+
+
+def _is_shareable_candidate(sub) -> bool:
+    """Whether ``sub`` is a rank-1 libm sub-expression worth sharing."""
+    if not isinstance(sub, sp.Expr) or sub.is_Atom:
+        return False
+    if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)) or sub.has(sp.Sum):
+        return False
+    if sub.has(sp.Piecewise) or sub.is_Relational or sub.is_Boolean:
+        return False
+    if any(isinstance(x, _LoopStart) for x in sub.atoms(sp.Symbol)):
+        return False
+    return len(sub.atoms(sp.Idx)) == 1 and _calls_libm(sub)
+
+
+def _occurrence_key(sub, scalar_def, memo, max_ops):
+    """Return ``sub`` with its index as a slot and scalars expanded."""
+    (index,) = sub.atoms(sp.Idx)
+    replacements = {
+        symbol: _canonical_scalar(symbol, scalar_def, memo, max_ops)
+        for symbol in sub.free_symbols
+        if symbol in scalar_def
+    }
+    return sub.xreplace({index: _ELEMENT_SLOT}).xreplace(replacements)
+
+
+def _is_editable(definition) -> bool:
+    """Whether the body of ``definition`` may be rewritten."""
+    return definition.present_keys() <= _PLAIN_SCALAR_FLAGS
+
+
+def _is_component_map(defs, pos) -> bool:
+    """Whether site ``pos`` is a definition that is a per-component map."""
+    if pos >= len(defs):
+        return False
+    return len(defs[pos].free) == 1 and not defs[pos].limits
+
+
+@dataclass
+class _ShareState:
+    """Mutable state of one :func:`_share_elementwise` call.
+
+    Attributes
+    ----------
+    defs : list
+        Current definitions.
+    outs : list
+        Current output expressions.
+    max_ops : int
+        Operation limit of the scalar expansion.
+    memo : dict
+        Per-call cache of :func:`_canonical_scalar`; it is never reset
+        between rounds.
+    touched : set
+        Scalars read by the replaced occurrences.
+    merged : set
+        Scalars renamed into an earlier spelling.
+    sites : list
+        Bodies of ``defs`` followed by ``outs``.
+    scalar_def : dict
+        Plain scalar definitions of ``defs`` by target.
+    position : dict
+        Index in ``defs`` of every plain scalar definition.
+    """
+
+    defs: list
+    outs: list
+    max_ops: int
+    memo: dict = field(default_factory=dict)
+    touched: set = field(default_factory=set)
+    merged: set = field(default_factory=set)
+    sites: list = field(init=False)
+    scalar_def: dict = field(init=False)
+    position: dict = field(init=False)
+
+    def __post_init__(self):
+        """Index the plain scalars and collect the sites."""
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Recompute ``sites``, ``scalar_def`` and ``position``."""
+        self.sites = [d.body for d in self.defs] + self.outs
+        self.scalar_def = {
+            d.target: d for d in self.defs if _is_plain_scalar(d)
+        }
+        self.position = {
+            d.target: k for k, d in enumerate(self.defs) if _is_plain_scalar(d)
+        }
+
+
+def _collect_occurrences(state):
+    """Group the shareable sub-expressions of every editable site by key."""
+    n_defs = len(state.defs)
+    found = {}
+    for pos, expr in enumerate(state.sites):
+        if pos < n_defs and not _is_editable(state.defs[pos]):
+            continue
+        for sub in sp.preorder_traversal(expr):
+            if _is_shareable_candidate(sub):
+                key = _occurrence_key(
+                    sub, state.scalar_def, state.memo, state.max_ops
+                )
+                found.setdefault(key, []).append((pos, sub))
+    return found
+
+
+def _best_occurrences(found, defs):
+    """Return the occurrences of the key worth sharing, or ``None``.
+
+    Per-component maps share per element anyway (``comp_fuse``): they do
+    not count towards the two readers.  The key read in most sites wins,
+    ties go to the one with more operations, then to the first in order.
+    """
+    best, best_rank = None, None
+    for key in sorted(found, key=sp.default_sort_key):
+        n_sites = len(
+            {pos for pos, _ in found[key] if not _is_component_map(defs, pos)}
+        )
+        if n_sites < 2:
+            continue
+        rank = (n_sites, sp.count_ops(key))
+        if best_rank is None or rank > best_rank:
+            best, best_rank = key, rank
+    return None if best is None else found[best]
+
+
+def _scalar_merges(occurrences, state):
+    """Map each later spelling of a scalar to the earliest equal one."""
+    scalar_def = state.scalar_def
+    rep_sub = occurrences[0][1]
+    rep_scalars = {
+        _canonical_scalar(x, scalar_def, state.memo, state.max_ops): x
+        for x in rep_sub.free_symbols
+        if x in scalar_def
+    }
+    merge = {}
+    for _pos, sub in occurrences[1:]:
+        for symbol in sub.free_symbols:
+            if symbol not in scalar_def:
+                continue
+            canonical = _canonical_scalar(
+                symbol, scalar_def, state.memo, state.max_ops
+            )
+            other = rep_scalars.get(canonical)
+            if other is None or other == symbol:
+                continue
+            position = state.position
+            if position[other] < position[symbol]:
+                early, late = other, symbol
+            else:
+                early, late = symbol, other
+            merge[late] = early
+    return merge
+
+
+def _resolve_merge_chains(merge):
+    """Point every merged scalar at the end of its chain."""
+
+    def final(symbol):
+        while symbol in merge:
+            symbol = merge[symbol]
+        return symbol
+
+    return {symbol: final(symbol) for symbol in merge}
+
+
+def _share_occurrences(state, occurrences, namer, arrays):
+    """Replace ``occurrences`` by a new vector placed before its first reader.
+
+    Parameters
+    ----------
+    state : _ShareState
+        Updated in place.
+    occurrences : list
+        ``(site position, sub-expression)`` pairs of one key.
+    namer : _Namer
+        Names the vector.
+    arrays : dict
+        Records the vector.
+    """
+    first_pos, rep_sub = occurrences[0]
+    (index0,) = rep_sub.atoms(sp.Idx)
+    merge = _scalar_merges(occurrences, state)
+    target = _new_shared_temp(namer, [index0], arrays)
+    vector = TempDef(target=target, free=[index0], limits=[], body=rep_sub)
+    replacements = {}
+    for pos, sub in occurrences:
+        (index,) = sub.atoms(sp.Idx)
+        replacements.setdefault(pos, {})[sub] = sp.Indexed(target.base, index)
+        state.touched |= {x for x in sub.free_symbols if x in state.scalar_def}
+    for pos, mapping in replacements.items():
+        state.sites[pos] = state.sites[pos].xreplace(mapping)
+    if merge:
+        # resolve chains, then rename everywhere (vector body included)
+        merge = _resolve_merge_chains(merge)
+        state.sites = [e.xreplace(merge) for e in state.sites]
+        vector.body = vector.body.xreplace(merge)
+        state.merged |= set(merge)
+    _insert_vector(state, vector, first_pos, set(merge))
+
+
+def _insert_vector(state, vector, first_pos, dropped):
+    """Write the new sites back and insert ``vector`` before its reader."""
+    n_defs = len(state.defs)
+    new_sites = list(state.sites)
+    for pos in range(n_defs):
+        state.defs[pos] = state.defs[pos].copy(body=new_sites[pos])
+    insert_at = first_pos if first_pos < n_defs else n_defs
+    defs = state.defs[:insert_at] + [vector] + state.defs[insert_at:]
+    state.defs = [
+        d for d in defs if not (d.target in dropped and _is_plain_scalar(d))
+    ]
+    state.outs = new_sites[n_defs:]
+    state.refresh()
+
+
+def _drop_dead_scalars(state) -> None:
+    """Drop the touched plain scalars that nothing reads any more."""
+    while True:
+        read = set()
+        for expr in [d.body for d in state.defs] + state.outs:
+            read |= expr.free_symbols
+        for d in state.defs:
+            if d.acc is not None:
+                read.add(d.acc)
+        dead = [
+            d
+            for d in state.defs
+            if _is_plain_scalar(d)
+            and d.target in state.touched
+            and d.target not in read
+        ]
+        if not dead:
+            break
+        state.defs = [d for d in state.defs if not any(d is x for x in dead)]
+
+
+def _undeclare_dropped(state, namer) -> None:
+    """Remove the dropped scalars from the namer's declarations."""
+    alive = {d.target for d in state.defs} | {d.acc for d in state.defs}
+    for expr in state.outs:
+        alive |= expr.free_symbols
+    dropped = {s for s in state.touched | set(state.merged) if s not in alive}
+    namer.created[:] = [s for s in namer.created if s not in dropped]
+
+
 def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
     """Share costly rank-1 sub-expressions between summations and outputs.
 
@@ -1275,179 +1586,17 @@ def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
 
     Returns ``(definitions, outputs)``.
     """
-    flags_ok = {
-        "target",
-        "free",
-        "limits",
-        "body",
-        "mirror",
-        "factored",
-        "acc",
-    }
-
-    def plain_scalar(d):
-        return (
-            isinstance(d.target, sp.Symbol)
-            and not d.free
-            and not d.limits
-            and d.present_keys() <= flags_ok
-            and not d.body.has(sp.Sum)
+    state = _ShareState(list(definitions), list(outputs), max_ops)
+    while True:
+        occurrences = _best_occurrences(
+            _collect_occurrences(state), state.defs
         )
-
-    scalar_def = {d.target: d for d in definitions if plain_scalar(d)}
-    position = {
-        d.target: k for k, d in enumerate(definitions) if plain_scalar(d)
-    }
-    canon_memo = {}
-
-    def canon_scalar(s):
-        if s in canon_memo:
-            return canon_memo[s]
-        canon_memo[s] = s  # cycle guard
-        body = scalar_def[s].body
-        rep = {
-            x: canon_scalar(x) for x in body.free_symbols if x in scalar_def
-        }
-        value = body.xreplace(rep)
-        if sp.count_ops(value) > max_ops:
-            value = s
-        canon_memo[s] = value
-        return value
-
-    slot = sp.Idx("__elem")
-
-    def candidate(sub):
-        if not isinstance(sub, sp.Expr) or sub.is_Atom:
-            return False
-        if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)) or sub.has(sp.Sum):
-            return False
-        if sub.has(sp.Piecewise) or sub.is_Relational or sub.is_Boolean:
-            return False
-        if any(isinstance(x, _LoopStart) for x in sub.atoms(sp.Symbol)):
-            return False
-        return len(sub.atoms(sp.Idx)) == 1 and _calls_libm(sub)
-
-    def key_of(sub):
-        (idx,) = sub.atoms(sp.Idx)
-        rep = {x: canon_scalar(x) for x in sub.free_symbols if x in scalar_def}
-        return sub.xreplace({idx: slot}).xreplace(rep), idx
-
-    def editable(d):
-        return d.present_keys() <= flags_ok
-
-    def is_map(pos):
-        if pos >= n_defs:
-            return False
-        d = defs[pos]
-        return len(d.free) == 1 and not d.limits
-
-    sites = [d.body for d in definitions] + list(outputs)
-    n_defs = len(definitions)
-    defs = list(definitions)
-    outs = list(outputs)
-    touched = set()
-    merged_all = set()
-    while True:
-        found = {}
-        for pos, expr in enumerate(sites):
-            if pos < n_defs and not editable(defs[pos]):
-                continue
-            for sub in sp.preorder_traversal(expr):
-                if candidate(sub):
-                    key, _ = key_of(sub)
-                    found.setdefault(key, []).append((pos, sub))
-        best, best_rank = None, None
-        for key in sorted(found, key=sp.default_sort_key):
-            occ = found[key]
-            # per-component maps share per element anyway (comp_fuse): they do
-            # not count towards the two readers
-            n_sites = len({pos for pos, _ in occ if not is_map(pos)})
-            if n_sites < 2:
-                continue
-            rank = (n_sites, sp.count_ops(key))
-            if best_rank is None or rank > best_rank:
-                best, best_rank = key, rank
-        if best is None:
+        if occurrences is None:
             break
-        occ = found[best]
-        first_pos, rep_sub = occ[0]
-        (idx0,) = rep_sub.atoms(sp.Idx)
-        # merge differently spelt scalars of the occurrences into the earliest
-        merge = {}
-        rep_scalars = {
-            canon_scalar(x): x for x in rep_sub.free_symbols if x in scalar_def
-        }
-        for _pos, sub in occ[1:]:
-            for x in sub.free_symbols:
-                if x not in scalar_def:
-                    continue
-                y = rep_scalars.get(canon_scalar(x))
-                if y is None or y == x:
-                    continue
-                early, late = (y, x) if position[y] < position[x] else (x, y)
-                merge[late] = early
-        target = _new_shared_temp(namer, [idx0], arrays)
-        base = target.base
-        vector = TempDef(target=target, free=[idx0], limits=[], body=rep_sub)
-        rep = {}
-        for pos, sub in occ:
-            (idx,) = sub.atoms(sp.Idx)
-            rep.setdefault(pos, {})[sub] = sp.Indexed(base, idx)
-            touched |= {x for x in sub.free_symbols if x in scalar_def}
-        for pos, mapping in rep.items():
-            sites[pos] = sites[pos].xreplace(mapping)
-        if merge:
-            # resolve chains, then rename everywhere (vector body included)
-            def final(s):
-                while s in merge:
-                    s = merge[s]
-                return s
-
-            merge = {s: final(s) for s in merge}
-            sites = [e.xreplace(merge) for e in sites]
-            vector.body = vector.body.xreplace(merge)
-            merged_all |= set(merge)
-        # insert the vector right before its first reader
-        new_sites = list(sites)
-        for pos in range(n_defs):
-            defs[pos] = defs[pos].copy(body=new_sites[pos])
-        drop = set(merge)
-        insert_at = first_pos if first_pos < n_defs else n_defs
-        defs = defs[:insert_at] + [vector] + defs[insert_at:]
-        kept = []
-        for d in defs:
-            if d.target in drop and plain_scalar(d):
-                continue
-            kept.append(d)
-        defs = kept
-        outs = new_sites[n_defs:]
-        sites = [d.body for d in defs] + outs
-        n_defs = len(defs)
-        position = {d.target: k for k, d in enumerate(defs) if plain_scalar(d)}
-        scalar_def = {d.target: d for d in defs if plain_scalar(d)}
-    # drop the plain scalars of replaced occurrences that nothing reads any more
-    while True:
-        read = set()
-        for e in [d.body for d in defs] + outs:
-            read |= e.free_symbols
-        for d in defs:
-            if d.acc is not None:
-                read.add(d.acc)
-        dead = [
-            d
-            for d in defs
-            if plain_scalar(d) and d.target in touched and d.target not in read
-        ]
-        if not dead:
-            break
-        defs = [d for d in defs if not any(d is x for x in dead)]
-    # undeclare the dropped scalars
-    alive = {d.target for d in defs} | {d.acc for d in defs}
-    for e in outs:
-        alive |= e.free_symbols
-    dropped = {s for s in touched | set(merged_all) if s not in alive}
-    namer.created[:] = [s for s in namer.created if s not in dropped]
-    return defs, outs
+        _share_occurrences(state, occurrences, namer, arrays)
+    _drop_dead_scalars(state)
+    _undeclare_dropped(state, namer)
+    return state.defs, state.outs
 
 
 def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
