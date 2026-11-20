@@ -223,7 +223,11 @@ end program drive
 
 def _run_variant(tmp_path, settings):
     code = compile_model(
-        PR76_SYM, derivatives=W6, optional_derivatives=True, **settings
+        PR76_SYM,
+        derivatives=W6,
+        preset="minimal",
+        optional_derivatives=True,
+        **settings,
     )
     work = tmp_path
     (work / "drive.f90").write_text(
@@ -534,7 +538,9 @@ def _double_loop_statements(code):
 def test_c6n_hessian_has_analytic_structure():
     """With every loop pass the W6 kernel has few O(nc^2) passes and no
     transcendental function inside a double loop except the a_ij matrix."""
-    code = compile_model(PR76_SYM, derivatives=W6, **EXTENDED_VARIANTS["c6n"])
+    code = compile_model(
+        PR76_SYM, derivatives=W6, preset="minimal", **EXTENDED_VARIANTS["c6n"]
+    )
     inner = _double_loop_statements(code)
     sqrt_lines = [s for s in inner if "sqrt(" in s]
     assert len(sqrt_lines) == 1  # the a_ij pair matrix
@@ -546,16 +552,23 @@ def test_c6n_hessian_has_analytic_structure():
 @pytest.mark.slow
 def test_loop_passes_are_deterministic_and_off_by_default():
     first = compile_model(
-        PR76_SYM, derivatives="dn,dndn", **EXTENDED_VARIANTS["c6n"]
+        PR76_SYM,
+        derivatives="dn,dndn",
+        preset="minimal",
+        **EXTENDED_VARIANTS["c6n"],
     )
     second = compile_model(
-        PR76_SYM, derivatives="dn,dndn", **EXTENDED_VARIANTS["c6n"]
+        PR76_SYM,
+        derivatives="dn,dndn",
+        preset="minimal",
+        **EXTENDED_VARIANTS["c6n"],
     )
     assert first == second
-    plain = compile_model(PR76_SYM, derivatives="dn,dndn")
+    plain = compile_model(PR76_SYM, derivatives="dn,dndn", preset="minimal")
     assert plain == compile_model(
         PR76_SYM,
         derivatives="dn,dndn",
+        preset="minimal",
         chain_rule=False,
         hoist_loops=False,
         sum_free_alpha=False,
