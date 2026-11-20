@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import os
 import sys
+import types
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -578,26 +578,28 @@ def _preset_settings() -> Mapping[Preset, Mapping[str, object]]:
 PRESET_SETTINGS: Mapping[Preset, Mapping[str, object]] = _preset_settings()
 
 
-_PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_ENTRY_POINT_DIRS = (
-    os.path.join(_PACKAGE_DIR, "codegen"),
-    os.path.join(_PACKAGE_DIR, "model"),
-)
+_ENTRY_POINT_MODULES = ("thermodiff.codegen", "thermodiff.model")
+
+
+def _in_entry_point_module(frame: types.FrameType) -> bool:
+    """Tell whether ``frame`` runs in ``thermodiff.codegen`` or ``.model``."""
+    module = frame.f_globals.get("__name__") or ""
+    return any(
+        module == prefix or module.startswith(prefix + ".")
+        for prefix in _ENTRY_POINT_MODULES
+    )
 
 
 def _caller_stacklevel() -> int:
     """Return the ``warnings.warn`` stacklevel of the first outside frame.
 
-    Frames of this module and of ``thermodiff.model`` (``compile_model``,
-    ``emit_module``, the CLI) are skipped, so a warning points at the code
-    that called the entry point.
+    Frames of ``thermodiff.codegen`` and ``thermodiff.model``
+    (``compile_model``, ``emit_module``, the CLI) are skipped, so a warning
+    points at the code that called the entry point.
     """
     frame = sys._getframe(1)
     level = 1
-    while frame is not None and (
-        os.path.dirname(os.path.abspath(frame.f_code.co_filename))
-        in _ENTRY_POINT_DIRS
-    ):
+    while frame is not None and _in_entry_point_module(frame):
         frame = frame.f_back
         level += 1
     return level
@@ -625,7 +627,7 @@ def _explicit_names(
 
 
 def resolve_codegen_options(
-    preset: Preset | str = Preset.STANDARD,
+    preset: Preset | str | None = None,
     options: CodegenOptions | None = None,
     **overrides: Any,
 ) -> CodegenOptions:
@@ -642,8 +644,8 @@ def resolve_codegen_options(
     Parameters
     ----------
     preset : Preset or str, optional
-        Preset to start from; ``"standard"`` by default.  Combining a
-        different preset with ``options`` is an error.
+        Preset to start from.  ``None`` means ``"standard"`` unless
+        ``options`` is given.  Passing both is an error.
     options : CodegenOptions, optional
         Explicit options to start from instead of a preset.
     **overrides
@@ -658,17 +660,17 @@ def resolve_codegen_options(
     Raises
     ------
     ValueError
-        If a non-default ``preset`` is given together with ``options``, or
+        If ``preset`` is given together with ``options``, or
         for the errors of :meth:`CodegenOptions.validate`.
     TypeError
         If an override name is not an option.
     """
     if options is not None:
-        if Preset(preset) is not Preset.STANDARD:
+        if preset is not None:
             raise ValueError("pass either 'preset' or 'options', not both")
         base = options
     else:
-        base = CodegenOptions.from_preset(preset)
+        base = CodegenOptions.from_preset(preset or Preset.STANDARD)
     unknown = sorted(set(overrides) - set(_FIELD_ORDER))
     if unknown:
         raise TypeError(f"unknown codegen option(s): {', '.join(unknown)}")

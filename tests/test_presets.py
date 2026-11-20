@@ -1,5 +1,6 @@
 """Tests of the code-generation presets of the entry points."""
 
+import sys
 import warnings
 
 import model_harness as harness
@@ -322,3 +323,40 @@ class TestExplicitOptionWarnings:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             compile_model(SMALL_MODEL, share=False)
+
+
+class TestPresetOptionsConflict:
+    """``preset`` and ``options`` are mutually exclusive, even "standard"."""
+
+    @pytest.mark.parametrize("preset", ["minimal", "standard", "fastest"])
+    def test_resolver_rejects_both(self, preset):
+        with pytest.raises(ValueError, match="not both"):
+            resolve_codegen_options(preset, CodegenOptions())
+
+    def test_entry_point_rejects_explicit_standard(self):
+        with pytest.raises(ValueError, match="not both"):
+            compile_model(
+                SMALL_MODEL, preset="standard", options=CodegenOptions()
+            )
+
+    def test_none_preset_means_standard(self):
+        assert resolve_codegen_options(None) == CodegenOptions.from_preset(
+            "standard"
+        )
+
+
+def test_caller_stacklevel_skips_frames_by_module_name(tmp_path):
+    """The warning points at the caller even through ``compile_model_file``."""
+    from thermodiff.codegen import options as options_module
+
+    assert options_module._in_entry_point_module(sys._getframe()) is False
+    path = tmp_path / "small.model"
+    path.write_text(SMALL_MODEL)
+    with pytest.warns(UserWarning, match="sum_alpha") as record:
+        compile_model_file(
+            str(path),
+            preset="minimal",
+            sum_alpha=True,
+            share=False,
+        )
+    assert record[0].filename == __file__

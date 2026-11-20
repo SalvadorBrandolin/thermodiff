@@ -12,7 +12,7 @@ def compile_model(
     filename=None,
     derivatives=None,
     *,
-    preset="standard",
+    preset=None,
     options=None,
     **overrides,
 ):
@@ -38,7 +38,8 @@ def compile_model(
         fastest generated code, with slower generation and last-bit
         rounding differences.
     options : CodegenOptions, optional
-        Explicit options used instead of a preset.
+        Explicit options used instead of a preset; passing both raises
+        ``ValueError``.
     **overrides
         Individual options replacing those of the preset, for example
         ``optional_derivatives=True`` (declare every output as a Fortran
@@ -65,7 +66,7 @@ def compile_model_file(
     path,
     derivatives=None,
     *,
-    preset="standard",
+    preset=None,
     options=None,
     **overrides,
 ):
@@ -81,7 +82,8 @@ def compile_model_file(
         Named set of code-generation options (default ``"standard"``).
         See :func:`compile_model`.
     options : CodegenOptions, optional
-        Explicit options used instead of a preset.
+        Explicit options used instead of a preset; passing both raises
+        ``ValueError``.
     **overrides
         Individual options replacing those of the preset.  See
         :func:`compile_model`.

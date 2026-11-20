@@ -127,7 +127,7 @@ def emit_module(
     derivatives=None,
     diff=None,
     *,
-    preset="standard",
+    preset=None,
     options=None,
     **overrides,
 ):
@@ -155,8 +155,8 @@ def emit_module(
         last-bit rounding differences; it pays off with one kernel per
         derivative set (``optional_derivatives=False``).
     options : CodegenOptions, optional
-        Explicit options used instead of a preset.  Cannot be combined
-        with a non-default ``preset``.
+        Explicit options used instead of a preset.  Passing both
+        ``preset`` and ``options`` raises ``ValueError``.
     **overrides
         Individual options replacing those of the preset, with the names of
         :class:`thermodiff.codegen.options.CodegenOptions` (for example
