@@ -627,6 +627,70 @@ def _best_indexed_candidate(
     return None
 
 
+def _free_aux_indices(exprs):
+    """Return the auxiliary indices that do not clash with ``exprs``.
+
+    Fortran is case insensitive: lower-cased names are compared, so that
+    an auxiliary index ``r`` never clashes with e.g. a module constant
+    ``R``.
+    """
+    used = {
+        str(symbol).lower()
+        for expr in exprs
+        for symbol in expr.atoms(sp.Symbol)
+    }
+    used.update(
+        {str(b).lower() for expr in exprs for b in expr.atoms(sp.IndexedBase)}
+    )
+    used.update({"nc", "res"})
+    return [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
+
+
+def _count_canonical_entries(entries, counted):
+    """Count the canonical forms and record the rank of each one.
+
+    Positions flagged ``False`` in ``counted`` do not contribute (all do
+    when ``counted`` is ``None``).
+
+    Returns
+    -------
+    counts : dict
+        Number of occurrences of every canonical form.
+    sizes : dict
+        Number of indices of every canonical form.
+    """
+    counts = {}
+    sizes = {}
+    for position, position_entries in enumerate(entries):
+        if counted is not None and not counted[position]:
+            continue
+        for _, canon, indices in position_entries:
+            counts[canon] = counts.get(canon, 0) + 1
+            sizes[canon] = len(indices)
+    return counts, sizes
+
+
+def _replace_with_temp(exprs, entries, best, target, rank):
+    """Replace every occurrence of ``best`` by the array ``target``.
+
+    Returns a new list; expressions without an occurrence are the very
+    same objects.
+    """
+    base = target.base
+    replacements = {}
+    touched = set()
+    for position, position_entries in enumerate(entries):
+        for sub, canon, indices in position_entries:
+            if len(indices) == rank and canon == best:
+                replacements[sub] = sp.Indexed(base, *indices)
+                touched.add(position)
+    # ``xreplace`` returns the very same object when no key occurs.
+    return [
+        expr.xreplace(replacements) if position in touched else expr
+        for position, expr in enumerate(exprs)
+    ]
+
+
 def _indexed_cse(
     expressions, namer, arrays, expensive_twice=False, counted=None
 ):
@@ -671,19 +735,7 @@ def _indexed_cse(
     """
     exprs = list(expressions)
     definitions = []
-    # Fortran is case insensitive: compare lower-cased names, so that an
-    # auxiliary index ``r`` never clashes with e.g. a module constant ``R``.
-    used = {
-        str(symbol).lower()
-        for expr in exprs
-        for symbol in expr.atoms(sp.Symbol)
-    }
-    used.update(
-        {str(b).lower() for expr in exprs for b in expr.atoms(sp.IndexedBase)}
-    )
-    used.update({"nc", "res"})
-    slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
-
+    slots = _free_aux_indices(exprs)
     index_memo = {}
     own_entries = functools.partial(
         _own_hoistable_entry,
@@ -701,14 +753,7 @@ def _indexed_cse(
             _preorder_entries(expr, own_entries, entries_memo)
             for expr in exprs
         ]
-        counts = {}
-        sizes = {}
-        for position, position_entries in enumerate(entries):
-            if counted is not None and not counted[position]:
-                continue
-            for _, canon, indices in position_entries:
-                counts[canon] = counts.get(canon, 0) + 1
-                sizes[canon] = len(indices)
+        counts, sizes = _count_canonical_entries(entries, counted)
         best = _best_indexed_candidate(
             counts, expensive_twice, ops_memo, sort_key_memo
         )
@@ -719,20 +764,7 @@ def _indexed_cse(
         definitions.append(
             TempDef(target=target, free=free, limits=[], body=best)
         )
-        base = target.base
-        rank = len(free)
-        replacements = {}
-        touched = set()
-        for position, position_entries in enumerate(entries):
-            for sub, canon, indices in position_entries:
-                if len(indices) == rank and canon == best:
-                    replacements[sub] = sp.Indexed(base, *indices)
-                    touched.add(position)
-        # ``xreplace`` returns the very same object when no key occurs.
-        exprs = [
-            expr.xreplace(replacements) if position in touched else expr
-            for position, expr in enumerate(exprs)
-        ]
+        exprs = _replace_with_temp(exprs, entries, best, target, len(free))
     return exprs, definitions
 
 
