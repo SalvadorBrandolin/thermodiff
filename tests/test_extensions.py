@@ -162,9 +162,9 @@ class TestSymmetricAttribute:
 def test_default_output_unchanged_by_symmetric_attribute():
     """Declaring ``symmetric`` alone does not alter the generated code."""
     plain = PR76_SYM.replace(" symmetric", "")
-    assert compile_model(PR76_SYM, derivatives="dn,dndn") == compile_model(
-        plain, derivatives="dn,dndn"
-    )
+    assert compile_model(
+        PR76_SYM, derivatives="dn,dndn", preset="minimal"
+    ) == compile_model(plain, derivatives="dn,dndn", preset="minimal")
 
 
 # ---------------------------------------------------------------------------
@@ -401,9 +401,15 @@ def _nested_loop_bodies(code):
 def test_hoisting_moves_rkpr_power_out_of_double_loop():
     """RKPR W0 with folded symmetry: ``alpha**k`` leaves the double loop."""
     settings = dict(EXTENDED_VARIANTS["a6"])
-    plain = compile_model(_rkpr_text(), derivatives="none", **settings)
+    plain = compile_model(
+        _rkpr_text(), derivatives="none", preset="minimal", **settings
+    )
     hoisted = compile_model(
-        _rkpr_text(), derivatives="none", hoist_invariants=True, **settings
+        _rkpr_text(),
+        derivatives="none",
+        preset="minimal",
+        hoist_invariants=True,
+        **settings,
     )
     assert any("**k(" in s for s in _nested_loop_bodies(plain))
     assert not any("**k(" in s for s in _nested_loop_bodies(hoisted))

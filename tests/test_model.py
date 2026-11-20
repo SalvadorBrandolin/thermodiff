@@ -176,7 +176,7 @@ class TestParsing:
         assert len(re.findall(r"b\(\w+\)\*n\(\w+\)", code)) == 1
 
     def test_repeated_indexed_factor_is_materialised(self):
-        code = compile_model(PR_MODEL)
+        code = compile_model(PR_MODEL, preset="minimal")
         # The ``sqrt`` of the attractive term is shared by every
         # derivative, so it must live in a rank-2 temporary computed once
         # instead of being repeated inside each sum.
@@ -185,7 +185,7 @@ class TestParsing:
         assert re.search(r"real\(8\) :: \w+\(nc, nc\)", code)
 
     def test_array_cse_can_be_disabled(self):
-        code = compile_model(PR_MODEL, array_cse=False)
+        code = compile_model(PR_MODEL, preset="minimal", array_cse=False)
         assert not re.search(r"real\(8\) :: \w+\(nc, nc\)", code)
         assert "sqrt(T**4*ac" in code
 

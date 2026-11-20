@@ -12,6 +12,7 @@ module only takes care of the things that are specific to a whole model:
 
 import sympy as sp
 
+from thermodiff.codegen.options import resolve_codegen_options
 from thermodiff.derivatives import resolve_derivatives
 from thermodiff.diffplz import DiffPlz
 from thermodiff.fortran import _sanitize, to_fortran
@@ -125,12 +126,15 @@ def emit_module(
     ir,
     derivatives=None,
     diff=None,
-    optional_derivatives=False,
-    array_cse=True,
-    share=True,
-    **codegen,
+    *,
+    preset="standard",
+    options=None,
+    **overrides,
 ):
     """Generate the Fortran module for a :class:`ModelIR`.
+
+    The code-generation options come from a preset (``"standard"`` by
+    default), or from ``options``, with ``overrides`` applied on top.
 
     Parameters
     ----------
@@ -143,26 +147,24 @@ def emit_module(
     diff : DiffPlz, optional
         A pre-built differentiation, as returned by :func:`build_diff`.
         When given, ``derivatives`` must match the ones it was built with.
-    optional_derivatives : bool, optional
-        When ``True``, every output is declared as a Fortran ``optional``
-        argument and computed only when the caller passes it.  Shared
-        temporaries are skipped when none of the outputs that need them is
-        present.
-    array_cse : bool, optional
-        When ``True`` (the default), index-dependent sub-expressions
-        shared by several derivatives are materialised into array
-        temporaries computed a single time.  Set it to ``False`` to keep
-        the fully inlined expressions.
-    share : bool, optional
-        When ``True`` (the default), summations and common scalar
-        sub-expressions shared by several outputs are computed a single
-        time.  Set it to ``False`` to disable all sharing (the benchmark
-        variant "V1 none" is ``array_cse=False, share=False``).
-    **codegen
-        Extra options forwarded to :func:`thermodiff.fortran.to_fortran`
-        (``share_sums``, ``scalar_cse``, ``param_symmetry``,
-        ``hessian_symmetry``, ``cse_backend``, ``stats``).  The symmetric
-        parameters declared in the model are always forwarded.
+    preset : {"minimal", "standard", "fastest"}, optional
+        Named option set.  ``"minimal"`` is the plain generator (the output
+        before presets existed), ``"standard"`` (the default) is the
+        recommended set, and ``"fastest"`` gives the fastest generated code
+        of the benchmark campaign at the cost of slower generation and
+        last-bit rounding differences; it pays off with one kernel per
+        derivative set (``optional_derivatives=False``).
+    options : CodegenOptions, optional
+        Explicit options used instead of a preset.  Cannot be combined
+        with a non-default ``preset``.
+    **overrides
+        Individual options replacing those of the preset, with the names of
+        :class:`thermodiff.codegen.options.CodegenOptions` (for example
+        ``optional_derivatives``, ``array_cse``, ``share``,
+        ``param_symmetry``, ``cse_backend``).  ``None`` means "not given".
+        ``stats`` is forwarded to :func:`thermodiff.fortran.to_fortran`.
+        The symmetric parameters declared in the model are always
+        forwarded.
 
     Returns
     -------
@@ -176,6 +178,9 @@ def emit_module(
         if derivatives is None:
             derivatives = select_derivatives(ir.declared_variables)
 
+    stats = overrides.pop("stats", None)
+    options = resolve_codegen_options(preset, options, **overrides)
+
     model = _sanitize(ir.model_name)
     subroutine = _sanitize(ir.model_name) + "_derivs"
 
@@ -186,11 +191,9 @@ def emit_module(
         subroutine_name=subroutine,
         integer_args=ir.dimensions,
         module_symbols=ir.imported,
-        optional_derivatives=optional_derivatives,
-        array_cse=array_cse,
-        share=share,
         symmetric_params=getattr(ir, "symmetric", ()),
-        **codegen,
+        stats=stats,
+        options=options,
     )
 
     lines = [
