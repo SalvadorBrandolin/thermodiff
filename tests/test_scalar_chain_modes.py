@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from thermodiff import bench_hooks
+from thermodiff import bench_hooks, fortran
 from thermodiff.fortran import to_fortran
 from thermodiff.model.emit import build_diff
 from thermodiff.model.ir import build_ir
@@ -335,3 +335,46 @@ def test_scalar_chain_output_and_stats_are_pinned(
     public = {k: v for k, v in stats.items() if k != LEAK_KEY}
     assert public == expected_stats
     assert hashlib.sha256(code.encode()).hexdigest() == digest
+
+
+ESTIMATE_BASE = 20
+PLAIN_PATH_PR_W3_P32_DIGEST = (
+    "2200b3682001b3bd716b5c4981628d69340fd91b94364ef5d3e38911c6d36cfe"
+)
+
+
+def force_estimate(monkeypatch, estimate):
+    """Make the chain-rule step report ``estimate`` as its scalar estimate."""
+    original = fortran._chain_structure
+
+    def patched(ctx, opts):
+        structured = original(ctx, opts)
+        structured["_scalar_estimate"] = estimate
+        return structured
+
+    monkeypatch.setattr(fortran, "_chain_structure", patched)
+
+
+@pytest.mark.parametrize(
+    "estimate, propagated",
+    [
+        ((ESTIMATE_BASE, 1.1 * ESTIMATE_BASE), True),
+        ((ESTIMATE_BASE, 1.1 * ESTIMATE_BASE + 1), False),
+        ((ESTIMATE_BASE, 3 * ESTIMATE_BASE), False),
+    ],
+    ids=["equal-to-slack", "above-slack", "far-above-slack"],
+)
+def test_estimate_branch_around_the_propagation_slack(
+    monkeypatch, estimate, propagated
+):
+    force_estimate(monkeypatch, estimate)
+    code, stats = generate("pr", "w3", "p32", None)
+    digest = hashlib.sha256(code.encode()).hexdigest()
+    assert stats["scalar_chain_used"] is propagated
+    assert stats["scalar_chain_estimate"] == estimate
+    pinned = PINS[("pr", "w3", "p32", None)][0]
+    if propagated:
+        assert digest == pinned
+    else:
+        assert digest == PLAIN_PATH_PR_W3_P32_DIGEST
+        assert digest != pinned
