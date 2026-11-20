@@ -17,6 +17,194 @@ from thermodiff.codegen.common import (
 from thermodiff.codegen.ir import TempDef
 
 
+class _HoistState(NamedTuple):
+    """State of one :func:`_hoist_invariants` call.
+
+    Attributes
+    ----------
+    slots : list of sympy.Idx
+        Auxiliary indices free for the temporaries.
+    namer : _Namer
+        Generator of temporary names.
+    arrays : dict
+        Records the rank of every array temporary created.
+    definitions : list
+        Temporaries created since the last reset (mutated in place).
+    temps : dict
+        Canonical body -> target of every temporary created so far.
+    """
+
+    slots: list
+    namer: object
+    arrays: dict
+    definitions: list
+    temps: dict
+
+
+def _used_names(expressions, sum_definitions, arrays, reserved):
+    """Lower-cased names the slot indices of the temporaries must avoid.
+
+    ``reserved`` holds every name of the subroutine (arguments, outputs,
+    module symbols); the slot indices must not clash with any of them,
+    case-insensitively (Fortran).
+    """
+    used = {
+        str(symbol).lower()
+        for expr in expressions
+        for symbol in expr.atoms(sp.Symbol)
+    }
+    used.update(
+        {
+            str(b).lower()
+            for expr in expressions
+            for b in expr.atoms(sp.IndexedBase)
+        }
+    )
+    for definition in sum_definitions:
+        body = definition.body
+        used.update(str(symbol).lower() for symbol in body.atoms(sp.Symbol))
+        used.update(str(b).lower() for b in body.atoms(sp.IndexedBase))
+    used.update({str(name).lower() for name in arrays})
+    used.update(str(name).lower() for name in reserved)
+    used.update({"nc", "res"})
+    return used
+
+
+def _new_hoist_state(used, namer, arrays):
+    """Empty state whose slot indices avoid the names in ``used``."""
+    return _HoistState(
+        slots=[sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used],
+        namer=namer,
+        arrays=arrays,
+        definitions=[],
+        temps={},
+    )
+
+
+def _is_hoist_candidate(sub, bound):
+    """Whether ``sub`` is a costly sub-expression worth hoisting.
+
+    Parameters
+    ----------
+    sub : sympy.Basic
+        Sub-expression inside the loops over ``bound``.
+    bound : set
+        Indices bound by the enclosing summations.
+    """
+    if not isinstance(sub, sp.Expr) or sub.is_Atom:
+        return False
+    if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)):
+        return False
+    if sub.has(sp.Sum) or sub.has(sp.Piecewise):
+        return False
+    if sub.is_Relational or sub.is_Boolean:
+        return False
+    if any(isinstance(s, _LoopStart) for s in sub.atoms(sp.Symbol)):
+        return False
+    indices = set(_index_symbols(sub))
+    if len(indices) > _MAX_ARRAY_CSE_RANK or bound <= indices:
+        return False
+    return _is_expensive(sub)
+
+
+def _hoisted_temporary(state, sub):
+    """Replace ``sub`` by its temporary, created on first use.
+
+    The temporary is canonicalised onto the slot indices, so equal
+    sub-expressions over different indices share one definition.
+    """
+    indices = _index_symbols(sub)
+    mapping = {index: state.slots[pos] for pos, index in enumerate(indices)}
+    canon = sub.xreplace(mapping)
+    if canon not in state.temps:
+        free = state.slots[: len(indices)]
+        target = _new_shared_temp(state.namer, free, state.arrays)
+        state.definitions.append(
+            TempDef(target=target, free=free, limits=[], body=canon)
+        )
+        state.temps[canon] = target
+    target = state.temps[canon]
+    if not indices:
+        return target
+    return sp.Indexed(target.base, *indices)
+
+
+def _rewrite_leaf(state, expr, bound):
+    """Rewrite an expression without arguments, an ``Indexed`` or a
+    ``Piecewise`` (only a ``Piecewise`` that holds a sum is descended)."""
+    if isinstance(expr, sp.Piecewise) and expr.has(sp.Sum):
+        return expr.func(
+            *[_rewrite_hoisting(state, arg, bound) for arg in expr.args]
+        )
+    return expr
+
+
+def _rewrite_terms(state, expr, bound):
+    """Rewrite a product or sum, hoisting the groups of factors that share
+    the same indices (when the group is costly enough to be a candidate)."""
+    groups = {}
+    rest = []
+    for arg in expr.args:
+        indices = frozenset(_index_symbols(arg))
+        if bound <= indices or arg.has(sp.Sum) or arg.is_Number:
+            rest.append(_rewrite_hoisting(state, arg, bound))
+        else:
+            groups.setdefault(indices, []).append(arg)
+    new_args = list(rest)
+    for indices in sorted(groups, key=lambda s: sorted(map(str, s))):
+        members = groups[indices]
+        combined = expr.func(*members)
+        if len(members) > 1 and _is_hoist_candidate(combined, bound):
+            new_args.append(_hoisted_temporary(state, combined))
+        else:
+            new_args.extend(
+                _rewrite_hoisting(state, arg, bound) for arg in members
+            )
+    return expr.func(*new_args)
+
+
+def _rewrite_hoisting(state, expr, bound):
+    """Rewrite ``expr``; ``bound`` is None outside every summation."""
+    if isinstance(expr, sp.Sum):
+        inner = {limit[0] for limit in expr.limits}
+        return expr.func(
+            _rewrite_hoisting(state, expr.function, inner), *expr.limits
+        )
+    if bound is None:
+        if not expr.args or not expr.has(sp.Sum):
+            return expr
+        return expr.func(
+            *[_rewrite_hoisting(state, arg, None) for arg in expr.args]
+        )
+    if _is_hoist_candidate(expr, bound):
+        return _hoisted_temporary(state, expr)
+    if not expr.args or isinstance(expr, (sp.Indexed, sp.Piecewise)):
+        return _rewrite_leaf(state, expr, bound)
+    if isinstance(expr, (sp.Mul, sp.Add)):
+        return _rewrite_terms(state, expr, bound)
+    if isinstance(expr, sp.Basic) and not isinstance(expr, sp.Expr):
+        return expr
+    return expr.func(
+        *[_rewrite_hoisting(state, arg, bound) for arg in expr.args]
+    )
+
+
+def _rewrite_sum_definitions(state, sum_definitions):
+    """Hoist from the body of every looped definition, inserting the new
+    temporaries right before it."""
+    rewritten = []
+    for definition in sum_definitions:
+        if definition.limits:
+            bound = {limit[0] for limit in definition.limits}
+            definition = definition.copy(
+                body=_rewrite_hoisting(state, definition.body, bound)
+            )
+            rewritten.extend(state.definitions)
+            state.definitions.clear()
+        rewritten.append(definition)
+    return rewritten
+
+
 def _hoist_invariants(
     expressions, namer, arrays, sum_definitions=(), reserved=()
 ):
@@ -56,108 +244,12 @@ def _hoist_invariants(
     """
     exprs = list(expressions)
     sum_definitions = list(sum_definitions)
-    # ``reserved``: every name of the subroutine (arguments, outputs, module
-    # symbols); the slot indices of the temporaries must not clash with any
-    # of them, case-insensitively (Fortran).
-    used = {
-        str(symbol).lower()
-        for expr in exprs
-        for symbol in expr.atoms(sp.Symbol)
-    }
-    used.update(
-        {str(b).lower() for expr in exprs for b in expr.atoms(sp.IndexedBase)}
-    )
-    for definition in sum_definitions:
-        body = definition.body
-        used.update(str(symbol).lower() for symbol in body.atoms(sp.Symbol))
-        used.update(str(b).lower() for b in body.atoms(sp.IndexedBase))
-    used.update({str(name).lower() for name in arrays})
-    used.update(str(name).lower() for name in reserved)
-    used.update({"nc", "res"})
-    slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
-    definitions = []
-    temps = {}
-
-    def candidate(sub, bound):
-        if not isinstance(sub, sp.Expr) or sub.is_Atom:
-            return False
-        if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)):
-            return False
-        if sub.has(sp.Sum) or sub.has(sp.Piecewise):
-            return False
-        if sub.is_Relational or sub.is_Boolean:
-            return False
-        if any(isinstance(s, _LoopStart) for s in sub.atoms(sp.Symbol)):
-            return False
-        indices = set(_index_symbols(sub))
-        if len(indices) > _MAX_ARRAY_CSE_RANK or bound <= indices:
-            return False
-        return _is_expensive(sub)
-
-    def temporary(sub):
-        indices = _index_symbols(sub)
-        mapping = {index: slots[pos] for pos, index in enumerate(indices)}
-        canon = sub.xreplace(mapping)
-        if canon not in temps:
-            free = slots[: len(indices)]
-            target = _new_shared_temp(namer, free, arrays)
-            definitions.append(
-                TempDef(target=target, free=free, limits=[], body=canon)
-            )
-            temps[canon] = target
-        target = temps[canon]
-        if not indices:
-            return target
-        return sp.Indexed(target.base, *indices)
-
-    def rewrite(expr, bound):
-        if isinstance(expr, sp.Sum):
-            inner = {limit[0] for limit in expr.limits}
-            return expr.func(rewrite(expr.function, inner), *expr.limits)
-        if bound is None:
-            if not expr.args or not expr.has(sp.Sum):
-                return expr
-            return expr.func(*[rewrite(arg, None) for arg in expr.args])
-        if candidate(expr, bound):
-            return temporary(expr)
-        if not expr.args or isinstance(expr, (sp.Indexed, sp.Piecewise)):
-            if isinstance(expr, sp.Piecewise) and expr.has(sp.Sum):
-                return expr.func(*[rewrite(arg, bound) for arg in expr.args])
-            return expr
-        if isinstance(expr, (sp.Mul, sp.Add)):
-            groups = {}
-            rest = []
-            for arg in expr.args:
-                indices = frozenset(_index_symbols(arg))
-                if bound <= indices or arg.has(sp.Sum) or arg.is_Number:
-                    rest.append(rewrite(arg, bound))
-                else:
-                    groups.setdefault(indices, []).append(arg)
-            new_args = list(rest)
-            for indices in sorted(groups, key=lambda s: sorted(map(str, s))):
-                members = groups[indices]
-                combined = expr.func(*members)
-                if len(members) > 1 and candidate(combined, bound):
-                    new_args.append(temporary(combined))
-                else:
-                    new_args.extend(rewrite(arg, bound) for arg in members)
-            return expr.func(*new_args)
-        if isinstance(expr, sp.Basic) and not isinstance(expr, sp.Expr):
-            return expr
-        return expr.func(*[rewrite(arg, bound) for arg in expr.args])
-
-    exprs = [rewrite(expr, None) for expr in exprs]
-    hoisted = definitions
-    definitions = []
-    rewritten = []
-    for definition in sum_definitions:
-        if definition.limits:
-            bound = {limit[0] for limit in definition.limits}
-            definition = definition.copy(body=rewrite(definition.body, bound))
-            rewritten.extend(definitions)
-            definitions.clear()
-        rewritten.append(definition)
-    return exprs, hoisted, rewritten
+    used = _used_names(exprs, sum_definitions, arrays, reserved)
+    state = _new_hoist_state(used, namer, arrays)
+    exprs = [_rewrite_hoisting(state, expr, None) for expr in exprs]
+    hoisted = state.definitions
+    state = state._replace(definitions=[])
+    return exprs, hoisted, _rewrite_sum_definitions(state, sum_definitions)
 
 
 def _collect_terms(expr):
