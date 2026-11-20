@@ -36,6 +36,7 @@ back to the plain derivatives.
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from types import MappingProxyType
 
 import sympy as sp
@@ -479,6 +480,530 @@ def abstract_component_functions(
     return rewrite(expr, not expr.has(sp.Sum))
 
 
+@dataclass(frozen=True)
+class _MappingContext:
+    """State read by :func:`_map_to_arrays`.
+
+    Attributes
+    ----------
+    names : dict
+        ``(function name, derivative order)`` -> ``IndexedBase``.
+    params : dict
+        Name -> abstracted function (``registry`` values).
+    rates : dict
+        Name -> ``(g0, rate vectors)`` of the separable logarithmic rates.
+    pair_dep_rates : dict
+        Name -> logarithmic rate that depends on the pair.
+    inline_rates : bool
+        Write the first two derivatives of the rate functions in place.
+    scheme : NameScheme
+        Prefixes and slots of the abstracted arrays.
+    """
+
+    names: dict
+    params: dict
+    rates: dict
+    pair_dep_rates: dict
+    inline_rates: bool
+    scheme: NameScheme
+
+
+def _array_names(params: dict, order: int) -> dict:
+    """Return the ``IndexedBase`` of every function and derivative order.
+
+    Parameters
+    ----------
+    params : dict
+        Name -> abstracted function.
+    order : int
+        Highest temperature derivative.
+
+    Returns
+    -------
+    dict
+        ``(name, derivative order)`` -> ``IndexedBase``.
+    """
+    names = {}
+    for p in params.values():
+        for deriv in range(order + 1):
+            suffix = "" if deriv == 0 else "_" + "T" * deriv
+            names[(p.name, deriv)] = sp.IndexedBase(
+                p.name + suffix, shape=(nc,) * p.rank
+            )
+    return names
+
+
+def _inline_derivative(func, deriv, idx, context):
+    """Return ``M'`` or ``M''`` written in place, or ``None``.
+
+    Parameters
+    ----------
+    func : AppliedUndef
+        The differentiated abstracted function.
+    deriv : int
+        Order of the temperature derivative.
+    idx : list
+        Its arguments without ``T``.
+    context : _MappingContext
+        State of the mapping.
+
+    Returns
+    -------
+    sympy expression or None
+        ``None`` when the derivative is not written in place.
+    """
+    name = str(func.func)
+    if not context.inline_rates or deriv not in (1, 2):
+        return None
+    scheme = context.scheme
+    if name in context.pair_dep_rates:
+        rate = context.pair_dep_rates[name].xreplace(
+            dict(zip(scheme.pair_slots, idx))
+        )
+        base = sp.Indexed(context.names[(name, 0)], *idx)
+        if deriv == 1:
+            return _map_to_arrays(base * rate, context)
+        return _map_to_arrays(base * (rate**2 + sp.diff(rate, T)), context)
+    if name in context.rates:
+        # M' = M*rate, M'' = M*(rate**2 + rate'), written in place: the sums
+        # then split into dot products
+        g0, vecs = context.rates[name]
+        slot_a, slot_b = idx
+        base = sp.Indexed(context.names[(name, 0)], slot_a, slot_b)
+        rate = g0 + vecs[0][slot_a] + vecs[0][slot_b]
+        if deriv == 1:
+            return base * rate
+        rate_t = sp.diff(g0, T) + vecs[1][slot_a] + vecs[1][slot_b]
+        return base * (rate**2 + rate_t)
+    return None
+
+
+def _map_derivative(deriv_expr, context):
+    """Return the array that replaces a derivative, or ``None``.
+
+    Parameters
+    ----------
+    deriv_expr : sympy.Derivative
+        A derivative node.
+    context : _MappingContext
+        State of the mapping.
+
+    Returns
+    -------
+    sympy expression or None
+        ``None`` when it is not a derivative of an abstracted function.
+    """
+    func = deriv_expr.expr
+    if not (
+        isinstance(func, sp.core.function.AppliedUndef)
+        and str(func.func) in context.params
+    ):
+        return None
+    deriv = sum(c for var, c in deriv_expr.variable_count if var == T)
+    idx = [arg for arg in func.args if arg != T]
+    inlined = _inline_derivative(func, deriv, idx, context)
+    if inlined is not None:
+        return inlined
+    return sp.Indexed(context.names[(str(func.func), deriv)], *idx)
+
+
+def _map_to_arrays(sub, context):
+    """Replace the abstract functions and their derivatives by arrays.
+
+    Parameters
+    ----------
+    sub : sympy expression
+        Expression to rewrite.
+    context : _MappingContext
+        State of the mapping.
+
+    Returns
+    -------
+    sympy expression
+        ``sub`` in terms of the arrays of ``context.names``.
+    """
+    if isinstance(sub, sp.Derivative):
+        replaced = _map_derivative(sub, context)
+        if replaced is not None:
+            return replaced
+    if (
+        isinstance(sub, sp.core.function.AppliedUndef)
+        and str(sub.func) in context.params
+    ):
+        return sp.Indexed(
+            context.names[(str(sub.func), 0)],
+            *[arg for arg in sub.args if arg != T],
+        )
+    if not getattr(sub, "args", ()) or isinstance(sub, (sp.Idx, sp.Indexed)):
+        return sub
+    return sub.func(*[_map_to_arrays(arg, context) for arg in sub.args])
+
+
+def _share_pair_bodies(params: dict, scheme: NameScheme) -> None:
+    """Write a pair body in terms of the earlier pair body it contains.
+
+    ``tau*exp(-c tau)`` after ``exp(-c tau)`` is written through the function
+    of the earlier one, so that its temperature derivatives propagate.
+    Mutates ``body`` of the registry objects, in registry order.
+
+    Parameters
+    ----------
+    params : dict
+        Name -> abstracted function.
+    scheme : NameScheme
+        Slots of the pair functions.
+    """
+    earlier = []
+    for p in params.values():
+        if p.rank != 2:
+            continue
+        for q in earlier:
+            if q.body.has(T) and q.body != p.body:
+                new_body = p.body.subs(q.body, q.func(*scheme.pair_slots, T))
+                if new_body != p.body:
+                    p.body = new_body
+        earlier.append(p)
+
+
+def _product_factors(body):
+    """Return the factors of a product (or the body itself)."""
+    return body.args if isinstance(body, sp.Mul) else (body,)
+
+
+def _log_rate_applies(body, pair_rates):
+    """Tell whether the logarithmic rate form is valid for a pair body.
+
+    The form divides by the T-dependent factors; it is only used when every
+    such factor sits under a non-integer power (as in ``sqrt(a_a*a_b)``),
+    whose plain derivative divides by it too.
+    """
+    return all(
+        (not factor.has(T))
+        or (isinstance(factor, sp.Pow) and not factor.exp.is_integer)
+        or (pair_rates and isinstance(factor, sp.exp))
+        for factor in _product_factors(body)
+    )
+
+
+def _pair_dependent_terms(terms):
+    """Tell whether some term of a rate depends on both pair indexes."""
+    return any(len(term.atoms(sp.Idx)) > 1 for term in terms)
+
+
+def _separable_rate(rate, terms, scheme):
+    """Split ``g(a) + g(b)`` rates into ``(g0, g)``, or return ``None``.
+
+    Parameters
+    ----------
+    rate : sympy expression
+        ``d(log M)/dT``.
+    terms : tuple
+        Terms of ``rate``.
+    scheme : NameScheme
+        Pair slots and component slot.
+
+    Returns
+    -------
+    tuple or None
+        ``(g0, g_component)``; ``None`` when the terms do not separate.
+    """
+    if rate.has(sp.log) or _pair_dependent_terms(terms):
+        return None
+    slot_a, slot_b = scheme.pair_slots
+    rate_a = sp.Add(*[t for t in terms if slot_a in t.atoms(sp.Idx)])
+    rate_b = sp.Add(*[t for t in terms if slot_b in t.atoms(sp.Idx)])
+    constant = sp.Add(*[t for t in terms if not t.atoms(sp.Idx)])
+    comp_a = rate_a.xreplace({slot_a: scheme.component_slot})
+    comp_b = rate_b.xreplace({slot_b: scheme.component_slot})
+    if sp.simplify(comp_a - comp_b) != 0:
+        return None
+    return constant, comp_a
+
+
+def _pair_rate_terms(body):
+    """Return ``d(log body)/dT`` expanded, and its terms."""
+    rate = sp.expand(sp.diff(sp.expand_log(sp.log(body), force=True), T))
+    return rate, rate.args if isinstance(rate, sp.Add) else (rate,)
+
+
+def _rate_vector_definitions(name, component_rate, order):
+    """Return the vectors ``g`` and its T derivatives up to ``order - 1``.
+
+    Parameters
+    ----------
+    name : str
+        Function name.
+    component_rate : sympy expression
+        The rate ``g`` of one component.
+    order : int
+        Highest temperature derivative.
+
+    Returns
+    -------
+    list of (str, sympy expression)
+        Vector name and body, from the rate to its highest derivative.
+    """
+    vectors = []
+    for deriv in range(order):
+        body = (
+            component_rate if deriv == 0 else sp.diff(component_rate, T, deriv)
+        )
+        vectors.append((f"{name}_g" + "T" * deriv, body))
+    return vectors
+
+
+def _pair_log_rates(params, order, pair_rates, scheme):
+    """Logarithmic rates of the pair functions: ``M' = M*(c + g(a) + g(b))``.
+
+    Parameters
+    ----------
+    params : dict
+        Name -> abstracted function.
+    order : int
+        Highest temperature derivative.
+    pair_rates : bool
+        Accept cheap rates that depend on the pair.
+    scheme : NameScheme
+        Slots of the arrays.
+
+    Returns
+    -------
+    rates : dict
+        Name -> ``(g0, rate vectors)``.
+    pair_dep_rates : dict
+        Name -> rate that depends on the pair.
+    extra_vectors : list of (str, sympy expression)
+        The rate vectors to define, in creation order.
+    """
+    rates, pair_dep_rates, extra_vectors = {}, {}, []
+    for p in params.values():
+        if p.rank != 2 or not p.body.has(T) or order == 0:
+            continue
+        if not _log_rate_applies(p.body, pair_rates):
+            continue
+        rate, terms = _pair_rate_terms(p.body)
+        if (
+            pair_rates
+            and not rate.has(sp.log)
+            and not rate.has(sp.exp)
+            and _pair_dependent_terms(terms)
+        ):
+            # a cheap rate that depends on the pair (c_ab b_ab / T**2 for
+            # exp(-c_ab tau_ab)): M' = M*G_ab written in place
+            pair_dep_rates[p.name] = rate
+            continue
+        split = _separable_rate(rate, terms, scheme)
+        if split is None:
+            continue
+        vectors = _rate_vector_definitions(p.name, split[1], order)
+        extra_vectors.extend(vectors)
+        rates[p.name] = (
+            split[0],
+            [sp.IndexedBase(vname, shape=(nc,)) for vname, _ in vectors],
+        )
+    return rates, pair_dep_rates, extra_vectors
+
+
+def _component_log_rates(params, order):
+    """Logarithmic rates of the component functions with costly powers.
+
+    ``A' = A*h``, ``A'' = A'*h + A*h'`` with ``h = d(log A)/dT``, so that a
+    power such as ``(3/(2 + T/Tc))**k`` is evaluated once instead of once per
+    derivative.
+
+    Parameters
+    ----------
+    params : dict
+        Name -> abstracted function.
+    order : int
+        Highest temperature derivative.
+
+    Returns
+    -------
+    dict
+        Name -> ``h``.
+    """
+    comp_rates = {}
+    for p in params.values():
+        if p.rank != 1 or not p.body.has(T) or order == 0:
+            continue
+        costly = [f for f in _product_factors(p.body) if f.has(T)]
+        if not costly or not all(
+            (isinstance(f, sp.Pow) and not f.exp.is_integer)
+            or isinstance(f, sp.exp)
+            for f in costly
+        ):
+            continue
+        rate = sp.diff(sp.expand_log(sp.log(p.body), force=True), T)
+        if rate.has(sp.log) and any(
+            isinstance(f, sp.Pow) and f.exp.has(T) for f in costly
+        ):
+            continue
+        comp_rates[p.name] = rate
+    return comp_rates
+
+
+def _rate_based_value(name, deriv, arrays, comp_rates, rates, scheme):
+    """Return the ``deriv``-th derivative from a logarithmic rate, or None.
+
+    Parameters
+    ----------
+    name : str
+        Function name.
+    deriv : int
+        Derivative order (1 or more).
+    arrays : list
+        ``Indexed`` arrays of the derivatives of the function.
+    comp_rates : dict
+        Logarithmic rates of the component functions.
+    rates : dict
+        Logarithmic rates of the pair functions.
+    scheme : NameScheme
+        Pair slots.
+
+    Returns
+    -------
+    sympy expression or None
+        ``None`` when ``name`` has no rate.
+    """
+    if name in comp_rates:
+        rate = comp_rates[name]
+        if deriv == 1:
+            return arrays[0] * rate
+        return arrays[1] * rate + arrays[0] * sp.diff(rate, T)
+    if name in rates:
+        g0, vecs = rates[name]
+        slot_a, slot_b = scheme.pair_slots
+        rate = g0 + vecs[0][slot_a] + vecs[0][slot_b]
+        if deriv == 1:
+            return arrays[0] * rate
+        rate_t = sp.diff(g0, T) + vecs[1][slot_a] + vecs[1][slot_b]
+        return arrays[1] * rate + arrays[0] * rate_t
+    return None
+
+
+def _plain_derivative(param, deriv, arrays, opaque, current):
+    """Differentiate once more and put the arrays in place of the functions.
+
+    Parameters
+    ----------
+    param : object
+        Abstracted function.
+    deriv : int
+        Derivative order (1 or more) being built.
+    arrays : list
+        ``Indexed`` arrays of the derivatives of the function.
+    opaque : sympy expression
+        Placeholder of the pair body.
+    current : sympy expression
+        The ``deriv - 1`` derivative of the body.
+
+    Returns
+    -------
+    current : sympy expression
+        The ``deriv`` derivative of the body, for the next order.
+    value : sympy expression
+        It, in terms of ``arrays``.
+    """
+    current = sp.diff(current, T)
+    if deriv == 1 and param.rank == 2:
+        current = current.subs(param.body, opaque)
+    value = current
+    for lower in range(deriv, 0, -1):
+        value = value.subs(sp.Derivative(opaque, (T, lower)), arrays[lower])
+    return current, value.subs(opaque, arrays[0])
+
+
+def _derivative_value(param, deriv, state, context, comp_rates):
+    """Return the ``deriv``-th derivative of a function and the new state.
+
+    Parameters
+    ----------
+    param : object
+        Abstracted function.
+    deriv : int
+        Derivative order (1 or more).
+    state : tuple
+        ``(arrays, opaque, current)``: the arrays of the derivatives, the
+        placeholder of the pair body and the ``deriv - 1`` derivative of the
+        body, which only plain differentiation advances.
+    context : _MappingContext
+        State of the mapping (rates, scheme).
+    comp_rates : dict
+        Logarithmic rates of the component functions.
+
+    Returns
+    -------
+    current : sympy expression
+        The ``current`` of the next order.
+    value : sympy expression
+        The derivative, in terms of the arrays.
+    """
+    arrays, opaque, current = state
+    value = _rate_based_value(
+        param.name, deriv, arrays, comp_rates, context.rates, context.scheme
+    )
+    if value is None:
+        return _plain_derivative(param, deriv, arrays, opaque, current)
+    return current, value
+
+
+def _derivative_arrays(param, order, context):
+    """Return the ``Indexed`` arrays of a function and its derivatives."""
+    scheme = context.scheme
+    slots = (scheme.component_slot,) if param.rank == 1 else scheme.pair_slots
+    return [
+        sp.Indexed(context.names[(param.name, deriv)], *slots)
+        for deriv in range(order + 1)
+    ]
+
+
+def _parameter_definitions(param, order, context, comp_rates):
+    """Definitions of one function and its temperature derivatives.
+
+    Parameters
+    ----------
+    param : object
+        Abstracted function.
+    order : int
+        Highest temperature derivative.
+    context : _MappingContext
+        State of the mapping (names, rates, scheme).
+    comp_rates : dict
+        Logarithmic rates of the component functions.
+
+    Returns
+    -------
+    list of (name, body, rank, symmetric)
+        One entry per derivative that is not written in place.
+    """
+    arrays = _derivative_arrays(param, order, context)
+    opaque = sp.Function("_opaque_" + param.name)(T)
+    in_place = context.inline_rates and (
+        param.name in context.rates or param.name in context.pair_dep_rates
+    )
+    current = param.body
+    entries = []
+    for deriv in range(order + 1 if param.body.has(T) else 1):
+        if deriv == 0:
+            value = param.body
+        else:
+            current, value = _derivative_value(
+                param, deriv, (arrays, opaque, current), context, comp_rates
+            )
+            if in_place:
+                continue  # written in place by the mapping
+        entries.append(
+            (
+                str(context.names[(param.name, deriv)]),
+                _map_to_arrays(value, context),
+                param.rank,
+                param.symmetric,
+            )
+        )
+    return entries
+
+
 def component_definitions(
     registry,
     order,
@@ -498,212 +1023,32 @@ def component_definitions(
     mapping : callable
         Replaces the abstract functions and their derivatives by arrays.
     """
-    names = {}
     params = {p.name: p for p in registry.values()}
-    for p in params.values():
-        for d in range(order + 1):
-            names[(p.name, d)] = sp.IndexedBase(
-                p.name + ("" if d == 0 else "_" + "T" * d),
-                shape=(nc,) * p.rank,
-            )
-
-    def mapping(expr):
-        def visit(sub):
-            if isinstance(sub, sp.Derivative):
-                f = sub.expr
-                if (
-                    isinstance(f, sp.core.function.AppliedUndef)
-                    and str(f.func) in params
-                ):
-                    d = sum(c for var, c in sub.variable_count if var == T)
-                    idx = [a for a in f.args if a != T]
-                    if (
-                        inline_rates
-                        and str(f.func) in pair_dep_rates
-                        and d in (1, 2)
-                    ):
-                        G = pair_dep_rates[str(f.func)].xreplace(
-                            dict(zip(scheme.pair_slots, idx))
-                        )
-                        m = sp.Indexed(names[(str(f.func), 0)], *idx)
-                        if d == 1:
-                            return visit(m * G)
-                        return visit(m * (G**2 + sp.diff(G, T)))
-                    if inline_rates and str(f.func) in rates and d in (1, 2):
-                        # M' = M*rate, M'' = M*(rate**2 + rate'), written in
-                        # place: the sums then split into dot products
-                        g0, vecs = rates[str(f.func)]
-                        a_, b_ = idx
-                        m = sp.Indexed(names[(str(f.func), 0)], a_, b_)
-                        rate = g0 + vecs[0][a_] + vecs[0][b_]
-                        if d == 1:
-                            return m * rate
-                        rate_T = sp.diff(g0, T) + vecs[1][a_] + vecs[1][b_]
-                        return m * (rate**2 + rate_T)
-                    return sp.Indexed(names[(str(f.func), d)], *idx)
-            if (
-                isinstance(sub, sp.core.function.AppliedUndef)
-                and str(sub.func) in params
-            ):
-                return sp.Indexed(
-                    names[(str(sub.func), 0)], *[a for a in sub.args if a != T]
-                )
-            if not getattr(sub, "args", ()) or isinstance(
-                sub, (sp.Idx, sp.Indexed)
-            ):
-                return sub
-            return sub.func(*[visit(arg) for arg in sub.args])
-
-        return visit(expr)
-
     if pair_cse:
-        # a pair body that contains an earlier one (tau*exp(-c tau) after
-        # exp(-c tau)) is written in terms of it, through its function so
-        # that its temperature derivatives propagate
-        earlier = []
-        for p in params.values():
-            if p.rank != 2:
-                continue
-            for q in earlier:
-                if q.body.has(T) and q.body != p.body:
-                    new_body = p.body.subs(
-                        q.body, q.func(*scheme.pair_slots, T)
-                    )
-                    if new_body != p.body:
-                        p.body = new_body
-            earlier.append(p)
-
-    # logarithmic rates of the pair functions: M' = M*(c + g(a) + g(b))
-    rates = {}
-    pair_dep_rates = {}
-    extra_vectors = []
-    for p in params.values():
-        if p.rank != 2 or not p.body.has(T) or order == 0:
-            continue
-        # the logarithmic form divides by the T-dependent factors; it is only
-        # used when every such factor sits under a non-integer power (as in
-        # sqrt(a_a*a_b)), whose plain derivative divides by it too
-        factors = p.body.args if isinstance(p.body, sp.Mul) else (p.body,)
-        if not all(
-            (not f.has(T))
-            or (isinstance(f, sp.Pow) and not f.exp.is_integer)
-            or (pair_rates and isinstance(f, sp.exp))
-            for f in factors
-        ):
-            continue
-        G = sp.expand(sp.diff(sp.expand_log(sp.log(p.body), force=True), T))
-        terms = G.args if isinstance(G, sp.Add) else (G,)
-        if (
-            pair_rates
-            and not G.has(sp.log)
-            and not G.has(sp.exp)
-            and any(len(t.atoms(sp.Idx)) > 1 for t in terms)
-        ):
-            # a cheap rate that depends on the pair (c_ab b_ab / T**2 for
-            # exp(-c_ab tau_ab)): M' = M*G_ab written in place
-            pair_dep_rates[p.name] = G
-            continue
-        if G.has(sp.log) or any(len(t.atoms(sp.Idx)) > 1 for t in terms):
-            continue
-        slot_a, slot_b = scheme.pair_slots
-        ga = sp.Add(*[t for t in terms if slot_a in t.atoms(sp.Idx)])
-        gb = sp.Add(*[t for t in terms if slot_b in t.atoms(sp.Idx)])
-        g0 = sp.Add(*[t for t in terms if not t.atoms(sp.Idx)])
-        ca = ga.xreplace({slot_a: scheme.component_slot})
-        cb = gb.xreplace({slot_b: scheme.component_slot})
-        if sp.simplify(ca - cb) != 0:
-            continue
-        rate_vecs = []
-        for d in range(order):  # rate and its T derivatives up to order-1
-            vname = f"{p.name}_g" + "T" * d
-            body = ca if d == 0 else sp.diff(ca, T, d)
-            extra_vectors.append((vname, body))
-            rate_vecs.append(sp.IndexedBase(vname, shape=(nc,)))
-        rates[p.name] = (g0, rate_vecs)
-
-    # logarithmic rates of the component functions with costly powers:
-    # A' = A*h, A'' = A'*h + A*h' with h = d(log A)/dT, so that a power such
-    # as (3/(2 + T/Tc))**k is evaluated once instead of once per derivative
-    comp_rates = {}
-    for p in params.values():
-        if p.rank != 1 or not p.body.has(T) or order == 0:
-            continue
-        factors = p.body.args if isinstance(p.body, sp.Mul) else (p.body,)
-        costly = [f for f in factors if f.has(T)]
-        if not costly or not all(
-            (isinstance(f, sp.Pow) and not f.exp.is_integer)
-            or isinstance(f, sp.exp)
-            for f in costly
-        ):
-            continue
-        h = sp.diff(sp.expand_log(sp.log(p.body), force=True), T)
-        if h.has(sp.log) and any(
-            isinstance(f, sp.Pow) and f.exp.has(T) for f in costly
-        ):
-            continue
-        comp_rates[p.name] = h
-
+        _share_pair_bodies(params, scheme)
+    rates, pair_dep_rates, extra_vectors = _pair_log_rates(
+        params, order, pair_rates, scheme
+    )
+    comp_rates = _component_log_rates(params, order)
+    context = _MappingContext(
+        names=_array_names(params, order),
+        params=params,
+        rates=rates,
+        pair_dep_rates=pair_dep_rates,
+        inline_rates=inline_rates,
+        scheme=scheme,
+    )
     defs = []
     for rank in (1, 2):
         for p in params.values():
-            if p.rank != rank:
-                continue
-            slots = (
-                (scheme.component_slot,) if rank == 1 else scheme.pair_slots
-            )
-            arrays_ = [
-                sp.Indexed(names[(p.name, d)], *slots)
-                for d in range(order + 1)
-            ]
-            opaque = sp.Function("_opaque_" + p.name)(T)
-            current = p.body
-            for d in range(order + 1 if p.body.has(T) else 1):
-                if d == 0:
-                    value = p.body
-                elif p.name in comp_rates:
-                    h = comp_rates[p.name]
-                    value = (
-                        arrays_[0] * h
-                        if d == 1
-                        else arrays_[1] * h + arrays_[0] * sp.diff(h, T)
-                    )
-                elif p.name in rates:
-                    g0, vecs = rates[p.name]
-                    a_, b_ = scheme.pair_slots
-                    rate = g0 + vecs[0][a_] + vecs[0][b_]
-                    if d == 1:
-                        value = arrays_[0] * rate
-                    else:
-                        rate_T = sp.diff(g0, T) + vecs[1][a_] + vecs[1][b_]
-                        value = arrays_[1] * rate + arrays_[0] * rate_T
-                else:
-                    current = sp.diff(current, T)
-                    if d == 1 and rank == 2:
-                        current = current.subs(p.body, opaque)
-                    value = current
-                    for dd in range(d, 0, -1):
-                        value = value.subs(
-                            sp.Derivative(opaque, (T, dd)), arrays_[dd]
-                        )
-                    value = value.subs(opaque, arrays_[0])
-                if (
-                    inline_rates
-                    and d > 0
-                    and (p.name in rates or p.name in pair_dep_rates)
-                ):
-                    continue  # written in place by mapping()
-                defs.append(
-                    (
-                        str(names[(p.name, d)]),
-                        mapping(value),
-                        rank,
-                        p.symmetric,
-                    )
+            if p.rank == rank:
+                defs.extend(
+                    _parameter_definitions(p, order, context, comp_rates)
                 )
         if rank == 1:
             for vname, body in extra_vectors:
-                defs.append((vname, mapping(body), 1, False))
-    return defs, mapping
+                defs.append((vname, _map_to_arrays(body, context), 1, False))
+    return defs, partial(_map_to_arrays, context=context)
 
 
 def split_sum_terms(expr, scheme=DEFAULT_NAME_SCHEME):

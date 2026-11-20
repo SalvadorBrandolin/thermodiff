@@ -167,3 +167,22 @@ def test_chain_structures_are_pinned(label, monkeypatch):
     model, options = CASES[label]
     recorded, code_digest = run_case(model_text(model), options, monkeypatch)
     assert (digest(repr(recorded)), code_digest) == PINS[label]
+
+
+def test_rate_vector_definitions_name_and_differentiate():
+    temperature = sp.Symbol("T")
+    rate = 1 / temperature
+    vectors = chain._rate_vector_definitions("M", rate, 3)
+    assert vectors == [
+        ("M_g", rate),
+        ("M_gT", sp.diff(rate, temperature)),
+        ("M_gTT", sp.diff(rate, temperature, 2)),
+    ]
+    assert chain._rate_vector_definitions("M", rate, 0) == []
+
+
+def test_pair_dependent_terms_needs_two_indexes():
+    first, second = sp.Idx("a"), sp.Idx("b")
+    base = sp.IndexedBase("c")
+    assert chain._pair_dependent_terms((base[first, second],))
+    assert not chain._pair_dependent_terms((base[first], base[second]))
