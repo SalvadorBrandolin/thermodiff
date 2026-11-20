@@ -5,7 +5,7 @@ import hashlib
 import pytest
 import sympy as sp
 
-from thermodiff import fortran
+from thermodiff.codegen import pipeline
 from thermodiff.fortran import _canonical_symmetric
 from thermodiff.model import compile_model
 
@@ -132,7 +132,7 @@ def test_end_to_end_output_is_pinned(sym_rank3):
 
 def test_failed_sym_rank3_call_does_not_leak(monkeypatch):
     with monkeypatch.context() as patched:
-        patched.setattr(fortran, "_fold_symmetric_sums", _raise_midway)
+        patched.setattr(pipeline, "_fold_symmetric_sums", _raise_midway)
         with pytest.raises(RuntimeError, match="stage failed"):
             _generate_chain(True)
     # callers that run before the next emission see no leftover state

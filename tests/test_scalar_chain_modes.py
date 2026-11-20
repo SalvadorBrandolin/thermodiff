@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from thermodiff import bench_hooks, fortran
+from thermodiff.codegen import pipeline
 from thermodiff.fortran import to_fortran
 from thermodiff.model.emit import build_diff
 from thermodiff.model.ir import build_ir
@@ -352,7 +353,7 @@ def force_estimate(monkeypatch, estimate):
         structured["_scalar_estimate"] = estimate
         return structured
 
-    monkeypatch.setattr(fortran, "_chain_structure", patched)
+    monkeypatch.setattr(pipeline, "_chain_structure", patched)
 
 
 @pytest.mark.parametrize(

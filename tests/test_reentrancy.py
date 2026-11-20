@@ -13,6 +13,7 @@ from typing import Any, NamedTuple
 import pytest
 
 from thermodiff import fortran
+from thermodiff.codegen import pipeline
 from thermodiff.model.compile import compile_model
 
 from test_chain_names import forced_names_model
@@ -166,7 +167,7 @@ def test_failed_generation_does_not_poison_later_ones(
 
     for victim in (cases[1], cases[7], cases[4]):
         with monkeypatch.context() as patch:
-            patch.setattr(fortran, "_emit_code", failing_emit)
+            patch.setattr(pipeline, "_emit_code", failing_emit)
             with pytest.raises(RuntimeError, match="injected failure"):
                 generate(victim)
         assert fortran._emit_code is original
