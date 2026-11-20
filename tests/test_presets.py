@@ -1,12 +1,22 @@
 """Tests of the code-generation presets of the entry points."""
 
+import model_harness as harness
+import numpy as np
 import pytest
+from fortran_tools import GFORTRAN
 
 from thermodiff.codegen.options import (
     CodegenOptions,
     Preset,
     resolve_codegen_options,
 )
+from thermodiff.fortran import to_fortran
+from thermodiff.model import compile_model, compile_model_file, examples
+from thermodiff.model.cli import _build_parser
+from thermodiff.model.cli import main as cli_main
+from thermodiff.model.emit import build_diff, emit_module
+from thermodiff.model.ir import build_ir
+from thermodiff.model.parser import read_sections
 
 
 class TestResolveCodegenOptions:
@@ -46,3 +56,194 @@ class TestResolveCodegenOptions:
     def test_unknown_override(self):
         with pytest.raises(TypeError, match="bogus"):
             resolve_codegen_options(bogus=True)
+
+
+# ---------------------------------------------------------------------------
+# entry points: minimal output, CLI flags and numerical agreement
+# ---------------------------------------------------------------------------
+
+SMALL_MODEL = """\
+model small
+variables
+    n nc
+    T
+parameters
+    b nc
+function
+    T*sum_i sum_j n_i*n_j*b_i*b_j
+"""
+
+GIBBS_MODEL = """\
+model gex
+variables
+    n nc
+    T
+parameters
+    A nc nc
+expressions
+    ntot = sum_i n_i
+function
+    sum_i n_i*log(n_i/ntot) + T*(sum_i sum_j n_i*n_j*A_ij)/ntot
+"""
+
+GIBBS_DERIVATIVES = "dT,dn,dT2,dndn,dndT"
+
+PENG_ROBINSON = examples.get_example("Peng-Robinson (pressure)")
+
+# Input expressions of the Fortran driver, one dict per state.
+PR_STATES = (
+    {
+        "n": "0.3d0+0.11d0*i",
+        "Tc": "190d0+37d0*i",
+        "b": "0.02d0+0.003d0*i",
+        "V": "2d0*sum(x_n)",
+    },
+    {
+        "n": "0.2d0+0.07d0*i",
+        "Tc": "150d0+21d0*i",
+        "b": "0.03d0+0.002d0*i",
+        "T": "250d0",
+        "V": "3d0*sum(x_n)",
+    },
+)
+GIBBS_STATES = (
+    {"n": "0.3d0+0.11d0*i"},
+    {"n": "0.8d0+0.05d0*i", "T": "280d0", "A": "0.1d0*i-0.07d0*j"},
+)
+
+RTOL_BY_PRESET = {"standard": 1e-10, "fastest": 1e-9}
+ATOL = 1e-14
+
+
+class TestEntryPoints:
+    """The entry points resolve their options through one resolver."""
+
+    def test_default_is_standard(self):
+        assert compile_model(SMALL_MODEL) == compile_model(
+            SMALL_MODEL, preset="standard"
+        )
+        assert compile_model(SMALL_MODEL) != compile_model(
+            SMALL_MODEL, preset="minimal"
+        )
+
+    def test_minimal_matches_to_fortran_with_neutral_defaults(self):
+        ir = build_ir(read_sections(SMALL_MODEL, None))
+        diff, derivatives = build_diff(ir)
+        body = to_fortran(
+            diff,
+            derivatives=derivatives,
+            name="f",
+            subroutine_name="small_derivs",
+            integer_args=ir.dimensions,
+            module_symbols=ir.imported,
+            optional_derivatives=False,
+            array_cse=True,
+            share=True,
+            symmetric_params=getattr(ir, "symmetric", ()),
+        )
+        indented = "\n".join(
+            "   " + line if line.strip() else "" for line in body.splitlines()
+        )
+        assert indented in emit_module(ir, preset="minimal")
+
+    def test_file_and_text_agree(self, tmp_path):
+        path = tmp_path / "small.model"
+        path.write_text(SMALL_MODEL)
+        assert compile_model_file(str(path), preset="fastest") == (
+            compile_model(SMALL_MODEL, preset="fastest")
+        )
+
+    def test_overrides_and_options(self):
+        by_override = compile_model(
+            SMALL_MODEL, preset="minimal", sum_alpha=True
+        )
+        by_options = compile_model(
+            SMALL_MODEL, options=CodegenOptions(sum_alpha=True)
+        )
+        assert by_override == by_options
+
+    def test_preset_and_options_conflict(self):
+        with pytest.raises(ValueError):
+            compile_model(
+                SMALL_MODEL, preset="fastest", options=CodegenOptions()
+            )
+
+    def test_unknown_override(self):
+        with pytest.raises(TypeError):
+            compile_model(SMALL_MODEL, bogus=True)
+
+
+class TestCli:
+    """``--preset`` and the flags that override it only when given."""
+
+    @staticmethod
+    def _run(tmp_path, capsys, *flags):
+        path = tmp_path / "small.model"
+        path.write_text(SMALL_MODEL)
+        assert cli_main([str(path), *flags]) == 0
+        return capsys.readouterr().out
+
+    def test_default_is_standard(self, tmp_path, capsys):
+        assert self._run(tmp_path, capsys) == compile_model(
+            SMALL_MODEL, filename="small.model", preset="standard"
+        )
+
+    @pytest.mark.parametrize("preset", ["minimal", "fastest"])
+    def test_preset_flag(self, tmp_path, capsys, preset):
+        assert self._run(
+            tmp_path, capsys, "--preset", preset
+        ) == compile_model(SMALL_MODEL, preset=preset)
+
+    @pytest.mark.filterwarnings("ignore:options ignored")
+    def test_no_share_overrides_fastest(self, tmp_path, capsys):
+        shared = self._run(tmp_path, capsys, "--preset", "fastest")
+        emitted = self._run(
+            tmp_path, capsys, "--preset", "fastest", "--no-share"
+        )
+        with pytest.warns(UserWarning):
+            expected = compile_model(
+                SMALL_MODEL, preset="fastest", share=False
+            )
+        assert emitted == expected
+        assert emitted != shared
+
+    def test_unset_flags_keep_the_preset(self):
+        args = _build_parser().parse_args(["m.model"])
+        overrides = {
+            name: value
+            for name, value in vars(args).items()
+            if name not in ("model", "output", "derivatives", "preset")
+        }
+        assert set(overrides.values()) == {None}
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(GFORTRAN is None, reason="gfortran not available")
+@pytest.mark.parametrize("preset", ["standard", "fastest"])
+@pytest.mark.parametrize(
+    ("text", "derivatives", "states"),
+    [
+        (PENG_ROBINSON, harness.W6, PR_STATES),
+        (GIBBS_MODEL, GIBBS_DERIVATIVES, GIBBS_STATES),
+    ],
+    ids=["helmholtz", "gibbs"],
+)
+def test_preset_agrees_with_minimal_numerically(
+    preset, text, derivatives, states
+):
+    """Every output of ``preset`` matches ``minimal`` (gfortran, -O0)."""
+    for inits in states:
+        reference, _ = harness.run(
+            text,
+            {"preset": "minimal"},
+            inits,
+            derivs=derivatives,
+            opt=False,
+        )
+        values, _ = harness.run(
+            text, {"preset": preset}, inits, derivs=derivatives, opt=False
+        )
+        assert np.all(np.isfinite(values))
+        np.testing.assert_allclose(
+            values, reference, rtol=RTOL_BY_PRESET[preset], atol=ATOL
+        )
