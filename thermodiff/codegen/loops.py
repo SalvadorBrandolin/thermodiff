@@ -11,7 +11,13 @@ from thermodiff.codegen.common import (
     _order_free,
     _temp_name,
 )
-from thermodiff.codegen.ir import TempDef
+from thermodiff.codegen.ir import (
+    ComponentFusedMap,
+    FusedNest,
+    OuterFusedNest,
+    SiblingNest,
+    TempDef,
+)
 from thermodiff.codegen.symmetry import _alpha_key, _canonical_symmetric
 
 
@@ -487,13 +493,13 @@ def _fuse_loop_nests(definitions, namer):
             out.extend(group)
         else:
             out.append(
-                {
-                    "target": group[0]["target"],
-                    "free": group[0]["free"],
-                    "limits": group[0]["limits"],
-                    "body": group[0]["body"],
-                    "fused": list(group),
-                }
+                FusedNest(
+                    target=group[0]["target"],
+                    free=group[0]["free"],
+                    limits=group[0]["limits"],
+                    body=group[0]["body"],
+                    fused=list(group),
+                )
             )
         group.clear()
 
@@ -679,15 +685,14 @@ def _fuse_component_maps(definitions, namer):
                 for kind, sym, value in steps
             ]
             out.append(
-                {
-                    "target": group[0]["target"],
-                    "free": [idx],
-                    "limits": [],
-                    "body": group[0]["body"],
-                    "compfused": True,
-                    "steps": ordered,
-                    "members": [(d["target"], d["body"]) for d in group],
-                }
+                ComponentFusedMap(
+                    target=group[0]["target"],
+                    free=[idx],
+                    limits=[],
+                    body=group[0]["body"],
+                    steps=ordered,
+                    members=[(d["target"], d["body"]) for d in group],
+                )
             )
         group.clear()
 
@@ -835,7 +840,7 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
                 for sym in sp.sympify(bound).atoms(sp.Symbol):
                     if isinstance(sym, _LoopStart) and sym.outer == old:
                         m[sym] = _LoopStart(new)
-        d = dict(d)
+        d = d.copy()
         if d.get("compfused"):
             d["steps"] = [
                 (k, t.xreplace(m), v.xreplace(m)) for k, t, v in d["steps"]
@@ -867,14 +872,14 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
             for g in group:
                 limits += [lim for lim in g["limits"] if lim not in limits]
             out.append(
-                {
-                    "target": group[0].get("target"),
-                    "free": [],
-                    "limits": limits,
-                    "body": sp.S.Zero,
-                    "outerfused": list(group),
-                    "outer": outer_of(group[0]),
-                }
+                OuterFusedNest(
+                    target=group[0].get("target"),
+                    free=[],
+                    limits=limits,
+                    body=sp.S.Zero,
+                    members=list(group),
+                    outer=outer_of(group[0]),
+                )
             )
         group.clear()
 
@@ -1418,14 +1423,14 @@ def _fuse_sibling_tables(definitions, namer):
             out.extend(group)
         elif group:
             out.append(
-                {
-                    "target": group[0]["target"],
-                    "free": group[0]["free"],
-                    "limits": group[0]["limits"],
-                    "body": group[0]["body"],
-                    "sibling": list(group),
-                    "accs": [sp.Symbol(str(namer("t"))) for _ in group],
-                }
+                SiblingNest(
+                    target=group[0]["target"],
+                    free=group[0]["free"],
+                    limits=group[0]["limits"],
+                    body=group[0]["body"],
+                    sibling=list(group),
+                    accs=[sp.Symbol(str(namer("t"))) for _ in group],
+                )
             )
         out.extend(waiting)
         group.clear()
@@ -1484,21 +1489,20 @@ def _split_accumulators(definitions, namer):
     out = []
     for d in definitions:
         if d.get("sibling") and any(rank3(g["body"]) for g in d["sibling"]):
-            d = dict(
-                d,
+            d = d.copy(
                 split_acc=2,
                 accs2=[sp.Symbol(str(namer("t"))) for _ in d["accs"]],
             )
         elif lone(d) and rank3(d["body"]):
-            d = {
-                "target": d["target"],
-                "free": d["free"],
-                "limits": d["limits"],
-                "body": d["body"],
-                "sibling": [d],
-                "accs": [sp.Symbol(str(namer("t")))],
-                "split_acc": 2,
-            }
+            d = SiblingNest(
+                target=d["target"],
+                free=d["free"],
+                limits=d["limits"],
+                body=d["body"],
+                sibling=[d],
+                accs=[sp.Symbol(str(namer("t")))],
+                accumulators=2,
+            )
             d["accs2"] = [sp.Symbol(str(namer("t")))]
         out.append(d)
     return out
