@@ -266,8 +266,12 @@ def test_variant_matches_reference(tmp_path, variant):
 @pytest.mark.slow
 def test_extended_variants_are_deterministic():
     for settings in (EXTENDED_VARIANTS["a6"], EXTENDED_VARIANTS["a7"]):
-        first = compile_model(PR76_SYM, derivatives="dn,dndn", **settings)
-        second = compile_model(PR76_SYM, derivatives="dn,dndn", **settings)
+        first = compile_model(
+            PR76_SYM, derivatives="dn,dndn", preset="minimal", **settings
+        )
+        second = compile_model(
+            PR76_SYM, derivatives="dn,dndn", preset="minimal", **settings
+        )
         assert first == second
 
 
@@ -280,7 +284,9 @@ def test_aux_index_never_clashes_case_insensitively():
         os.path.join(os.path.dirname(__file__), "data/models/rkpr/rkpr.model")
     ) as fh:
         text = fh.read()
-    code = compile_model(text, derivatives="dn,dndn", param_symmetry=True)
+    code = compile_model(
+        text, derivatives="dn,dndn", preset="minimal", param_symmetry=True
+    )
     loop_vars = set(re.findall(r"do (\w+) = ", code))
     assert "r" not in {v.lower() for v in loop_vars}
 
@@ -365,7 +371,11 @@ def _rkpr_text():
 
 def _run_rkpr(work, settings):
     code = compile_model(
-        _rkpr_text(), derivatives=W6, optional_derivatives=True, **settings
+        _rkpr_text(),
+        derivatives=W6,
+        preset="minimal",
+        optional_derivatives=True,
+        **settings,
     )
     head, tail = RKPR_DRIVER.split("program drive", 1)
     (work / "drive.f90").write_text(head + code + "\nprogram drive" + tail)
@@ -425,14 +435,22 @@ def test_hoisting_moves_rkpr_power_out_of_double_loop():
 def test_hoisting_is_deterministic_and_off_by_default():
     text = _rkpr_text()
     first = compile_model(
-        text, derivatives="dn,dndn", **EXTENDED_VARIANTS["a6h"]
+        text,
+        derivatives="dn,dndn",
+        preset="minimal",
+        **EXTENDED_VARIANTS["a6h"],
     )
     second = compile_model(
-        text, derivatives="dn,dndn", **EXTENDED_VARIANTS["a6h"]
+        text,
+        derivatives="dn,dndn",
+        preset="minimal",
+        **EXTENDED_VARIANTS["a6h"],
     )
     assert first == second
-    assert compile_model(text, derivatives="dn,dndn") == compile_model(
-        text, derivatives="dn,dndn", hoist_invariants=False
+    assert compile_model(
+        text, derivatives="dn,dndn", preset="minimal"
+    ) == compile_model(
+        text, derivatives="dn,dndn", preset="minimal", hoist_invariants=False
     )
 
 
@@ -458,6 +476,7 @@ def test_hoisted_slot_index_never_clashes_with_an_argument():
         code = compile_model(
             text,
             derivatives="dn,dndn",
+            preset="minimal",
             optional_derivatives=True,
             hoist_invariants=True,
             **settings,
@@ -768,7 +787,7 @@ parameters
 function
     R*T*sum_i n_i*r_i
 """
-    code = compile_model(text, derivatives="dn")
+    code = compile_model(text, derivatives="dn", preset="minimal")
     assert "only: R_use => R" in code
     assert "r_" not in code.replace("R_use", "")
 
@@ -836,6 +855,7 @@ def test_sym_perm_puts_the_innermost_index_first():
     code = compile_model(
         open(path).read(),
         derivatives="dn",
+        preset="minimal",
         optional_derivatives=False,
         **EXTENDED_VARIANTS["it14"],
     )
@@ -853,12 +873,14 @@ def test_fuse_guard_keeps_one_exponential_per_pair():
     before = compile_model(
         text,
         derivatives="dn",
+        preset="minimal",
         optional_derivatives=False,
         **EXTENDED_VARIANTS["it14"],
     )
     after = compile_model(
         text,
         derivatives="dn",
+        preset="minimal",
         optional_derivatives=False,
         **EXTENDED_VARIANTS["it15"],
     )
@@ -876,7 +898,9 @@ parameters
 function
     T*sum_i sum_j n_i*n_j*sqrt(e_i*e_j)*(1 - k_ij)
 """
-    code = compile_model(text, derivatives="dn", **EXTENDED_VARIANTS["a3"])
+    code = compile_model(
+        text, derivatives="dn", preset="minimal", **EXTENDED_VARIANTS["a3"]
+    )
     assert "sqrt(e(" in code and "sqrt(e(i)*e(j))" not in code.replace(" ", "")
 
 
