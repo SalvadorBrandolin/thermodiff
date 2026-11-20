@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import warnings
 
 import pytest
 
@@ -703,3 +704,51 @@ def _driver_w6(state, variant):
         "  end do\n"
         "end program main\n"
     )
+
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GOLDEN_ROOT = os.path.join(REPO_ROOT, "tests", "golden", "pr")
+GOLDEN_MODEL = os.path.join(REPO_ROOT, "examples", "pr.model")
+
+#: Variants of the golden PR76 files and the names ignored by each.
+P33_IGNORED_COUNT = 12
+
+
+def _generate_pr(variant, workload, tmp_path):
+    """Generate one workload of ``examples/pr.model`` without writing."""
+    return generate_workload(
+        GOLDEN_MODEL, workload, variant, str(tmp_path), write=False
+    )
+
+
+class TestGenerateWorkloadOptions:
+    """``generate_workload`` goes through ``CodegenOptions``."""
+
+    def test_p33_records_ignored_without_warning(self, tmp_path):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _generate_pr("p33", "w1", tmp_path)
+        ignored_warnings = [
+            item
+            for item in caught
+            if issubclass(item.category, UserWarning)
+            and "options ignored" in str(item.message)
+        ]
+        assert ignored_warnings == []
+        assert len(result["ignored_options"]) == P33_IGNORED_COUNT
+
+    def test_e8_ignores_nothing(self, tmp_path):
+        result = _generate_pr("e8", "w1", tmp_path)
+        assert result["ignored_options"] == ()
+
+    @pytest.mark.parametrize(
+        ("variant", "workload"),
+        [("e8", "w1"), ("p22", "w2"), ("p33", "w5a")],
+    )
+    def test_source_matches_golden(self, variant, workload, tmp_path):
+        result = _generate_pr(variant, workload, tmp_path)
+        golden_path = os.path.join(
+            GOLDEN_ROOT, variant, f"pr_{variant}_{workload}.f90"
+        )
+        with open(golden_path, "r", encoding="utf-8") as handle:
+            assert result["source"] == handle.read()
