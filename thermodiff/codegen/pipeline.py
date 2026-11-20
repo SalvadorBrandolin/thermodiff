@@ -12,6 +12,7 @@ import sympy as sp
 from thermodiff.codegen import (
     CodegenOptions,
     CseBackend,
+    LowrankHessMode,
     ScalarChainMode,
     SepSumsMode,
 )
@@ -90,6 +91,7 @@ _SCALAR_PLAIN = "_scalar_plain"
 # ``estimate`` keeps propagation unless it is estimated to cost more than
 # this factor over the plain path
 _PROPAGATION_SLACK = 1.1
+_REQUIRED_ACCUMULATORS = 2
 _ESTIMATE_OR_COST = (ScalarChainMode.COST, ScalarChainMode.ESTIMATE)
 # ``stats`` entry through which the structure leaks (``scalar_chain`` on)
 _STRUCTURE_STATS_KEY = "_structured"
@@ -1415,6 +1417,363 @@ def _definitions_list(ctx: _EmitContext, state: _EmitState) -> None:
         _drop_unread_scalars(state)
 
 
+def _gate(
+    name: str,
+    *,
+    unless_optional: bool = False,
+    with_param_symmetry: bool = False,
+) -> Callable[[CodegenOptions], bool]:
+    """Build the option-level gate of a stage.
+
+    Parameters
+    ----------
+    name : str
+        Name of the ``CodegenOptions`` flag the stage depends on.
+    unless_optional : bool, optional
+        Also require ``optional_derivatives`` to be off.
+    with_param_symmetry : bool, optional
+        Also require ``param_symmetry``.
+
+    Returns
+    -------
+    callable
+        ``enabled(opts)`` for a :class:`Pass`.
+
+    Raises
+    ------
+    ValueError
+        If ``name`` is not an option.
+    """
+    if name not in {
+        field.name for field in dataclasses.fields(CodegenOptions)
+    }:
+        raise ValueError(f"unknown option {name!r}")
+
+    def enabled(opts: CodegenOptions) -> bool:
+        if unless_optional and opts.optional_derivatives:
+            return False
+        if with_param_symmetry and not opts.param_symmetry:
+            return False
+        return bool(getattr(opts, name))
+
+    return enabled
+
+
+def _lowrank_enabled(opts: CodegenOptions) -> bool:
+    """Gate of the low-rank Hessian: on and without optional outputs."""
+    return (
+        opts.lowrank_hess is not LowrankHessMode.OFF
+        and not opts.optional_derivatives
+    )
+
+
+def _rendered_residuals(state: _EmitState) -> list:
+    """Return the residual of every rendered output."""
+    return [residual for _, _, residual, _ in state.rendered]
+
+
+def _replace_residuals(state: _EmitState, residuals: list) -> None:
+    """Set ``residuals`` and update ``rendered`` in lock-step."""
+    state.residuals = residuals
+    state.rendered = [
+        (attr, out_name, residual, free)
+        for (attr, out_name, _, free), residual in zip(
+            state.rendered, residuals
+        )
+    ]
+
+
+def _lowrank_outputs(ctx: _EmitContext, state: _EmitState) -> None:
+    """Write the bilinear outputs in low-rank form (S22).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Appends to ``definitions``; updates ``rendered`` and ``residuals``
+        in place; fills ``lowrank_outs``.  Draws names from the namer.
+    """
+    rendered = state.rendered
+    for position, (attr, out_name, residual, free) in enumerate(rendered):
+        if len(free) != 2 or residual.has(sp.Sum):
+            continue
+        result = _lowrank_bilinear(residual, free, state.namer, state.arrays)
+        if result is None:
+            continue
+        residual, new_defs = result
+        state.definitions = state.definitions + new_defs
+        rendered[position] = (attr, out_name, residual, free)
+        state.residuals[position] = residual
+        state.lowrank_outs.add(attr)
+
+
+def _hoist_loop_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Hoist the loop invariants of definitions and outputs (S23).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``, ``rendered`` and ``residuals``.  Draws
+        names from the namer.
+    """
+    state.definitions, new_residuals = _hoist_loop_invariants(
+        state.definitions,
+        [(residual, free) for _, _, residual, free in state.rendered],
+        state.namer,
+        state.arrays,
+        reserved=state.reserved,
+    )
+    _replace_residuals(state, new_residuals)
+
+
+def _drop_pair_tables_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Drop the pair tables that can be recomputed (S24).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``; pops dropped names from ``arrays``.
+        Draws names from the namer.
+    """
+    state.definitions = _drop_pair_tables(
+        state.definitions,
+        _rendered_residuals(state),
+        state.namer,
+        state.arrays,
+    )
+
+
+def _share_elementwise_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Share the elementwise definitions (S25).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``, ``residuals`` and ``rendered``.  Draws
+        names from the namer.
+    """
+    state.definitions, residuals = _share_elementwise(
+        state.definitions,
+        _rendered_residuals(state),
+        state.namer,
+        state.arrays,
+    )
+    _replace_residuals(state, residuals)
+
+
+def _split_affine_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Split the affine sums into table and scalar parts (S26).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``, ``residuals`` and ``rendered``.  Draws
+        names from the namer.
+    """
+    state.definitions, residuals = _split_affine(
+        state.definitions,
+        _rendered_residuals(state),
+        state.namer,
+        state.arrays,
+    )
+    _replace_residuals(state, residuals)
+
+
+def _mirror_sums(ctx: _EmitContext, state: _EmitState) -> None:
+    """Flag the symmetric two-index sums as mirrored (S27).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Sets ``mirror_sum`` on the definitions in place.
+    """
+    symmetric_params = state.symmetric_params
+    sym_rank3 = state.opts.sym_rank3
+    for definition in state.definitions:
+        free_ = definition.free
+        if len(free_) != 2 or not definition.limits:
+            continue
+        body_ = _canonical_symmetric(
+            definition.body, symmetric_params, sym_rank3
+        )
+        if body_.has(sp.Piecewise) or any(
+            isinstance(x, _LoopStart) for x in body_.atoms(sp.Symbol)
+        ):
+            continue
+        swapped_equal = (
+            _swap(body_, free_[0], free_[1], symmetric_params, sym_rank3)
+            == body_
+        )
+        if swapped_equal:
+            definition.mirror_sum = True
+
+
+def _column_layouts(ctx: _EmitContext, state: _EmitState) -> None:
+    """Choose column sums and column-major order per definition (S28).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Sets ``colsum`` and ``colmajor`` on the definitions in place.
+    """
+    for definition in state.definitions:
+        if state.opts.table_layout and _prefers_column_sum(
+            definition, state.symmetric_params
+        ):
+            definition.colsum = True
+            continue
+        if definition.mirror_sum:
+            continue
+        if not definition.symv and _prefers_column_order(definition):
+            definition.colmajor = True
+
+
+def _fuse_loop_nests_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Fuse the loop nests with the same ranges (S29).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``.
+    """
+    state.definitions = _fuse_loop_nests(state.definitions, state.namer)
+
+
+def _symv_parts_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Split the symmetric matrix-vector definitions (S30).
+
+    Runs after the nest fusion, which must not see ``symv``.
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Sets ``symv`` and ``symv_acc`` in place.  Draws one name per
+        definition with parts from the namer.
+    """
+    for definition in state.definitions:
+        parts = _symv_parts(
+            definition,
+            state.symmetric_params,
+            sym_rank3=state.opts.sym_rank3,
+        )
+        if parts is not None:
+            definition.symv = parts
+            definition.symv_acc = state.namer("t")
+
+
+def _fuse_siblings_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Fuse the sibling tables (S31).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``.  Draws names from the namer.
+    """
+    state.definitions = _fuse_sibling_tables(state.definitions, state.namer)
+
+
+def _diagonal_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Read the diagonals from the tables (S32).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``.
+    """
+    state.definitions = _diagonal_from_tables(
+        state.definitions,
+        state.symmetric_params,
+        sym_rank3=state.opts.sym_rank3,
+    )
+
+
+def _permute_subscripts_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Permute the symmetric subscripts of the fused members (S33).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``.
+    """
+    state.definitions = _permute_symmetric_subscripts(
+        state.definitions, state.symmetric_params
+    )
+
+
+def _component_maps_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Fuse the component maps (S34).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``.  Draws names from the namer lazily.
+    """
+    state.definitions = _fuse_component_maps(state.definitions, state.namer)
+
+
+def _outer_loops_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Fuse the outer loops (S35).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``.
+    """
+    opts = state.opts
+    state.definitions = _fuse_outer_loops(
+        state.definitions,
+        libm_guard=opts.fuse_libm_guard,
+        libm_reductions=opts.fuse_libm_guard and opts.drop_pair_tables,
+    )
+
+
+def _split_accumulators_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Split the reductions into two accumulators (S36).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``definitions``.  Draws names from the namer.
+
+    Raises
+    ------
+    ValueError
+        If ``split_acc`` is not 2.
+    """
+    if state.opts.split_acc != _REQUIRED_ACCUMULATORS:
+        raise ValueError("split_acc supports 2 accumulators only")
+    state.definitions = _split_accumulators(state.definitions, state.namer)
+
+
 def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
     """Run the stages not yet extracted (S13-S41); temporary."""
     structured = state.structured
@@ -1422,7 +1781,6 @@ def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
     count_scalar = state.count_scalar
     namer = state.namer
     integer_args = state.integer_args
-    symmetric_params = state.symmetric_params
     prepared = state.prepared
     scans = state.scans
     params = state.params
@@ -1432,154 +1790,18 @@ def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
     inputs = state.inputs
     output_decls = state.output_decls
     arrays = state.arrays
-    reserved = state.reserved
     residuals = state.residuals
     rendered = state.rendered
     definitions = state.definitions
+    lowrank_outs = state.lowrank_outs
     sub_name = ctx.sub_name
     legacy = state.opts.to_legacy()
-    param_symmetry = legacy["param_symmetry"]
-    sym_rank3 = legacy["sym_rank3"]
     optional_derivatives = legacy["optional_derivatives"]
     lowrank_hess = legacy["lowrank_hess"]
-    hoist_loops = legacy["hoist_loops"]
-    drop_pair_tables = legacy["drop_pair_tables"]
-    share_elementwise = legacy["share_elementwise"]
-    split_affine = legacy["split_affine"]
-    sym_sum2 = legacy["sym_sum2"]
-    col_major = legacy["col_major"]
-    table_layout = legacy["table_layout"]
-    fuse_loops = legacy["fuse_loops"]
-    sym_matvec = legacy["sym_matvec"]
-    sib_fuse = legacy["sib_fuse"]
-    diag_table = legacy["diag_table"]
-    sym_perm = legacy["sym_perm"]
-    comp_fuse = legacy["comp_fuse"]
-    fuse_outer = legacy["fuse_outer"]
-    fuse_libm_guard = legacy["fuse_libm_guard"]
-    split_acc = legacy["split_acc"]
     hessian_symmetry = legacy["hessian_symmetry"]
     array_pad = legacy["array_pad"]
     scalar_chain = legacy["scalar_chain"]
 
-    lowrank_outs = set()
-    if lowrank_hess and not optional_derivatives:
-        for position, (attr, out_name, residual, free) in enumerate(rendered):
-            if len(free) != 2 or residual.has(sp.Sum):
-                continue
-            result = _lowrank_bilinear(residual, free, namer, arrays)
-            if result is None:
-                continue
-            residual, new_defs = result
-            definitions = definitions + new_defs
-            rendered[position] = (attr, out_name, residual, free)
-            residuals[position] = residual
-            lowrank_outs.add(attr)
-    if hoist_loops:
-        definitions, new_residuals = _hoist_loop_invariants(
-            definitions,
-            [(residual, free) for _, _, residual, free in rendered],
-            namer,
-            arrays,
-            reserved=reserved,
-        )
-        rendered = [
-            (attr, out_name, residual, free)
-            for (attr, out_name, _, free), residual in zip(
-                rendered, new_residuals
-            )
-        ]
-        residuals = new_residuals
-    if drop_pair_tables and not optional_derivatives:
-        definitions = _drop_pair_tables(
-            definitions,
-            [residual for _, _, residual, _ in rendered],
-            namer,
-            arrays,
-        )
-    if share_elementwise and not optional_derivatives:
-        definitions, residuals = _share_elementwise(
-            definitions,
-            [residual for _, _, residual, _ in rendered],
-            namer,
-            arrays,
-        )
-        rendered = [
-            (attr, out_name, residual, free)
-            for (attr, out_name, _, free), residual in zip(rendered, residuals)
-        ]
-    if split_affine and not optional_derivatives:
-        definitions, residuals = _split_affine(
-            definitions,
-            [residual for _, _, residual, _ in rendered],
-            namer,
-            arrays,
-        )
-        rendered = [
-            (attr, out_name, residual, free)
-            for (attr, out_name, _, free), residual in zip(rendered, residuals)
-        ]
-    if sym_sum2 and param_symmetry:
-        for definition in definitions:
-            free_ = definition.free
-            if len(free_) != 2 or not definition.limits:
-                continue
-            body_ = _canonical_symmetric(
-                definition.body, symmetric_params, sym_rank3
-            )
-            if body_.has(sp.Piecewise) or any(
-                isinstance(x, _LoopStart) for x in body_.atoms(sp.Symbol)
-            ):
-                continue
-            swapped_equal = (
-                _swap(body_, free_[0], free_[1], symmetric_params, sym_rank3)
-                == body_
-            )
-            if swapped_equal:
-                definition.mirror_sum = True
-    if col_major:
-        for definition in definitions:
-            if table_layout and _prefers_column_sum(
-                definition, symmetric_params
-            ):
-                definition.colsum = True
-                continue
-            if definition.mirror_sum:
-                continue
-            if not definition.symv and _prefers_column_order(definition):
-                definition.colmajor = True
-    if fuse_loops and not optional_derivatives:
-        definitions = _fuse_loop_nests(definitions, namer)
-    if sym_matvec and param_symmetry:
-        for definition in definitions:
-            parts = _symv_parts(
-                definition, symmetric_params, sym_rank3=sym_rank3
-            )
-            if parts is not None:
-                definition.symv = parts
-                definition.symv_acc = namer("t")
-    if sib_fuse and not optional_derivatives:
-        definitions = _fuse_sibling_tables(definitions, namer)
-    if diag_table and not optional_derivatives:
-        definitions = _diagonal_from_tables(
-            definitions, symmetric_params, sym_rank3=sym_rank3
-        )
-    if sym_perm and param_symmetry:
-        definitions = _permute_symmetric_subscripts(
-            definitions, symmetric_params
-        )
-    if comp_fuse and not optional_derivatives:
-        definitions = _fuse_component_maps(definitions, namer)
-    if fuse_outer and not optional_derivatives:
-        definitions = _fuse_outer_loops(
-            definitions,
-            libm_guard=fuse_libm_guard,
-            libm_reductions=fuse_libm_guard and drop_pair_tables,
-        )
-    if split_acc and not optional_derivatives:
-        if int(split_acc) != 2:
-            raise ValueError("split_acc supports 2 accumulators only")
-        definitions = _split_accumulators(definitions, namer)
     if stats is not None:
         stats["operation_count"] = sum(
             sp.count_ops(residual, visual=False) for residual in residuals
@@ -1735,6 +1957,69 @@ _PASSES: tuple[Pass, ...] = (
     Pass("alias_scalar_chain", _always, _alias_scalar_chain),
     Pass("rendered_outputs", _always, _rendered_outputs),
     Pass("definitions_list", _always, _definitions_list),
+    Pass("lowrank_outputs", _lowrank_enabled, _lowrank_outputs),
+    Pass("hoist_loops", _gate("hoist_loops"), _hoist_loop_pass),
+    Pass(
+        "drop_pair_tables",
+        _gate("drop_pair_tables", unless_optional=True),
+        _drop_pair_tables_pass,
+    ),
+    Pass(
+        "share_elementwise",
+        _gate("share_elementwise", unless_optional=True),
+        _share_elementwise_pass,
+    ),
+    Pass(
+        "split_affine",
+        _gate("split_affine", unless_optional=True),
+        _split_affine_pass,
+    ),
+    Pass(
+        "mirror_sums",
+        _gate("sym_sum2", with_param_symmetry=True),
+        _mirror_sums,
+    ),
+    Pass("column_layouts", _gate("col_major"), _column_layouts),
+    Pass(
+        "fuse_loop_nests",
+        _gate("fuse_loops", unless_optional=True),
+        _fuse_loop_nests_pass,
+    ),
+    Pass(
+        "symv_parts",
+        _gate("sym_matvec", with_param_symmetry=True),
+        _symv_parts_pass,
+    ),
+    Pass(
+        "fuse_siblings",
+        _gate("sib_fuse", unless_optional=True),
+        _fuse_siblings_pass,
+    ),
+    Pass(
+        "diagonal_tables",
+        _gate("diag_table", unless_optional=True),
+        _diagonal_pass,
+    ),
+    Pass(
+        "permute_subscripts",
+        _gate("sym_perm", with_param_symmetry=True),
+        _permute_subscripts_pass,
+    ),
+    Pass(
+        "component_maps",
+        _gate("comp_fuse", unless_optional=True),
+        _component_maps_pass,
+    ),
+    Pass(
+        "outer_loops",
+        _gate("fuse_outer", unless_optional=True),
+        _outer_loops_pass,
+    ),
+    Pass(
+        "split_accumulators",
+        _gate("split_acc", unless_optional=True),
+        _split_accumulators_pass,
+    ),
     Pass("legacy_tail", _always, _legacy_tail),
 )
 
