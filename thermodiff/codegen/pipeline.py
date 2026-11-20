@@ -1774,107 +1774,150 @@ def _split_accumulators_pass(ctx: _EmitContext, state: _EmitState) -> None:
     state.definitions = _split_accumulators(state.definitions, state.namer)
 
 
-def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
-    """Run the stages not yet extracted (S13-S41); temporary."""
-    structured = state.structured
+def _scalar_operation_count(state: _EmitState) -> int:
+    """Count the operations of the scalar block (no loops)."""
+    return sum(
+        sp.count_ops(residual, visual=False)
+        for (_a, _o, _r, free_), residual in zip(
+            state.rendered, state.residuals
+        )
+        if not free_
+    ) + sum(
+        sp.count_ops(definition.body, visual=False)
+        for definition in state.definitions
+        if not definition.free and not definition.limits
+    )
+
+
+def _collect_stats(ctx: _EmitContext, state: _EmitState) -> None:
+    """Fill ``stats`` with the operation counts (S37).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Updates ``state.stats`` when it is not ``None``.
+    """
     stats = state.stats
-    count_scalar = state.count_scalar
-    namer = state.namer
-    integer_args = state.integer_args
-    prepared = state.prepared
-    scans = state.scans
-    params = state.params
-    param_arrays = state.param_arrays
-    placeholder_args = state.placeholder_args
-    needs_nc = state.needs_nc
-    inputs = state.inputs
-    output_decls = state.output_decls
-    arrays = state.arrays
-    residuals = state.residuals
-    rendered = state.rendered
+    if stats is None:
+        return
+    stats["operation_count"] = sum(
+        sp.count_ops(residual, visual=False) for residual in state.residuals
+    ) + sum(
+        sp.count_ops(definition.body, visual=False)
+        for definition in state.definitions
+    )
+    stats["operation_count_tool"] = "sympy.count_ops(visual=False)"
+    stats["n_temporaries"] = len(state.definitions)
+    if state.count_scalar:
+        stats["scalar_operation_count"] = _scalar_operation_count(state)
+        if state.opts.scalar_chain is ScalarChainMode.ON:
+            stats[_STRUCTURE_STATS_KEY] = state.structured
+
+
+def _consumer_graph(state: _EmitState) -> None:
+    """Find the outputs that read each temporary (S38)."""
     definitions = state.definitions
-    lowrank_outs = state.lowrank_outs
-    sub_name = ctx.sub_name
-    legacy = state.opts.to_legacy()
-    optional_derivatives = legacy["optional_derivatives"]
-    lowrank_hess = legacy["lowrank_hess"]
-    hessian_symmetry = legacy["hessian_symmetry"]
-    array_pad = legacy["array_pad"]
-    scalar_chain = legacy["scalar_chain"]
-
-    if stats is not None:
-        stats["operation_count"] = sum(
-            sp.count_ops(residual, visual=False) for residual in residuals
-        ) + sum(
-            sp.count_ops(definition.body, visual=False)
-            for definition in definitions
-        )
-        stats["operation_count_tool"] = "sympy.count_ops(visual=False)"
-        stats["n_temporaries"] = len(definitions)
-    if stats is not None and count_scalar:
-        stats["scalar_operation_count"] = sum(
-            sp.count_ops(residual, visual=False)
-            for (_a, _o, _r, free_), residual in zip(rendered, residuals)
-            if not free_
-        ) + sum(
-            sp.count_ops(definition.body, visual=False)
-            for definition in definitions
-            if not definition.free and not definition.limits
-        )
-        if scalar_chain is True:
-            stats[_STRUCTURE_STATS_KEY] = structured
-    out_names = {attr: out_name for attr, out_name, _, _ in rendered}
-
+    state.out_names = {
+        attr: out_name for attr, out_name, _, _ in state.rendered
+    }
     temp_names = {_temp_name(definition.target) for definition in definitions}
     consumers = {name: set() for name in temp_names}
-    for attr, _out_name, residual, _free in rendered:
+    for attr, _out_name, residual, _free in state.rendered:
         for name in _referenced_temp_names(residual, temp_names):
             consumers[name].add(attr)
     for definition in reversed(definitions):
         name = _temp_name(definition.target)
         for dependency in _referenced_temp_names(definition.body, temp_names):
             consumers[dependency] |= consumers[name]
+    state.consumers = consumers
 
-    body = []
-    for definition in definitions:
-        if optional_derivatives:
-            condition = _guard(
-                consumers[_temp_name(definition.target)], out_names
-            )
-        else:
-            condition = ""
-        body.extend(_guarded(_render_definition(definition), condition))
-        body.append("")
-    for attr, out_name, expr, free_order in rendered:
-        if optional_derivatives:
+
+def _render_outputs(state: _EmitState) -> list:
+    """Render the output assignments, in output order."""
+    opts = state.opts
+    lines = []
+    for attr, out_name, expr, free_order in state.rendered:
+        if opts.optional_derivatives:
             condition = f"present({out_name})"
         else:
             condition = ""
         mirror = (
-            hessian_symmetry
+            opts.hessian_symmetry
             and attr == "dnidnj"
-            and (attr not in lowrank_outs or lowrank_hess == "sym")
+            and (
+                attr not in state.lowrank_outs
+                or opts.lowrank_hess is LowrankHessMode.SYM
+            )
         )
-        column = attr in lowrank_outs and lowrank_hess != "sym"
-        body.extend(
+        column = (
+            attr in state.lowrank_outs
+            and opts.lowrank_hess is not LowrankHessMode.SYM
+        )
+        lines.extend(
             _guarded(
                 _render_output(
                     out_name,
                     expr,
                     free_order,
-                    namer,
+                    state.namer,
                     mirror=mirror,
                     column=column,
                 ),
                 condition,
             )
         )
-        body.append("")
+        lines.append("")
+    return lines
 
-    temps = sorted(
-        {str(t) for t in namer.created if str(t) not in arrays} | {"res"}
+
+def _render_bodies(ctx: _EmitContext, state: _EmitState) -> None:
+    """Render the definitions and the outputs (S38, S39).
+
+    The last stage that draws names from the namer (render-time
+    temporaries of the expanded sums).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Writes ``out_names``, ``consumers`` and ``body``.
+    """
+    _consumer_graph(state)
+    body = []
+    for definition in state.definitions:
+        if state.opts.optional_derivatives:
+            condition = _guard(
+                state.consumers[_temp_name(definition.target)],
+                state.out_names,
+            )
+        else:
+            condition = ""
+        body.extend(_guarded(_render_definition(definition), condition))
+        body.append("")
+    body.extend(_render_outputs(state))
+    state.body = body
+
+
+def _temp_declarations(ctx: _EmitContext, state: _EmitState) -> None:
+    """Collect the scalar temporaries and the loop indices (S40).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Reads ``namer.created``; writes ``temps`` and ``loop_indices``.
+    """
+    rendered = state.rendered
+    definitions = state.definitions
+    state.temps = sorted(
+        {str(t) for t in state.namer.created if str(t) not in state.arrays}
+        | {"res"}
     )
-    loop_indices = sorted(
+    state.loop_indices = sorted(
         {str(idx) for _, _, _, free in rendered for idx in free}
         | {str(idx) for definition in definitions for idx in definition.free}
         | {
@@ -1890,31 +1933,28 @@ def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
         }
     )
 
-    # ---- assemble ------------------------------------------------------
+
+def _argument_names(ctx: _EmitContext, state: _EmitState) -> list:
+    """Return the dummy argument names in declaration order."""
     arg_names = []
-    if needs_nc:
+    if state.needs_nc:
         arg_names.append("nc")
-    arg_names.extend(integer_args)
+    arg_names.extend(state.integer_args)
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
-        if any(var in scan.symbols for scan in scans):
+        if any(var in scan.symbols for scan in state.scans):
             arg_names.append(label)
-    arg_names.extend(params)
-    arg_names.extend(sorted(param_arrays))
-    arg_names.extend(placeholder_args)
-    arg_names.extend(out_name for _, out_name, _, _ in prepared)
+    arg_names.extend(state.params)
+    arg_names.extend(sorted(state.param_arrays))
+    arg_names.extend(state.placeholder_args)
+    arg_names.extend(out_name for _, out_name, _, _ in state.prepared)
+    return arg_names
 
-    while sub_name in arg_names:
-        sub_name += "_s"
 
-    lines = _wrap_signature(sub_name, arg_names)
-    lines.append(f"{_INDENT}implicit none")
-    for decl in inputs:
-        lines.append(_INDENT + decl)
-    for decl in output_decls:
-        lines.append(_INDENT + decl)
-
-    for line in _wrap_name_list("real(8) :: ", temps):
-        lines.append(_INDENT + line)
+def _array_declarations(state: _EmitState) -> list:
+    """Return the declaration lines of the temporary arrays, by rank."""
+    arrays = state.arrays
+    array_pad = state.opts.array_pad
+    lines = []
     for rank in sorted(set(arrays.values())):
         dims = ", ".join(["nc"] * rank)
         if array_pad and rank >= 2:
@@ -1928,15 +1968,44 @@ def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
         ]
         for line in _wrap_name_list("real(8) :: ", names):
             lines.append(_INDENT + line)
-    for line in _wrap_name_list("integer :: ", loop_indices):
+    return lines
+
+
+def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
+    """Assemble the Fortran source of the subroutine (S41).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Reads everything the earlier passes produced; writes ``text``.
+    """
+    arg_names = _argument_names(ctx, state)
+    sub_name = ctx.sub_name
+    while sub_name in arg_names:
+        sub_name += "_s"
+
+    lines = _wrap_signature(sub_name, arg_names)
+    lines.append(f"{_INDENT}implicit none")
+    for decl in state.inputs:
+        lines.append(_INDENT + decl)
+    for decl in state.output_decls:
+        lines.append(_INDENT + decl)
+
+    for line in _wrap_name_list("real(8) :: ", state.temps):
+        lines.append(_INDENT + line)
+    lines.extend(_array_declarations(state))
+    for line in _wrap_name_list("integer :: ", state.loop_indices):
         lines.append(_INDENT + line)
 
     lines.append("")
-    for line in body:
+    for line in state.body:
         lines.append(_INDENT + line if line else "")
 
     lines.append(f"end subroutine {sub_name}")
     lines.append("")
+
     state.text = "\n".join(lines)
 
 
@@ -2020,7 +2089,10 @@ _PASSES: tuple[Pass, ...] = (
         _gate("split_acc", unless_optional=True),
         _split_accumulators_pass,
     ),
-    Pass("legacy_tail", _always, _legacy_tail),
+    Pass("collect_stats", _always, _collect_stats),
+    Pass("render_bodies", _always, _render_bodies),
+    Pass("temp_declarations", _always, _temp_declarations),
+    Pass("assemble_text", _always, _assemble_text),
 )
 
 
