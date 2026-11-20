@@ -597,6 +597,61 @@ def _prefers_column_sum(definition, symmetric_params=()):
     return last > first
 
 
+def _is_simple_nest(definition) -> bool:
+    """Whether a vector sum has the plain loop structure of a fusable nest."""
+    if len(definition.free) != 1 or len(definition.limits) != 1:
+        return False
+    if definition.mirror or definition.mirror_sum or definition.symv:
+        return False
+    _, low, high = definition.limits[0]
+    if low != 1 or str(high) != "nc":
+        return False
+    body = definition.body
+    return not body.has(sp.Piecewise) and not any(
+        isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)
+    )
+
+
+def _rename_nest(definition, first):
+    """Return a copy of a vector sum over the indices of ``first``."""
+    free_index, bound_index = first.free[0], first.limits[0][0]
+    renamed = definition.copy()
+    mapping = {
+        definition.free[0]: free_index,
+        definition.limits[0][0]: bound_index,
+    }
+    renamed.target = definition.target.xreplace(mapping)
+    renamed.free = [free_index]
+    renamed.limits = [(bound_index, 1, first.limits[0][2])]
+    renamed.body = definition.body.xreplace(mapping)
+    return renamed
+
+
+def _joins_nest_group(definition, renamed, group) -> bool:
+    """Whether ``renamed`` may join the group: independent, same order."""
+    names = {_temp_name(member.target) for member in group}
+    depends = any(str(x.base) in names for x in renamed.body.atoms(sp.Indexed))
+    same_order = bool(definition.colmajor) == bool(group[0].colmajor)
+    return not depends and same_order
+
+
+def _flush_nest_group(out, group) -> None:
+    """Append the open group to ``out`` (one nest if it has several)."""
+    if len(group) <= 1:
+        out.extend(group)
+    else:
+        out.append(
+            FusedNest(
+                target=group[0].target,
+                free=group[0].free,
+                limits=group[0].limits,
+                body=group[0].body,
+                fused=list(group),
+            )
+        )
+    group.clear()
+
+
 def _fuse_loop_nests(definitions, namer):
     """Merge consecutive vector sums that share their loop structure.
 
@@ -607,63 +662,22 @@ def _fuse_loop_nests(definitions, namer):
     index, no special rendering, and no dependence on each other are
     merged.
     """
-
-    def simple(d):
-        if len(d.free) != 1 or len(d.limits) != 1:
-            return False
-        if d.mirror or d.mirror_sum or d.symv:
-            return False
-        b, low, high = d.limits[0]
-        if low != 1 or str(high) != "nc":
-            return False
-        body = d.body
-        return not body.has(sp.Piecewise) and not any(
-            isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)
-        )
-
     out = []
     group = []
-
-    def flush():
-        if len(group) <= 1:
-            out.extend(group)
-        else:
-            out.append(
-                FusedNest(
-                    target=group[0].target,
-                    free=group[0].free,
-                    limits=group[0].limits,
-                    body=group[0].body,
-                    fused=list(group),
-                )
-            )
-        group.clear()
-
-    for d in definitions:
-        if simple(d) and group:
-            first = group[0]
-            f0, b0 = first.free[0], first.limits[0][0]
-            renamed = d.copy()
-            mapping = {d.free[0]: f0, d.limits[0][0]: b0}
-            renamed.target = d.target.xreplace(mapping)
-            renamed.free = [f0]
-            renamed.limits = [(b0, 1, first.limits[0][2])]
-            renamed.body = d.body.xreplace(mapping)
-            names = {_temp_name(g.target) for g in group}
-            depends = any(
-                str(x.base) in names for x in renamed.body.atoms(sp.Indexed)
-            )
-            same_order = bool(d.colmajor) == bool(first.colmajor)
-            if not depends and same_order:
+    for definition in definitions:
+        simple = _is_simple_nest(definition)
+        if simple and group:
+            renamed = _rename_nest(definition, group[0])
+            if _joins_nest_group(definition, renamed, group):
                 group.append(renamed)
                 continue
-            flush()
-        if simple(d):
-            group.append(d)
+            _flush_nest_group(out, group)
+        if simple:
+            group.append(definition)
         else:
-            flush()
-            out.append(d)
-    flush()
+            _flush_nest_group(out, group)
+            out.append(definition)
+    _flush_nest_group(out, group)
     return out
 
 
