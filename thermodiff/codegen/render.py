@@ -28,6 +28,52 @@ from thermodiff.codegen.ir import (
 from thermodiff.codegen.symmetry import _render_symv
 
 
+def _enclosing_bound_indices(
+    root: sp.Basic,
+) -> dict[sp.Sum, set[sp.Idx]]:
+    """Map every Sum in ``root`` to the indices bound by its ancestors.
+
+    Parameters
+    ----------
+    root : sympy.Basic
+        Expression that may contain nested summations.
+
+    Returns
+    -------
+    dict
+        For each ``Sum`` in ``root``, the indices bound by the sums that
+        enclose it.
+    """
+    found: dict[sp.Sum, set[sp.Idx]] = {}
+    _collect_enclosing_bound(root, frozenset(), found)
+    return found
+
+
+def _collect_enclosing_bound(
+    sub: sp.Basic,
+    bound: frozenset[sp.Idx],
+    found: dict[sp.Sum, set[sp.Idx]],
+) -> None:
+    """Record into ``found`` the indices bound above each Sum of ``sub``.
+
+    Parameters
+    ----------
+    sub : sympy.Basic
+        Sub-expression being walked.
+    bound : frozenset of sympy.Idx
+        Indices bound by the sums enclosing ``sub``.
+    found : dict
+        Accumulator, updated in place.
+    """
+    if isinstance(sub, sp.Sum):
+        found.setdefault(sub, set()).update(bound)
+        bound = bound | {limit[0] for limit in sub.limits}
+        _collect_enclosing_bound(sub.function, bound, found)
+        return
+    for arg in getattr(sub, "args", ()):
+        _collect_enclosing_bound(arg, bound, found)
+
+
 def _expand_sums(expr: sp.Expr, namer: _Namer) -> tuple[list[str], sp.Expr]:
     """Expand ``Sum`` sub-expressions into loop statements.
 
@@ -48,26 +94,8 @@ def _expand_sums(expr: sp.Expr, namer: _Namer) -> tuple[list[str], sp.Expr]:
     statements: list[str] = []
     residual = expr
 
-    def enclosing_bound(
-        root: sp.Basic,
-    ) -> dict[sp.Sum, set[sp.Idx]]:
-        """Map every Sum in ``root`` to the indices bound by its ancestors."""
-        found: dict[sp.Sum, set[sp.Idx]] = {}
-
-        def walk(sub: sp.Basic, bound: frozenset[sp.Idx]) -> None:
-            if isinstance(sub, sp.Sum):
-                found.setdefault(sub, set()).update(bound)
-                bound = bound | {limit[0] for limit in sub.limits}
-                walk(sub.function, bound)
-                return
-            for arg in getattr(sub, "args", ()):
-                walk(arg, bound)
-
-        walk(root, frozenset())
-        return found
-
     while True:
-        outer = enclosing_bound(residual)
+        outer = _enclosing_bound_indices(residual)
         # an innermost sum can be computed before everything else only if
         # it does not depend on an index bound by an enclosing sum
         innermost = [
@@ -92,7 +120,7 @@ def _expand_sums(expr: sp.Expr, namer: _Namer) -> tuple[list[str], sp.Expr]:
         (
             total
             for total in residual.atoms(sp.Sum)
-            if not enclosing_bound(residual).get(total)
+            if not _enclosing_bound_indices(residual).get(total)
         ),
         key=sp.default_sort_key,
     )
