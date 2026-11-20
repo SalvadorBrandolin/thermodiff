@@ -14,27 +14,25 @@ the present ones under the old dict key names.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any, ClassVar, Mapping
+from typing import Any, ClassVar
 
 import sympy as sp
 
 _BASE_KEYS: Mapping[str, str] = {
-    name: name
-    for name in (
-        "target",
-        "free",
-        "limits",
-        "body",
-        "mirror",
-        "mirror_sum",
-        "colsum",
-        "colmajor",
-        "symv",
-        "symv_acc",
-        "factored",
-        "acc",
-    )
+    "target": "target",
+    "free": "free",
+    "limits": "limits",
+    "body": "body",
+    "mirror": "mirror",
+    "mirror_sum": "mirror_sum",
+    "colsum": "colsum",
+    "colmajor": "colmajor",
+    "symv": "symv",
+    "symv_acc": "symv_acc",
+    "factored": "factored",
+    "acc": "acc",
 }
 
 
@@ -141,7 +139,8 @@ class ComponentFusedMap(TempDef):
     steps : list
         ``(kind, target, value)`` tuples.
     members : list
-        ``(target, body)`` tuples.
+        ``(target, body)`` pairs (tuples, not definition records; compare
+        ``OuterFusedNest.members``).
     """
 
     steps: list
@@ -162,7 +161,8 @@ class OuterFusedNest(TempDef):
     Attributes
     ----------
     members : list
-        Member definitions (old key ``outerfused``).
+        Nested definition records (old key ``outerfused``); compare
+        ``ComponentFusedMap.members``, which are ``(target, body)`` pairs.
     outer : sympy.Idx
         The shared outer index.
     """
