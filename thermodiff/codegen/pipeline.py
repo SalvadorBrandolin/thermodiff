@@ -4,8 +4,9 @@ import dataclasses
 import inspect
 import os
 import sys
-from collections.abc import Callable, Mapping
-from typing import Any, NamedTuple
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from types import FrameType
+from typing import Any, NamedTuple, cast
 
 import sympy as sp
 
@@ -44,6 +45,7 @@ from thermodiff.codegen.hoisting import (
 )
 from thermodiff.codegen.ir import TempDef
 from thermodiff.codegen.loops import (
+    Staged,
     _diagonal_from_tables,
     _drop_pair_tables,
     _fuse_component_maps,
@@ -96,6 +98,19 @@ _ESTIMATE_OR_COST = (ScalarChainMode.COST, ScalarChainMode.ESTIMATE)
 # ``stats`` entry through which the structure leaks (``scalar_chain`` on)
 _STRUCTURE_STATS_KEY = "_structured"
 
+#: Result of the chain-rule step (see :func:`thermodiff.chain`)
+Structure = dict[str, Any]
+#: Generation statistics filled while emitting
+Stats = dict[str, Any]
+#: ``(attr, out_name, expr)`` of an output
+Output = tuple[str, str, sp.Expr]
+#: ``(attr, out_name, expr, free_order)`` of an output
+PreparedOutput = tuple[str, str, sp.Expr, list[sp.Idx]]
+#: ``(name, body, rank, symmetric)`` of a component array
+ComponentDef = tuple[str, sp.Expr, int, bool]
+#: ``(name, body)`` of a scalar-chain scalar
+ScalarDef = tuple[sp.Symbol, sp.Expr]
+
 
 @dataclasses.dataclass(frozen=True)
 class _EmitContext:
@@ -119,23 +134,23 @@ class _EmitContext:
         Parameters declared symmetric.
     """
 
-    diff: object
-    selected: tuple
+    diff: Any
+    selected: tuple[str, ...]
     base: str
     sub_name: str
-    integer_args: tuple
-    module_symbols: frozenset
-    symmetric_params: tuple
+    integer_args: tuple[str, ...]
+    module_symbols: frozenset[str]
+    symmetric_params: tuple[str, ...]
 
 
 def _resolve_context(
-    diff,
-    derivatives,
-    name,
-    subroutine_name,
-    integer_args,
-    module_symbols,
-    symmetric_params,
+    diff: Any,
+    derivatives: Any,
+    name: str | None,
+    subroutine_name: str | None,
+    integer_args: Iterable[str] | None,
+    module_symbols: Iterable[str] | None,
+    symmetric_params: Iterable[str] | None,
 ) -> _EmitContext:
     """Resolve names and the derivative selection into an immutable context.
 
@@ -168,7 +183,9 @@ def _resolve_context(
     )
 
 
-def _chain_structure(ctx: _EmitContext, opts: CodegenOptions):
+def _chain_structure(
+    ctx: _EmitContext, opts: CodegenOptions
+) -> Structure | None:
     """Run the chain-rule step, or return ``None`` without ``chain_rule``.
 
     Parameters
@@ -191,7 +208,7 @@ def _chain_structure(ctx: _EmitContext, opts: CodegenOptions):
         opts.scalar_chain is ScalarChainMode.ON
         and not opts.optional_derivatives
     )
-    return chain_rule_derivatives(
+    structure: Structure = chain_rule_derivatives(  # type: ignore[no-untyped-call]  # noqa: E501
         ctx.diff.expression,
         list(ctx.selected),
         ctx.diff.indexes,
@@ -204,11 +221,12 @@ def _chain_structure(ctx: _EmitContext, opts: CodegenOptions):
         table_layout=opts.table_layout,
         scalar_chain=scalar_chain,
     )
+    return structure
 
 
 def _plain_structure(
-    ctx: _EmitContext, opts: CodegenOptions, structured
-) -> tuple:
+    ctx: _EmitContext, opts: CodegenOptions, structured: Structure | None
+) -> tuple[Structure | None, bool]:
     """Return the structure of the path without scalar-chain propagation.
 
     Parameters
@@ -241,7 +259,9 @@ def _plain_structure(
     return plain, True
 
 
-def _generate_estimate(ctx: _EmitContext, opts: CodegenOptions, stats):
+def _generate_estimate(
+    ctx: _EmitContext, opts: CodegenOptions, stats: Stats | None
+) -> str:
     """Emit with ``scalar_chain="estimate"``: one structure, one emission.
 
     The path is chosen from the operation estimates of the two scalar
@@ -283,7 +303,9 @@ def _generate_estimate(ctx: _EmitContext, opts: CodegenOptions, stats):
     return code
 
 
-def _generate_cost(ctx: _EmitContext, opts: CodegenOptions, stats):
+def _generate_cost(
+    ctx: _EmitContext, opts: CodegenOptions, stats: Stats | None
+) -> str:
     """Emit with ``scalar_chain="cost"``: both paths, keep the cheaper.
 
     Keeps the path whose scalar block (definitions and outputs without
@@ -306,14 +328,14 @@ def _generate_cost(ctx: _EmitContext, opts: CodegenOptions, stats):
     """
     chain_opts = opts.replace(scalar_chain=ScalarChainMode.ON)
     structured = _chain_structure(ctx, chain_opts)
-    stats_sc = {}
+    stats_sc: Stats = {}
     code_sc = _emit_code(
         ctx, structured, stats_sc, True, **chain_opts.to_legacy()
     )
     stats_sc.pop(_STRUCTURE_STATS_KEY, None)
     plain_opts = opts.replace(scalar_chain=ScalarChainMode.OFF)
     plain, propagated = _plain_structure(ctx, plain_opts, structured)
-    stats_plain = {}
+    stats_plain: Stats = {}
     code_plain = _emit_code(
         ctx, plain, stats_plain, True, **plain_opts.to_legacy()
     )
@@ -332,17 +354,17 @@ def _generate_cost(ctx: _EmitContext, opts: CodegenOptions, stats):
 
 
 def _to_fortran_impl(
-    diff,
-    derivatives=None,
-    name=None,
-    subroutine_name=None,
-    integer_args=None,
-    module_symbols=None,
-    symmetric_params=(),
-    stats=None,
+    diff: Any,
+    derivatives: Any = None,
+    name: str | None = None,
+    subroutine_name: str | None = None,
+    integer_args: Iterable[str] | None = None,
+    module_symbols: Iterable[str] | None = None,
+    symmetric_params: Iterable[str] | None = (),
+    stats: Stats | None = None,
     *,
-    opts,
-):
+    opts: CodegenOptions,
+) -> str:
     """Generate the subroutine from resolved options (see ``to_fortran``).
 
     Dispatches on ``opts.scalar_chain``: off and on make one structure and
@@ -477,47 +499,53 @@ class _EmitState:
     """
 
     opts: CodegenOptions
-    structured: dict | None
-    stats: dict | None
+    structured: Structure | None
+    stats: Stats | None
     count_scalar: bool
     resolver: _PlaceholderResolver
     namer: _Namer
-    selected: list
-    integer_args: list
-    module_symbols: set
-    symmetric_params: tuple
-    scalar_chain_defs: Any = ()
-    sc_temp_names: set = dataclasses.field(default_factory=set)
-    outputs: list = dataclasses.field(default_factory=list)
+    selected: list[str]
+    integer_args: list[str]
+    module_symbols: set[str]
+    symmetric_params: tuple[str, ...]
+    scalar_chain_defs: Sequence[ScalarDef] = ()
+    sc_temp_names: set[str] = dataclasses.field(default_factory=set)
+    outputs: list[Output] = dataclasses.field(default_factory=list)
     share_sums: bool = False
     scalar_cse: bool = False
-    staged: list = dataclasses.field(default_factory=list)
-    prepared: list = dataclasses.field(default_factory=list)
-    all_exprs: list = dataclasses.field(default_factory=list)
-    component_defs: list = dataclasses.field(default_factory=list)
-    scans: list = dataclasses.field(default_factory=list)
-    param_arrays: dict = dataclasses.field(default_factory=dict)
-    params: list = dataclasses.field(default_factory=list)
-    placeholder_args: list = dataclasses.field(default_factory=list)
+    staged: Staged = dataclasses.field(default_factory=list)
+    prepared: list[PreparedOutput] = dataclasses.field(default_factory=list)
+    all_exprs: list[sp.Expr] = dataclasses.field(default_factory=list)
+    component_defs: list[ComponentDef] = dataclasses.field(
+        default_factory=list
+    )
+    scans: list[Any] = dataclasses.field(default_factory=list)
+    param_arrays: dict[str, int] = dataclasses.field(default_factory=dict)
+    params: list[str] = dataclasses.field(default_factory=list)
+    placeholder_args: list[str] = dataclasses.field(default_factory=list)
     needs_nc: bool = False
-    inputs: list = dataclasses.field(default_factory=list)
-    output_decls: list = dataclasses.field(default_factory=list)
-    arrays: dict = dataclasses.field(default_factory=dict)
-    component_array_defs: list = dataclasses.field(default_factory=list)
-    array_defs: list = dataclasses.field(default_factory=list)
-    sum_defs: list = dataclasses.field(default_factory=list)
-    cse_defs: list = dataclasses.field(default_factory=list)
-    reserved: set = dataclasses.field(default_factory=set)
-    residuals: list = dataclasses.field(default_factory=list)
-    scalar_chain_definitions: list = dataclasses.field(default_factory=list)
-    rendered: list = dataclasses.field(default_factory=list)
-    definitions: list = dataclasses.field(default_factory=list)
-    lowrank_outs: set = dataclasses.field(default_factory=set)
-    out_names: dict = dataclasses.field(default_factory=dict)
-    consumers: dict = dataclasses.field(default_factory=dict)
-    body: list = dataclasses.field(default_factory=list)
-    temps: list = dataclasses.field(default_factory=list)
-    loop_indices: list = dataclasses.field(default_factory=list)
+    inputs: list[str] = dataclasses.field(default_factory=list)
+    output_decls: list[str] = dataclasses.field(default_factory=list)
+    arrays: dict[str, int] = dataclasses.field(default_factory=dict)
+    component_array_defs: list[TempDef] = dataclasses.field(
+        default_factory=list
+    )
+    array_defs: list[TempDef] = dataclasses.field(default_factory=list)
+    sum_defs: list[TempDef] = dataclasses.field(default_factory=list)
+    cse_defs: list[TempDef] = dataclasses.field(default_factory=list)
+    reserved: set[str] = dataclasses.field(default_factory=set)
+    residuals: list[sp.Expr] = dataclasses.field(default_factory=list)
+    scalar_chain_definitions: list[TempDef] = dataclasses.field(
+        default_factory=list
+    )
+    rendered: list[PreparedOutput] = dataclasses.field(default_factory=list)
+    definitions: list[TempDef] = dataclasses.field(default_factory=list)
+    lowrank_outs: set[str] = dataclasses.field(default_factory=set)
+    out_names: dict[str, str] = dataclasses.field(default_factory=dict)
+    consumers: dict[str, set[str]] = dataclasses.field(default_factory=dict)
+    body: list[str] = dataclasses.field(default_factory=list)
+    temps: list[str] = dataclasses.field(default_factory=list)
+    loop_indices: list[str] = dataclasses.field(default_factory=list)
     text: str = ""
 
 
@@ -571,8 +599,8 @@ def _legacy_options(arguments: Mapping[str, Any]) -> CodegenOptions:
 
 def _new_state(
     ctx: _EmitContext,
-    structured: dict | None,
-    stats: dict | None,
+    structured: Structure | None,
+    stats: Stats | None,
     count_scalar: bool,
     opts: CodegenOptions,
 ) -> _EmitState:
@@ -611,7 +639,9 @@ def _new_state(
     )
 
 
-def _derivative(ctx: _EmitContext, structured: dict | None, attr: str):
+def _derivative(
+    ctx: _EmitContext, structured: Structure | None, attr: str
+) -> sp.Expr:
     """Return the derivative ``attr`` from the structure or the instance."""
     if structured is not None:
         return structured[attr]
@@ -627,7 +657,7 @@ def _scalar_chain_outputs(state: _EmitState) -> None:
         Updates ``outputs``, ``scalar_chain_defs`` and ``sc_temp_names``;
         draws one name per node and scalar from the namer.
     """
-    structured = state.structured
+    structured = cast(Structure, state.structured)
     resolver = state.resolver
     namer = state.namer
     outputs = state.outputs
@@ -699,7 +729,7 @@ def _stage_outputs(state: _EmitState) -> None:
     """Canonicalise every output expression into ``staged`` (S4)."""
     opts = state.opts
     symmetric_params = state.symmetric_params
-    staged = []
+    staged: Staged = []
     for attr, out_name, expr in state.outputs:
         expr = _kron_to_piecewise(expr)
         expr = expr.xreplace({nc: sp.Symbol("nc")})
@@ -719,7 +749,7 @@ def _merge_dummies(state: _EmitState) -> None:
     """Merge the dummy images of symmetric parameters (S5)."""
     # arrays of rank >= 2 read inside sums with free indices by some output
     staged = state.staged
-    shared_bases = set()
+    shared_bases: set[str] = set()
     for _attr, _out, expr in staged:
         for total in expr.atoms(sp.Sum):
             if _free_indices(total):
@@ -746,7 +776,7 @@ def _merge_dummies(state: _EmitState) -> None:
 def _prepare_outputs(ctx: _EmitContext, state: _EmitState) -> None:
     """Fold symmetric sums and order the free indices (S7)."""
     opts = state.opts
-    prepared = []
+    prepared: list[PreparedOutput] = []
     for attr, out_name, expr in state.staged:
         if opts.param_symmetry and state.symmetric_params:
             expr = _fold_symmetric_sums(
@@ -800,7 +830,7 @@ def _canonicalise_outputs(ctx: _EmitContext, state: _EmitState) -> None:
 def _component_definitions(state: _EmitState) -> None:
     """Canonicalise the component bodies into ``component_defs`` (S8)."""
     opts = state.opts
-    component_defs = []
+    component_defs: list[ComponentDef] = []
     if state.structured is not None:
         for comp in state.structured.get("_component_defs", ()):
             comp_name, comp_body, comp_rank, comp_sym = comp
@@ -820,7 +850,7 @@ def _component_arrays(state: _EmitState) -> None:
     from thermodiff.chain import NAME_SCHEME_KEY
 
     opts = state.opts
-    scheme = state.structured[NAME_SCHEME_KEY]
+    scheme = cast(Structure, state.structured)[NAME_SCHEME_KEY]
     for comp_name, comp_body, comp_rank, comp_sym in state.component_defs:
         state.arrays[comp_name] = comp_rank
         free_ = (
@@ -858,7 +888,9 @@ def _pair_components(ctx: _EmitContext, state: _EmitState) -> None:
     _component_arrays(state)
 
 
-def _index_and_base_names(scans: list) -> tuple[set, set]:
+def _index_and_base_names(
+    scans: list[Any],
+) -> tuple[set[str], set[str]]:
     """Return the names of the indices and of the arrays found in ``scans``."""
     index_syms = set()
     indexed_bases = set()
@@ -888,7 +920,7 @@ def _is_declared_elsewhere(sym: sp.Symbol, state: _EmitState) -> bool:
     return name in state.sc_temp_names
 
 
-def _parameter_scalars(state: _EmitState) -> set:
+def _parameter_scalars(state: _EmitState) -> set[str]:
     """Return the names of the scalar parameters found in ``scans``."""
     # NOTE: ``n`` is compared by name because ``expr`` has been rebuilt by
     # the ``nc`` replacement, which also rewrites the shape of the ``n``
@@ -906,12 +938,12 @@ def _parameter_scalars(state: _EmitState) -> set:
     return param_scalars
 
 
-def _parameter_arrays(state: _EmitState, uses_n: bool) -> dict:
+def _parameter_arrays(state: _EmitState, uses_n: bool) -> dict[str, int]:
     """Return the rank of every array argument found in ``scans``."""
     n_name = str(n)
     placeholder_names = set(state.resolver.ranks)
     component_names = {c[0] for c in state.component_defs}
-    array_ranks = {}
+    array_ranks: dict[str, int] = {}
     for scan in state.scans:
         for indexed in scan.indexed:
             base_name = str(indexed.base)
@@ -1055,7 +1087,7 @@ def _array_cse(ctx: _EmitContext, state: _EmitState) -> None:
         Rewrites ``all_exprs``; writes ``array_defs`` and adds the
         temporaries to ``arrays``.  Draws names from the namer.
     """
-    state.all_exprs, state.array_defs = _indexed_cse(
+    state.all_exprs, state.array_defs = _indexed_cse(  # type: ignore[no-untyped-call]  # noqa: E501
         state.all_exprs,
         state.namer,
         state.arrays,
@@ -1192,7 +1224,7 @@ def _share_sum_temps(ctx: _EmitContext, state: _EmitState) -> None:
     """
     opts = state.opts
     if state.share_sums:
-        state.residuals, state.sum_defs = _share_sums(
+        state.residuals, state.sum_defs = _share_sums(  # type: ignore[no-untyped-call]  # noqa: E501
             state.all_exprs,
             state.namer,
             ctx.diff.indexes,
@@ -1247,14 +1279,14 @@ def _scalar_cse_pass(ctx: _EmitContext, state: _EmitState) -> None:
         cse = _sympy_scalar_cse
     else:
         cse = _common_scalar_cse
-    state.residuals, state.cse_defs = cse(
+    state.residuals, state.cse_defs = cse(  # type: ignore[no-untyped-call]
         state.residuals, state.namer, state.arrays
     )
 
 
-def _scalar_chain_scalars(state: _EmitState) -> dict:
+def _scalar_chain_scalars(state: _EmitState) -> dict[sp.Symbol, sp.Symbol]:
     """Make the scalar definitions of the chain; return the alias map."""
-    alias = {}
+    alias: dict[sp.Symbol, sp.Symbol] = {}
     for (attr, out_name, _, _), residual in zip(
         state.prepared, state.residuals
     ):
@@ -1478,12 +1510,12 @@ def _lowrank_enabled(opts: CodegenOptions) -> bool:
     )
 
 
-def _rendered_residuals(state: _EmitState) -> list:
+def _rendered_residuals(state: _EmitState) -> list[sp.Expr]:
     """Return the residual of every rendered output."""
     return [residual for _, _, residual, _ in state.rendered]
 
 
-def _replace_residuals(state: _EmitState, residuals: list) -> None:
+def _replace_residuals(state: _EmitState, residuals: list[sp.Expr]) -> None:
     """Set ``residuals`` and update ``rendered`` in lock-step."""
     state.residuals = residuals
     state.rendered = [
@@ -1787,7 +1819,7 @@ def _split_accumulators_pass(ctx: _EmitContext, state: _EmitState) -> None:
 
 def _scalar_operation_count(state: _EmitState) -> int:
     """Count the operations of the scalar block (no loops)."""
-    return sum(
+    return sum(  # type: ignore[no-any-return]  # sympy is Any
         sp.count_ops(residual, visual=False)
         for (_a, _o, _r, free_), residual in zip(
             state.rendered, state.residuals
@@ -1834,7 +1866,7 @@ def _consumer_graph(state: _EmitState) -> None:
         attr: out_name for attr, out_name, _, _ in state.rendered
     }
     temp_names = {_temp_name(definition.target) for definition in definitions}
-    consumers = {name: set() for name in temp_names}
+    consumers: dict[str, set[str]] = {name: set() for name in temp_names}
     for attr, _out_name, residual, _free in state.rendered:
         for name in _referenced_temp_names(residual, temp_names):
             consumers[name].add(attr)
@@ -1845,7 +1877,7 @@ def _consumer_graph(state: _EmitState) -> None:
     state.consumers = consumers
 
 
-def _render_outputs(state: _EmitState) -> list:
+def _render_outputs(state: _EmitState) -> list[str]:
     """Render the output assignments, in output order."""
     opts = state.opts
     lines = []
@@ -1945,9 +1977,9 @@ def _temp_declarations(ctx: _EmitContext, state: _EmitState) -> None:
     )
 
 
-def _argument_names(ctx: _EmitContext, state: _EmitState) -> list:
+def _argument_names(ctx: _EmitContext, state: _EmitState) -> list[str]:
     """Return the dummy argument names in declaration order."""
-    arg_names = []
+    arg_names: list[str] = []
     if state.needs_nc:
         arg_names.append("nc")
     arg_names.extend(state.integer_args)
@@ -1961,7 +1993,7 @@ def _argument_names(ctx: _EmitContext, state: _EmitState) -> list:
     return arg_names
 
 
-def _array_declarations(state: _EmitState) -> list:
+def _array_declarations(state: _EmitState) -> list[str]:
     """Return the declaration lines of the temporary arrays, by rank."""
     arrays = state.arrays
     array_pad = state.opts.array_pad
@@ -2108,63 +2140,63 @@ _PASSES: tuple[Pass, ...] = (
 
 
 def _emit_code(
-    ctx,
-    structured,
-    stats,
-    count_scalar,
+    ctx: _EmitContext,
+    structured: Structure | None,
+    stats: Stats | None,
+    count_scalar: bool,
     *,
-    strict=False,
-    optional_derivatives=False,
-    array_cse=True,
-    share=True,
-    share_sums=None,
-    scalar_cse=None,
-    param_symmetry=False,
-    hessian_symmetry=False,
-    cse_backend="thermodiff",
-    sum_alpha=False,
-    array_pad=0,
-    hoist_invariants=False,
-    chain_rule=False,
-    hoist_loops=False,
-    sum_free_alpha=False,
-    fuse_temps=False,
-    nest_sums=False,
-    split_sqrt=False,
-    split_sums=False,
-    nest_shared=False,
-    sym_matvec=False,
-    col_major=False,
-    pair_cse=False,
-    pair_rates=False,
-    sum_transpose=False,
-    sep_sums=False,
-    sym_rank3=False,
-    nest_general=False,
-    sym_sum2=False,
-    cse_expensive=False,
-    fuse_loops=False,
-    nested_nodes=False,
-    sym_perm=False,
-    fuse_guard=False,
-    nest_cost=False,
-    comp_fuse=False,
-    fuse_outer=False,
-    fuse_libm_guard=False,
-    keep_libm_tables=False,
-    diag_table=False,
-    sib_fuse=False,
-    dummy_canon=False,
-    float_canon=False,
-    contiguous_args=False,
-    table_layout=False,
-    lowrank_hess=False,
-    drop_pair_tables=False,
-    share_elementwise=False,
-    scalar_chain=False,
-    split_affine=False,
-    split_acc=False,
-):
+    strict: bool = False,
+    optional_derivatives: bool = False,
+    array_cse: bool = True,
+    share: bool = True,
+    share_sums: bool | None = None,
+    scalar_cse: bool | None = None,
+    param_symmetry: bool = False,
+    hessian_symmetry: bool = False,
+    cse_backend: CseBackend | str = "thermodiff",
+    sum_alpha: bool = False,
+    array_pad: int = 0,
+    hoist_invariants: bool = False,
+    chain_rule: bool = False,
+    hoist_loops: bool = False,
+    sum_free_alpha: bool = False,
+    fuse_temps: bool = False,
+    nest_sums: bool = False,
+    split_sqrt: bool = False,
+    split_sums: bool = False,
+    nest_shared: bool = False,
+    sym_matvec: bool = False,
+    col_major: bool = False,
+    pair_cse: bool = False,
+    pair_rates: bool = False,
+    sum_transpose: bool = False,
+    sep_sums: SepSumsMode | bool | str = False,
+    sym_rank3: bool = False,
+    nest_general: bool = False,
+    sym_sum2: bool = False,
+    cse_expensive: bool = False,
+    fuse_loops: bool = False,
+    nested_nodes: bool = False,
+    sym_perm: bool = False,
+    fuse_guard: bool = False,
+    nest_cost: bool = False,
+    comp_fuse: bool = False,
+    fuse_outer: bool = False,
+    fuse_libm_guard: bool = False,
+    keep_libm_tables: bool = False,
+    diag_table: bool = False,
+    sib_fuse: bool = False,
+    dummy_canon: bool = False,
+    float_canon: bool = False,
+    contiguous_args: bool = False,
+    table_layout: bool = False,
+    lowrank_hess: LowrankHessMode | bool | str = False,
+    drop_pair_tables: bool = False,
+    share_elementwise: bool = False,
+    scalar_chain: ScalarChainMode | bool | str = False,
+    split_affine: bool = False,
+    split_acc: int | bool = False,
+) -> str:
     """Emit the subroutine from a precomputed chain-rule structure.
 
     Parameters
@@ -2196,18 +2228,18 @@ def _emit_code(
 
 
 def to_fortran(
-    diff,
-    derivatives=None,
-    name=None,
-    subroutine_name=None,
+    diff: Any,
+    derivatives: Any = None,
+    name: str | None = None,
+    subroutine_name: str | None = None,
     *,
-    integer_args=None,
-    module_symbols=None,
-    symmetric_params=(),
-    stats=None,
-    options=None,
-    **legacy,
-):
+    integer_args: Iterable[str] | None = None,
+    module_symbols: Iterable[str] | None = None,
+    symmetric_params: Iterable[str] | None = (),
+    stats: Stats | None = None,
+    options: CodegenOptions | None = None,
+    **legacy: Any,
+) -> str:
     """Generate a Fortran subroutine for a :class:`DiffPlz` instance.
 
     The behaviour options can be given as a :class:`CodegenOptions`
@@ -2563,7 +2595,7 @@ def _external_stacklevel() -> int:
     int
         Level to hand to ``CodegenOptions.validate(stacklevel=...)``.
     """
-    frame = sys._getframe(1)
+    frame: FrameType | None = sys._getframe(1)
     level = 1
     while frame is not None and os.path.abspath(
         frame.f_code.co_filename
@@ -2607,4 +2639,5 @@ def _public_signature() -> inspect.Signature:
     return inspect.Signature(leading + context + behaviour)
 
 
-to_fortran.__signature__ = _public_signature()
+# the explicit signature is read by ``inspect.signature`` and ``help``
+to_fortran.__signature__ = _public_signature()  # type: ignore[attr-defined]
