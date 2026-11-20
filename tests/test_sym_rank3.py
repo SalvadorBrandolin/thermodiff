@@ -5,7 +5,6 @@ import hashlib
 import pytest
 import sympy as sp
 
-
 from thermodiff import fortran
 from thermodiff.fortran import _canonical_symmetric
 from thermodiff.model import compile_model
@@ -26,6 +25,24 @@ EXPECTED_DIGESTS = {
     True: "82ef007513e777f3366ef009579a307a0755af31efda1ad7fb80a23bf4e33bcf",
 }
 
+#: pair function with a rank-3 symmetric parameter: the chain-rule stage
+#: canonicalises it before the main pipeline reads the sym_rank3 option
+CHAIN_MODEL = """model r3c
+variables
+    n nc
+    T
+parameters
+    c nc nc nc symmetric
+    a nc
+function
+    T*sum_i sum_j n_i*n_j*exp(-c_jji*T)*a_i
+"""
+
+#: sha256 of the chain-rule module generated with sym_rank3=False
+EXPECTED_CHAIN_DIGEST = (
+    "67c759511162e335373563758db258a17b30f7dc921a38caaeeb6bd2c6c918e6"
+)
+
 
 def _rank3_occurrence() -> sp.Expr:
     """Return ``c(k, i, j)`` with unsorted subscripts."""
@@ -39,6 +56,39 @@ def _canonical(sym_rank3: bool) -> sp.Expr:
     return _canonical_symmetric(
         _rank3_occurrence(), ["c"], sym_rank3=sym_rank3
     )
+
+
+def _generate(sym_rank3: bool) -> str:
+    """Generate the rank-3 model with ``param_symmetry`` enabled."""
+    return compile_model(
+        RANK3_MODEL,
+        derivatives="dn,dndn",
+        preset="minimal",
+        param_symmetry=True,
+        sym_rank3=sym_rank3,
+    )
+
+
+def _digest(code: str) -> str:
+    """Return the sha256 hex digest of generated code."""
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
+def _generate_chain(sym_rank3: bool) -> str:
+    """Generate the chain-rule model, whose chain stage runs first."""
+    return compile_model(
+        CHAIN_MODEL,
+        derivatives="dn,dT",
+        preset="minimal",
+        param_symmetry=True,
+        chain_rule=True,
+        sym_rank3=sym_rank3,
+    )
+
+
+def _raise_midway(*args, **kwargs):
+    """Stand-in for a later pipeline stage that fails."""
+    raise RuntimeError("stage failed")
 
 
 def test_rank3_sorted_when_flag_on():
@@ -80,32 +130,15 @@ def test_end_to_end_output_is_pinned(sym_rank3):
     assert digest == EXPECTED_DIGESTS[sym_rank3]
 
 
-def _generate(sym_rank3: bool) -> str:
-    """Generate the rank-3 model with ``param_symmetry`` enabled."""
-    return compile_model(
-        RANK3_MODEL,
-        derivatives="dn,dndn",
-        preset="minimal",
-        param_symmetry=True,
-        sym_rank3=sym_rank3,
-    )
-
-
-def _digest(code: str) -> str:
-    """Return the sha256 hex digest of generated code."""
-    return hashlib.sha256(code.encode()).hexdigest()
-
-
-def _raise_midway(*args, **kwargs):
-    """Stand-in for a later pipeline stage that fails."""
-    raise RuntimeError("stage failed")
-
-
 def test_failed_sym_rank3_call_does_not_leak(monkeypatch):
     with monkeypatch.context() as patched:
         patched.setattr(fortran, "_fold_symmetric_sums", _raise_midway)
         with pytest.raises(RuntimeError, match="stage failed"):
-            _generate(True)
+            _generate_chain(True)
+    # callers that run before the next emission see no leftover state
+    occurrence = _rank3_occurrence()
+    assert _canonical_symmetric(occurrence, ["c"]) == occurrence
+    assert _digest(_generate_chain(False)) == EXPECTED_CHAIN_DIGEST
     assert _digest(_generate(False)) == EXPECTED_DIGESTS[False]
 
 
