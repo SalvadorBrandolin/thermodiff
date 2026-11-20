@@ -12,6 +12,7 @@ variants must agree with the reference variant ``a0`` (no optimisation).
 """
 
 import os
+import warnings
 
 import numpy as np
 import pytest
@@ -25,6 +26,10 @@ from thermodiff.model.ir import build_ir
 from thermodiff.model.parser import read_sections
 
 from fortran_tools import GFORTRAN, DEBUG_FREE_FORM_FLAGS, compile_and_run
+
+# Variants are applied with optional_derivatives=True, so validate() is
+# expected to report inert options; silence only that message here.
+INERT_OPTIONS_MESSAGE = "options ignored by the current combination"
 
 PR76_SYM = """
 model pr76
@@ -222,13 +227,17 @@ end program drive
 
 
 def _run_variant(tmp_path, settings):
-    code = compile_model(
-        PR76_SYM,
-        derivatives=W6,
-        preset="minimal",
-        optional_derivatives=True,
-        **settings,
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message=INERT_OPTIONS_MESSAGE, category=UserWarning
+        )
+        code = compile_model(
+            PR76_SYM,
+            derivatives=W6,
+            preset="minimal",
+            optional_derivatives=True,
+            **settings,
+        )
     work = tmp_path
     (work / "drive.f90").write_text(
         DRIVER.split("program drive")[0]
@@ -370,13 +379,17 @@ def _rkpr_text():
 
 
 def _run_rkpr(work, settings):
-    code = compile_model(
-        _rkpr_text(),
-        derivatives=W6,
-        preset="minimal",
-        optional_derivatives=True,
-        **settings,
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message=INERT_OPTIONS_MESSAGE, category=UserWarning
+        )
+        code = compile_model(
+            _rkpr_text(),
+            derivatives=W6,
+            preset="minimal",
+            optional_derivatives=True,
+            **settings,
+        )
     head, tail = RKPR_DRIVER.split("program drive", 1)
     (work / "drive.f90").write_text(head + code + "\nprogram drive" + tail)
     compile_and_run([work / "drive.f90"], work, DEBUG_FREE_FORM_FLAGS)

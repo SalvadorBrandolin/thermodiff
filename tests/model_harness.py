@@ -2,7 +2,7 @@
 compile a .model with given settings, build an automatic gfortran driver that
 calls it with nc = 3 and 7, and compare all outputs with the a0 reference."""
 
-import sys, re, tempfile, pathlib, json, itertools
+import sys, re, tempfile, pathlib, json, itertools, warnings
 
 import numpy as np
 from thermodiff.model import compile_model
@@ -10,6 +10,11 @@ from benchmarks.td_bench import EXTENDED_VARIANTS
 from fortran_tools import DEBUG_FREE_FORM_FLAGS, compile_and_run
 
 W6 = "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"
+
+# Variants are applied with optional_derivatives set, so validate() is
+# expected to report inert options; silence only that message here.
+INERT_OPTIONS_MESSAGE = "options ignored by the current combination"
+
 OUTS = [
     "f",
     "dfdT",
@@ -125,12 +130,16 @@ def driver(code, inits, present, ncs=(3, 7)):
 
 
 def run(text, settings, inits=None, present=OUTS, derivs=W6, opt=True):
-    code = compile_model(
-        text,
-        derivatives=derivs,
-        optional_derivatives=opt,
-        **{"preset": "minimal", **settings},
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message=INERT_OPTIONS_MESSAGE, category=UserWarning
+        )
+        code = compile_model(
+            text,
+            derivatives=derivs,
+            optional_derivatives=opt,
+            **{"preset": "minimal", **settings},
+        )
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
         (d / "drive.f90").write_text(driver(code, inits or {}, present))
