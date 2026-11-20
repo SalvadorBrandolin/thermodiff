@@ -5,7 +5,6 @@ import hashlib
 import pytest
 import sympy as sp
 
-from thermodiff import fortran
 from thermodiff.fortran import _canonical_symmetric
 from thermodiff.model import compile_model
 
@@ -33,49 +32,37 @@ def _rank3_occurrence() -> sp.Expr:
     return base[k, i, j]
 
 
-def _canonical() -> sp.Expr:
+def _canonical(sym_rank3: bool) -> sp.Expr:
     """Canonicalise the unsorted rank-3 occurrence."""
-    return _canonical_symmetric(_rank3_occurrence(), ["c"])
+    return _canonical_symmetric(
+        _rank3_occurrence(), ["c"], sym_rank3=sym_rank3
+    )
 
 
-def _set_global_flag(value: bool) -> None:
-    """Set the module-level flag read by the current code."""
-    fortran._SYM_RANK3[0] = value
-
-
-@pytest.fixture
-def rank3_flag():
-    """Set the current-code global flag and restore it afterwards."""
-    saved = fortran._SYM_RANK3[0]
-    try:
-        yield _set_global_flag
-    finally:
-        fortran._SYM_RANK3[0] = saved
-
-
-def test_rank3_sorted_when_flag_on(rank3_flag):
-    rank3_flag(True)
+def test_rank3_sorted_when_flag_on():
     occurrence = _rank3_occurrence()
     expected = sp.Indexed(
         occurrence.base,
         *sorted(occurrence.indices, key=sp.default_sort_key),
     )
-    assert _canonical() == expected
-    assert _canonical() != occurrence
+    assert _canonical(True) == expected
+    assert _canonical(True) != occurrence
 
 
-def test_rank3_untouched_when_flag_off(rank3_flag):
-    rank3_flag(False)
-    assert _canonical() == _rank3_occurrence()
+def test_rank3_untouched_when_flag_off():
+    assert _canonical(False) == _rank3_occurrence()
 
 
-def test_rank2_sorted_regardless_of_flag(rank3_flag):
+def test_rank2_sorted_regardless_of_flag():
     base = sp.IndexedBase("c")
     i, j = sp.symbols("i j", cls=sp.Idx)
     expected = sp.Indexed(base, *sorted((i, j), key=sp.default_sort_key))
     for value in (False, True):
-        rank3_flag(value)
-        assert _canonical_symmetric(base[j, i], ["c"]) == expected
+        occurrence = base[j, i]
+        assert (
+            _canonical_symmetric(occurrence, ["c"], sym_rank3=value)
+            == expected
+        )
 
 
 @pytest.mark.parametrize("sym_rank3", [False, True])

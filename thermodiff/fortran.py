@@ -568,7 +568,7 @@ def _alpha_key(total):
     return total.xreplace(mapping)
 
 
-def _free_alpha_key(total, indexes, symmetric_params=()):
+def _free_alpha_key(total, indexes, symmetric_params=(), sym_rank3=False):
     """Canonical form of a summation modulo renaming of all its indices.
 
     Bound indices are renamed by position, free indices by their order, so
@@ -578,7 +578,7 @@ def _free_alpha_key(total, indexes, symmetric_params=()):
     mapping = {index: sp.Idx(f"_free{pos}") for pos, index in enumerate(free)}
     key = _alpha_key(total.xreplace(mapping))
     if symmetric_params:
-        key = _canonical_symmetric(key, symmetric_params)
+        key = _canonical_symmetric(key, symmetric_params, sym_rank3)
     return key, free
 
 
@@ -638,6 +638,7 @@ def _share_sums(
     free_alpha=False,
     symmetric_params=(),
     transpose=False,
+    sym_rank3=False,
 ):
     """Replace every ``Sum`` by a temporary that is computed once.
 
@@ -684,7 +685,7 @@ def _share_sums(
         for total in innermost:
             if free_alpha:
                 key, free_here = _free_alpha_key(
-                    total, indexes, symmetric_params
+                    total, indexes, symmetric_params, sym_rank3
                 )
                 if transpose and key not in by_key and len(free_here) == 2:
                     # the transpose of a rank-2 sum already computed
@@ -695,7 +696,9 @@ def _share_sums(
                     }
                     tkey = _alpha_key(total.xreplace(mapping))
                     if symmetric_params:
-                        tkey = _canonical_symmetric(tkey, symmetric_params)
+                        tkey = _canonical_symmetric(
+                            tkey, symmetric_params, sym_rank3
+                        )
                     if tkey in by_key:
                         target_, _ = by_key[tkey]
                         replacements[total] = sp.Indexed(
@@ -731,7 +734,9 @@ def _share_sums(
             replacements[total] = target
             if free_alpha:
                 by_key[
-                    _free_alpha_key(total, indexes, symmetric_params)[0]
+                    _free_alpha_key(
+                        total, indexes, symmetric_params, sym_rank3
+                    )[0]
                 ] = (
                     target,
                     free,
@@ -1407,7 +1412,9 @@ def _canonical_floats(expr):
     return expr.xreplace({f: sp.Float(repr(float(f)), 17) for f in floats})
 
 
-def _merge_dummy_images(expr, symmetric_params=(), shared_bases=frozenset()):
+def _merge_dummy_images(
+    expr, symmetric_params=(), shared_bases=frozenset(), sym_rank3=False
+):
     """Merge the terms of a summation that are images under a renaming of
     its bound indices.
 
@@ -1430,7 +1437,9 @@ def _merge_dummy_images(expr, symmetric_params=(), shared_bases=frozenset()):
         for perm in permutations(bound):
             image = term.xreplace(dict(zip(bound, perm)))
             if symmetric_params:
-                image = _canonical_symmetric(image, symmetric_params)
+                image = _canonical_symmetric(
+                    image, symmetric_params, sym_rank3
+                )
             key = sp.default_sort_key(image)
             if best is None or key < best[0]:
                 best = (key, image)
@@ -1478,6 +1487,7 @@ def _nest_double_sums(
     shared_inner=False,
     general=False,
     cost=False,
+    sym_rank3=False,
 ):
     """Rewrite double sums as dot products with existing vector sums.
 
@@ -1501,7 +1511,9 @@ def _nest_double_sums(
         }
         renamed = _alpha_key(total.xreplace(mapping))
         if symmetric_params:
-            renamed = _canonical_symmetric(renamed, symmetric_params)
+            renamed = _canonical_symmetric(
+                renamed, symmetric_params, sym_rank3
+            )
         return renamed
 
     from thermodiff.chain import factor_sums
@@ -2109,7 +2121,7 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
     return new_definitions, new_outputs
 
 
-def _symv_parts(definition, symmetric_params):
+def _symv_parts(definition, symmetric_params, sym_rank3=False):
     """Split ``v(f) = sum_b P(b,f)*R(b)`` with ``P`` symmetric.
 
     Returns ``(pair, rest)`` when the body is a product of exactly one
@@ -2134,8 +2146,8 @@ def _symv_parts(definition, symmetric_params):
         isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)
     ):
         return None
-    canon = _canonical_symmetric(pair[0], symmetric_params)
-    if _swap(canon, f, b, symmetric_params) != canon:
+    canon = _canonical_symmetric(pair[0], symmetric_params, sym_rank3)
+    if _swap(canon, f, b, symmetric_params, sym_rank3) != canon:
         return None
     return pair[0], sp.Mul(*rest)
 
@@ -3550,7 +3562,7 @@ def _render_outer_fused(definition) -> list:
     return lines
 
 
-def _diagonal_from_tables(definitions, symmetric_params):
+def _diagonal_from_tables(definitions, symmetric_params, sym_rank3=False):
     """Read the diagonal of an existing rank-2 table instead of recomputing it.
 
     ``d(k) = sum_m B(k, k, m)`` and ``t(a, b) = sum_m B(a, b, m)`` (filled in
@@ -3589,7 +3601,7 @@ def _diagonal_from_tables(definitions, symmetric_params):
     def canon(e):
         e = sp.expand(inline_maps(e))
         return (
-            _canonical_symmetric(e, symmetric_params)
+            _canonical_symmetric(e, symmetric_params, sym_rank3)
             if symmetric_params
             else e
         )
@@ -4118,11 +4130,6 @@ def _wrap_signature(sub_name, arg_names, limit=120):
 # ---------------------------------------------------------------------------
 
 
-#: canonicalisation of symmetric parameters of rank >= 3 (option sym_rank3);
-#: a one-element list so that to_fortran can switch it for one call
-_SYM_RANK3 = [False]
-
-
 def _separate_sums(expr, max_terms=16, selective=False):
     """Distribute products over sums inside summation bodies and split.
 
@@ -4170,7 +4177,7 @@ def _separate_sums(expr, max_terms=16, selective=False):
     return visit(expr)
 
 
-def _canonical_symmetric(expr, symmetric_params):
+def _canonical_symmetric(expr, symmetric_params, sym_rank3=False):
     """Sort the subscripts of every symmetric parameter occurrence.
 
     For a parameter declared ``symmetric`` (``k(i,j) == k(j,i)``) the
@@ -4178,6 +4185,16 @@ def _canonical_symmetric(expr, symmetric_params):
     and makes transposed occurrences syntactically identical, which lets
     the common sub-expression passes merge them and lets
     :func:`_fold_symmetric_sums` recognise symmetric summation bodies.
+
+    Parameters
+    ----------
+    expr : sympy.Expr
+        Expression to canonicalise.
+    symmetric_params : iterable of str
+        Names of the parameters declared ``symmetric``.
+    sym_rank3 : bool, optional
+        Also sort every subscript of symmetric parameters of rank three or
+        more (fully symmetric tensors).  Off by default.
     """
     if not symmetric_params:
         return expr
@@ -4186,7 +4203,7 @@ def _canonical_symmetric(expr, symmetric_params):
     for indexed in expr.atoms(sp.Indexed):
         if str(indexed.base) not in names:
             continue
-        if len(indexed.indices) >= 3 and _SYM_RANK3[0]:
+        if len(indexed.indices) >= 3 and sym_rank3:
             # fully symmetric tensor (k_ijk): sort every subscript
             ordered = sorted(indexed.indices, key=sp.default_sort_key)
             if list(ordered) != list(indexed.indices):
@@ -4201,10 +4218,10 @@ def _canonical_symmetric(expr, symmetric_params):
     return expr.xreplace(replacements) if replacements else expr
 
 
-def _swap(expr, a, b, symmetric_params):
+def _swap(expr, a, b, symmetric_params, sym_rank3=False):
     """Swap the indices ``a`` and ``b`` and re-canonicalise."""
     swapped = expr.xreplace({a: b, b: a})
-    return _canonical_symmetric(swapped, symmetric_params)
+    return _canonical_symmetric(swapped, symmetric_params, sym_rank3)
 
 
 def _derivative_function_atoms(expr: sp.Basic) -> tuple[set, set]:
@@ -4286,7 +4303,7 @@ class _LoopStart(sp.Symbol):
         return obj
 
 
-def _fold_symmetric_sums(expr, symmetric_params):
+def _fold_symmetric_sums(expr, symmetric_params, sym_rank3=False):
     """Fold double summations whose body is symmetric in its two indices.
 
     ``sum_a sum_b F(a,b)`` with ``F(a,b) == F(b,a)`` is rewritten as
@@ -4308,8 +4325,8 @@ def _fold_symmetric_sums(expr, symmetric_params):
         if low_a != 1 or low_b != 1 or high_a != high_b:
             continue
         body = total.function
-        canon = _canonical_symmetric(body, symmetric_params)
-        if _swap(canon, a, b, symmetric_params) != canon:
+        canon = _canonical_symmetric(body, symmetric_params, sym_rank3)
+        if _swap(canon, a, b, symmetric_params, sym_rank3) != canon:
             continue
         outer, inner = sorted((a, b), key=sp.default_sort_key)
         diagonal = canon.xreplace({inner: outer})
@@ -4875,7 +4892,6 @@ def _emit_code(
             if rank == 2 and sym
         )
 
-    _SYM_RANK3[0] = bool(sym_rank3)
     staged = []
     for attr, out_name, expr in outputs:
         expr = _kron_to_piecewise(expr)
@@ -4883,7 +4899,7 @@ def _emit_code(
         if float_canon:
             expr = _canonical_floats(expr)
         if param_symmetry and symmetric_params:
-            expr = _canonical_symmetric(expr, symmetric_params)
+            expr = _canonical_symmetric(expr, symmetric_params, sym_rank3)
         if sep_sums:
             expr = _separate_sums(expr, selective=(sep_sums == "cost"))
         staged.append((attr, out_name, expr))
@@ -4903,7 +4919,10 @@ def _emit_code(
                 attr,
                 out_name,
                 _merge_dummy_images(
-                    expr, symmetric_params, frozenset(shared_bases)
+                    expr,
+                    symmetric_params,
+                    frozenset(shared_bases),
+                    sym_rank3,
                 ),
             )
             for attr, out_name, expr in staged
@@ -4916,11 +4935,12 @@ def _emit_code(
             shared_inner=nest_shared,
             general=nest_general,
             cost=nest_cost,
+            sym_rank3=sym_rank3,
         )
     prepared = []
     for attr, out_name, expr in staged:
         if param_symmetry and symmetric_params:
-            expr = _fold_symmetric_sums(expr, symmetric_params)
+            expr = _fold_symmetric_sums(expr, symmetric_params, sym_rank3)
         free_order = _order_free(_free_indices(expr), diff.indexes)
         prepared.append((attr, out_name, expr, free_order))
 
@@ -4931,7 +4951,9 @@ def _emit_code(
             comp_name, comp_body, comp_rank, comp_sym = comp
             comp_body = comp_body.xreplace({nc: sp.Symbol("nc")})
             if param_symmetry and symmetric_params:
-                comp_body = _canonical_symmetric(comp_body, symmetric_params)
+                comp_body = _canonical_symmetric(
+                    comp_body, symmetric_params, sym_rank3
+                )
             component_defs.append((comp_name, comp_body, comp_rank, comp_sym))
     component_names = {c[0] for c in component_defs}
     scan_exprs = (
@@ -5094,8 +5116,14 @@ def _emit_code(
             free = definition["free"]
             if len(free) != 2 or definition["limits"]:
                 continue
-            body = _canonical_symmetric(definition["body"], symmetric_params)
-            if _swap(body, free[0], free[1], symmetric_params) == body:
+            body = _canonical_symmetric(
+                definition["body"], symmetric_params, sym_rank3
+            )
+            swapped_equal = (
+                _swap(body, free[0], free[1], symmetric_params, sym_rank3)
+                == body
+            )
+            if swapped_equal:
                 definition["mirror"] = True
                 if nest_shared:
                     # a symmetric temporary behaves as a symmetric parameter
@@ -5140,6 +5168,7 @@ def _emit_code(
             free_alpha=sum_free_alpha,
             symmetric_params=symmetric_params if param_symmetry else (),
             transpose=sum_transpose,
+            sym_rank3=sym_rank3,
         )
     else:
         residuals = list(all_exprs)
@@ -5315,12 +5344,18 @@ def _emit_code(
             free_ = definition["free"]
             if len(free_) != 2 or not definition["limits"]:
                 continue
-            body_ = _canonical_symmetric(definition["body"], symmetric_params)
+            body_ = _canonical_symmetric(
+                definition["body"], symmetric_params, sym_rank3
+            )
             if body_.has(sp.Piecewise) or any(
                 isinstance(x, _LoopStart) for x in body_.atoms(sp.Symbol)
             ):
                 continue
-            if _swap(body_, free_[0], free_[1], symmetric_params) == body_:
+            swapped_equal = (
+                _swap(body_, free_[0], free_[1], symmetric_params, sym_rank3)
+                == body_
+            )
+            if swapped_equal:
                 definition["mirror_sum"] = True
     if col_major:
         for definition in definitions:
@@ -5339,14 +5374,16 @@ def _emit_code(
         definitions = _fuse_loop_nests(definitions, namer)
     if sym_matvec and param_symmetry:
         for definition in definitions:
-            parts = _symv_parts(definition, symmetric_params)
+            parts = _symv_parts(definition, symmetric_params, sym_rank3)
             if parts is not None:
                 definition["symv"] = parts
                 definition["symv_acc"] = namer("t")
     if sib_fuse and not optional_derivatives:
         definitions = _fuse_sibling_tables(definitions, namer)
     if diag_table and not optional_derivatives:
-        definitions = _diagonal_from_tables(definitions, symmetric_params)
+        definitions = _diagonal_from_tables(
+            definitions, symmetric_params, sym_rank3
+        )
     if sym_perm and param_symmetry:
         definitions = _permute_symmetric_subscripts(
             definitions, symmetric_params
@@ -5507,7 +5544,6 @@ def _emit_code(
     lines.append(f"end subroutine {sub_name}")
     lines.append("")
 
-    _SYM_RANK3[0] = False
     return "\n".join(lines)
 
 
