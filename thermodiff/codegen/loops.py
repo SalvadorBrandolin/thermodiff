@@ -11,6 +11,7 @@ from thermodiff.codegen.common import (
     _order_free,
     _temp_name,
 )
+from thermodiff.codegen.ir import TempDef
 from thermodiff.codegen.symmetry import _alpha_key, _canonical_symmetric
 
 
@@ -500,7 +501,7 @@ def _fuse_loop_nests(definitions, namer):
         if simple(d) and group:
             first = group[0]
             f0, b0 = first["free"][0], first["limits"][0][0]
-            renamed = dict(d)
+            renamed = d.copy()
             mapping = {d["free"][0]: f0, d["limits"][0][0]: b0}
             renamed["target"] = d["target"].xreplace(mapping)
             renamed["free"] = [f0]
@@ -712,7 +713,7 @@ def _fuse_component_maps(definitions, namer):
             continue
         if group:
             idx = group[0]["free"][0]
-            renamed = dict(d)
+            renamed = d.copy()
             mapping = {d["free"][0]: idx}
             renamed["target"] = d["target"].xreplace(mapping)
             renamed["free"] = [idx]
@@ -1039,12 +1040,12 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
                 target = _new_shared_temp(namer, [outer], arrays)
                 vectors[key] = target.base
                 new_defs.append(
-                    {
-                        "target": target,
-                        "free": [outer],
-                        "limits": [],
-                        "body": prod.xreplace({inner: outer}),
-                    }
+                    TempDef(
+                        target=target,
+                        free=[outer],
+                        limits=[],
+                        body=prod.xreplace({inner: outer}),
+                    )
                 )
             only_inner = [sp.Indexed(vectors[key], inner)]
         only_outer = [f for f in o_f if f.atoms(sp.Idx) == {outer}]
@@ -1056,8 +1057,7 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
                 ]
         out.extend(new_defs)
         out.append(
-            dict(
-                d,
+            d.copy(
                 body=sp.Mul(*o_f) * sp.Mul(*(only_inner + rest)),
                 factored=True,
                 acc=sp.Symbol(str(namer("t"))),
@@ -1216,12 +1216,7 @@ def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
                 merge[late] = early
         target = _new_shared_temp(namer, [idx0], arrays)
         base = target.base
-        vector = {
-            "target": target,
-            "free": [idx0],
-            "limits": [],
-            "body": rep_sub,
-        }
+        vector = TempDef(target=target, free=[idx0], limits=[], body=rep_sub)
         rep = {}
         for pos, sub in occ:
             (idx,) = sub.atoms(sp.Idx)
@@ -1243,7 +1238,7 @@ def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
         # insert the vector right before its first reader
         new_sites = list(sites)
         for pos in range(n_defs):
-            defs[pos] = dict(defs[pos], body=new_sites[pos])
+            defs[pos] = defs[pos].copy(body=new_sites[pos])
         drop = set(merge)
         insert_at = first_pos if first_pos < n_defs else n_defs
         defs = defs[:insert_at] + [vector] + defs[insert_at:]
@@ -1362,12 +1357,12 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
                 continue
             host = owner[id(t)]
             pos_t = out.index(host)
-            new = {
-                "target": d["target"],
-                "free": [k],
-                "limits": [],
-                "body": sp.Indexed(t["target"].base, k, k),
-            }
+            new = TempDef(
+                target=d["target"],
+                free=[k],
+                limits=[],
+                body=sp.Indexed(t["target"].base, k, k),
+            )
             pos_d = out.index(d)
             if pos_d < pos_t:
                 # every consumer of d must come after the table
@@ -1440,7 +1435,7 @@ def _fuse_sibling_tables(definitions, namer):
         if table(d) and group:
             (a0, b0), (m0, lo0, hi0) = group[0]["free"], group[0]["limits"][0]
             (a, b), (m, lo, hi) = d["free"], d["limits"][0]
-            renamed = dict(d)
+            renamed = d.copy()
             mp = {a: a0, b: b0, m: m0}
             renamed["target"] = d["target"].xreplace(mp)
             renamed["body"] = d["body"].xreplace(mp)

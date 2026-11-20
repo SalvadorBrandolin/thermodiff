@@ -12,6 +12,7 @@ from thermodiff.codegen.common import (
     _new_shared_temp,
     _temp_name,
 )
+from thermodiff.codegen.ir import TempDef
 
 
 def _hoist_invariants(
@@ -99,7 +100,7 @@ def _hoist_invariants(
             free = slots[: len(indices)]
             target = _new_shared_temp(namer, free, arrays)
             definitions.append(
-                {"target": target, "free": free, "limits": [], "body": canon}
+                TempDef(target=target, free=free, limits=[], body=canon)
             )
             temps[canon] = target
         target = temps[canon]
@@ -150,8 +151,8 @@ def _hoist_invariants(
     for definition in sum_definitions:
         if definition["limits"]:
             bound = {limit[0] for limit in definition["limits"]}
-            definition = dict(
-                definition, body=rewrite(definition["body"], bound)
+            definition = definition.copy(
+                body=rewrite(definition["body"], bound)
             )
             rewritten.extend(definitions)
             definitions.clear()
@@ -303,12 +304,12 @@ def _lowrank_bilinear(expr, free, namer, arrays):
         else:
             coef = _new_shared_temp(namer, [other], arrays)
             definitions.append(
-                {"target": coef, "free": [other], "limits": [], "body": body}
+                TempDef(target=coef, free=[other], limits=[], body=body)
             )
         if not isinstance(key, sp.Indexed):
             vec = _new_shared_temp(namer, [side], arrays)
             definitions.append(
-                {"target": vec, "free": [side], "limits": [], "body": key}
+                TempDef(target=vec, free=[side], limits=[], body=key)
             )
             key = vec
         new_terms.append(coef * key)
@@ -366,7 +367,7 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
             free = slots[: len(indices)]
             target = _new_shared_temp(namer, free, arrays)
             pending.append(
-                {"target": target, "free": free, "limits": [], "body": canon}
+                TempDef(target=target, free=free, limits=[], body=canon)
             )
             temps[canon] = target
         target = temps[canon]
@@ -429,7 +430,7 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
         }
         if bound and not definition.get("mirror_of"):
             body = _collect_terms(definition["body"])
-            definition = dict(definition, body=rewrite(body, bound))
+            definition = definition.copy(body=rewrite(body, bound))
             new_definitions.extend(pending)
             pending.clear()
         new_definitions.append(definition)
@@ -487,7 +488,7 @@ def _split_affine(definitions, outputs, namer, arrays):
         target = _new_shared_temp(namer, [index], arrays)
         defs.insert(
             position,
-            {"target": target, "free": [index], "limits": [], "body": product},
+            TempDef(target=target, free=[index], limits=[], body=product),
         )
         return sp.Indexed(target.base, index), position + 1
 
@@ -690,15 +691,15 @@ def _split_affine(definitions, outputs, namer, arrays):
             scalar = _new_shared_temp(namer, [], arrays)
             defs.insert(
                 position,
-                {
-                    "target": scalar,
-                    "free": [],
-                    "limits": [(m, low, high)],
-                    "body": s_body,
-                },
+                TempDef(
+                    target=scalar,
+                    free=[],
+                    limits=[(m, low, high)],
+                    body=s_body,
+                ),
             )
             position += 1
-        table = dict(d, body=new_body)
+        table = d.copy(body=new_body)
         defs[position] = table
         name = _temp_name(d["target"])
 
@@ -713,7 +714,7 @@ def _split_affine(definitions, outputs, namer, arrays):
 
         for q, e in enumerate(defs):
             if e is not table:
-                defs[q] = dict(e, body=reread(e["body"]))
+                defs[q] = e.copy(body=reread(e["body"]))
         outs = [reread(e) for e in outs]
         k = position + 1
     return defs, outs

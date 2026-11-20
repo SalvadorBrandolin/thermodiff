@@ -16,6 +16,7 @@ from thermodiff.codegen.common import (
     _order_free,
     _sorted_indices,
 )
+from thermodiff.codegen.ir import TempDef
 from thermodiff.codegen.symmetry import (
     _alpha_key,
     _canonical_symmetric,
@@ -166,12 +167,12 @@ def _share_sums(
             free = _order_free(_free_indices(total), indexes)
             target = _new_shared_temp(namer, free, arrays)
             definitions.append(
-                {
-                    "target": target,
-                    "free": free,
-                    "limits": list(total.limits),
-                    "body": total.function,
-                }
+                TempDef(
+                    target=target,
+                    free=free,
+                    limits=list(total.limits),
+                    body=total.function,
+                )
             )
             replacements[total] = target
             if free_alpha:
@@ -228,12 +229,7 @@ def _common_scalar_cse(expressions, namer, arrays):
         best = _best_scalar_candidate(repeated, counts, rank_memo)
         target = _new_shared_temp(namer, [], arrays)
         definitions.append(
-            {
-                "target": target,
-                "free": [],
-                "limits": [],
-                "body": best,
-            }
+            TempDef(target=target, free=[], limits=[], body=best)
         )
         rule = {best: target}
         for position, expr in enumerate(exprs):
@@ -583,12 +579,7 @@ def _indexed_cse(
         free = slots[: sizes[best]]
         target = _new_shared_temp(namer, free, arrays)
         definitions.append(
-            {
-                "target": target,
-                "free": free,
-                "limits": [],
-                "body": best,
-            }
+            TempDef(target=target, free=free, limits=[], body=best)
         )
         base = target.base
         rank = len(free)
@@ -644,12 +635,9 @@ def _sympy_scalar_cse(expressions, namer, arrays):
         target = _new_shared_temp(namer, [], arrays)
         renames[symbol] = target
         definitions.append(
-            {
-                "target": target,
-                "free": [],
-                "limits": [],
-                "body": value.xreplace(renames),
-            }
+            TempDef(
+                target=target, free=[], limits=[], body=value.xreplace(renames)
+            )
         )
     reduced = [expr.xreplace(inlined).xreplace(renames) for expr in reduced]
     return reduced, definitions

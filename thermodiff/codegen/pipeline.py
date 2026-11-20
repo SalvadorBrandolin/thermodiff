@@ -34,6 +34,7 @@ from thermodiff.codegen.hoisting import (
     _separate_sums,
     _split_affine,
 )
+from thermodiff.codegen.ir import TempDef
 from thermodiff.codegen.loops import (
     _diagonal_from_tables,
     _drop_pair_tables,
@@ -732,17 +733,17 @@ def _emit_code(
             )
             base_ = sp.IndexedBase(comp_name, shape=(nc,) * comp_rank)
             component_array_defs.append(
-                {
-                    "target": sp.Indexed(base_, *free_),
-                    "free": free_,
-                    "limits": [],
-                    "body": (
+                TempDef(
+                    target=sp.Indexed(base_, *free_),
+                    free=free_,
+                    limits=[],
+                    body=(
                         _canonical_floats(comp_body)
                         if float_canon
                         else comp_body
                     ),
-                    "mirror": bool(comp_sym and param_symmetry),
-                }
+                    mirror=bool(comp_sym and param_symmetry),
+                )
             )
     if array_cse:
         all_exprs, array_defs = _indexed_cse(
@@ -850,12 +851,12 @@ def _emit_code(
                 ]
             else:
                 scalar_chain_definitions.append(
-                    {
-                        "target": sp.Symbol(out_name),
-                        "free": [],
-                        "limits": [],
-                        "body": residual,
-                    }
+                    TempDef(
+                        target=sp.Symbol(out_name),
+                        free=[],
+                        limits=[],
+                        body=residual,
+                    )
                 )
         for target, body in scalar_chain_defs:
             body = (
@@ -866,7 +867,7 @@ def _emit_code(
             if float_canon:
                 body = _canonical_floats(body)
             scalar_chain_definitions.append(
-                {"target": target, "free": [], "limits": [], "body": body}
+                TempDef(target=target, free=[], limits=[], body=body)
             )
         prepared = [prepared[k] for k in keep]
         residuals = [residuals[k] for k in keep]
