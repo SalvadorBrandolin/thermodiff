@@ -4,6 +4,7 @@ import hashlib
 import warnings
 from pathlib import Path
 
+import pytest
 import sympy as sp
 
 from thermodiff import bench_hooks, chain
@@ -124,3 +125,40 @@ def test_forced_names_output_is_pinned():
     code = generate(forced_names_model(), "w3", "c6n")
     assert sha256(code) == FORCED_C6N_SHA256
     assert "jc" in code and "cpf" in code and "pmt" in code
+
+
+@pytest.fixture(scope="module")
+def isolated_codes():
+    """Default and forced-names outputs, each generated alone."""
+    default = generate(PR76_MODEL.read_text(encoding="utf-8"), "w3", "c6n")
+    forced = generate(forced_names_model(), "w3", "c6n")
+    return default, forced
+
+
+@pytest.mark.parametrize("forced_first", [True, False])
+def test_name_schemes_do_not_leak_across_calls(isolated_codes, forced_first):
+    default_model = PR76_MODEL.read_text(encoding="utf-8")
+    forced_model = forced_names_model()
+    if forced_first:
+        forced = generate(forced_model, "w3", "c6n")
+        default = generate(default_model, "w3", "c6n")
+    else:
+        default = generate(default_model, "w3", "c6n")
+        forced = generate(forced_model, "w3", "c6n")
+    assert (default, forced) == isolated_codes
+
+
+def test_interleaved_generations_match_isolated_ones(isolated_codes):
+    default_model = PR76_MODEL.read_text(encoding="utf-8")
+    forced_model = forced_names_model()
+    codes = [
+        generate(model, "w3", "c6n")
+        for model in (
+            forced_model,
+            default_model,
+            default_model,
+            forced_model,
+        )
+    ]
+    default, forced = isolated_codes
+    assert codes == [forced, default, default, forced]
