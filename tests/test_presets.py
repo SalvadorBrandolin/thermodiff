@@ -264,6 +264,27 @@ def test_preset_agrees_with_minimal_numerically(
         )
 
 
+FASTEST_GATED = (
+    "lowrank_hess",
+    "drop_pair_tables",
+    "share_elementwise",
+    "split_affine",
+    "fuse_loops",
+    "sib_fuse",
+    "diag_table",
+    "comp_fuse",
+    "fuse_outer",
+    "split_acc",
+    "scalar_chain",
+    "fuse_libm_guard",
+)
+FASTEST_NOTE_PREFIX = (
+    "preset 'fastest' applies fully only with optional_derivatives=False "
+    "(one kernel per derivative set); with optional derivatives these "
+    "options are inactive: "
+)
+
+
 class TestExplicitOptionWarnings:
     """Only options the caller set explicitly are reported as ignored."""
 
@@ -289,28 +310,43 @@ class TestExplicitOptionWarnings:
                 options=CodegenOptions(sum_alpha=True, share=False)
             )
 
-    def test_fastest_with_optional_derivatives_is_silent(self):
-        gated = (
-            "lowrank_hess",
-            "drop_pair_tables",
-            "share_elementwise",
-            "split_affine",
-            "fuse_loops",
-            "sib_fuse",
-            "diag_table",
-            "comp_fuse",
-            "fuse_outer",
-            "split_acc",
-            "scalar_chain",
-        )
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
+    def test_fastest_with_optional_derivatives_notes_inactive(self):
+        with pytest.warns(UserWarning) as record:
             resolved = resolve_codegen_options(
                 "fastest", optional_derivatives=True
             )
+        assert len(record) == 1
+        assert record[0].filename == __file__
+        message = str(record[0].message)
+        assert message.startswith(FASTEST_NOTE_PREFIX)
+        listed = message.removeprefix(FASTEST_NOTE_PREFIX).split(", ")
+        assert set(FASTEST_GATED) <= set(listed)
+        assert len(listed) == len(set(listed)) >= 12
         defaults = CodegenOptions()
-        for name in gated:
+        for name in FASTEST_GATED:
             assert getattr(resolved, name) == getattr(defaults, name), name
+
+    def test_fastest_without_optional_derivatives_is_silent(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            resolve_codegen_options("fastest", optional_derivatives=False)
+
+    def test_standard_with_optional_derivatives_is_silent(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            resolve_codegen_options("standard", optional_derivatives=True)
+
+    def test_fastest_note_excludes_explicit_options(self):
+        with pytest.warns(UserWarning) as record:
+            resolve_codegen_options(
+                "fastest", optional_derivatives=True, fuse_loops=True
+            )
+        messages = [str(item.message) for item in record]
+        assert len(messages) == 2
+        explicit, note = messages
+        assert explicit.endswith("fuse_loops")
+        assert note.startswith(FASTEST_NOTE_PREFIX)
+        assert "fuse_loops" not in note
 
     def test_entry_point_warning_points_at_the_caller(self):
         with pytest.warns(UserWarning, match="sum_alpha") as record:

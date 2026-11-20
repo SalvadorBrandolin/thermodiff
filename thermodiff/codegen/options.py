@@ -626,6 +626,29 @@ def _explicit_names(
     return names
 
 
+def _note_fastest_inactive(preset: Preset, inactive: list[str]) -> None:
+    """Warn that ``"fastest"`` lost options to ``optional_derivatives``.
+
+    Parameters
+    ----------
+    preset : Preset
+        The preset in effect.
+    inactive : list of str
+        Names disabled by validation that came from the preset, not from
+        the caller.
+    """
+    if preset is not Preset.FASTEST or not inactive:
+        return
+    warnings.warn(
+        "preset 'fastest' applies fully only with "
+        "optional_derivatives=False (one kernel per derivative set); "
+        "with optional derivatives these options are inactive: "
+        + ", ".join(inactive),
+        UserWarning,
+        stacklevel=_caller_stacklevel(),
+    )
+
+
 def resolve_codegen_options(
     preset: Preset | str | None = None,
     options: CodegenOptions | None = None,
@@ -687,5 +710,10 @@ def resolve_codegen_options(
             + ", ".join(reported),
             UserWarning,
             stacklevel=_caller_stacklevel(),
+        )
+    if options is None and resolved.optional_derivatives:
+        _note_fastest_inactive(
+            Preset(preset or Preset.STANDARD),
+            [name for name in ignored if name not in explicit],
         )
     return normalised
