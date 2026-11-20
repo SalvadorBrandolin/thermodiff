@@ -373,6 +373,7 @@ class TestPr76Compilation:
         reference = _fd_reference(state)
         assert values == pytest.approx(reference, rel=1e-5, abs=1e-6)
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("case", ["nc2", "nc4"])
     def test_variants_agree_on_pr76(self, pr76_generated, tmp_path, case):
         state = STATES[case]
@@ -435,6 +436,7 @@ class TestDriverScript:
         aggregate = json.loads((out_root / "manifest.json").read_text())
         assert len(aggregate["files"]) == 2
 
+    @pytest.mark.slow
     def test_fresh_process_generations_are_byte_identical(self, tmp_path):
         """Hash-seed variation must not alter emitted Fortran bytes."""
         script = os.path.join(

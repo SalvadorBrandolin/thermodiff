@@ -236,6 +236,7 @@ def _run_variant(tmp_path, settings):
     return np.loadtxt(work / "out.txt"), code
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 @pytest.mark.parametrize("variant", sorted(EXTENDED_VARIANTS))
 def test_variant_matches_reference(tmp_path, variant):
@@ -258,6 +259,7 @@ def test_variant_matches_reference(tmp_path, variant):
         assert " + 1, nc" in code
 
 
+@pytest.mark.slow
 def test_extended_variants_are_deterministic():
     for settings in (EXTENDED_VARIANTS["a6"], EXTENDED_VARIANTS["a7"]):
         first = compile_model(PR76_SYM, derivatives="dn,dndn", **settings)
@@ -265,6 +267,7 @@ def test_extended_variants_are_deterministic():
         assert first == second
 
 
+@pytest.mark.slow
 def test_aux_index_never_clashes_case_insensitively():
     """Fortran is case insensitive: no loop index may be named like ``R``."""
     import re
@@ -366,6 +369,7 @@ def _run_rkpr(work, settings):
     return np.loadtxt(work / "out.txt"), code
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 @pytest.mark.parametrize("variant", ["a3h", "a6h", "a10h"])
 def test_rkpr_hoisted_variant_matches_reference(tmp_path, variant):
@@ -407,6 +411,7 @@ def test_hoisting_moves_rkpr_power_out_of_double_loop():
     assert not any("/t" in s for s in _nested_loop_bodies(hoisted))
 
 
+@pytest.mark.slow
 def test_hoisting_is_deterministic_and_off_by_default():
     text = _rkpr_text()
     first = compile_model(
@@ -421,6 +426,7 @@ def test_hoisting_is_deterministic_and_off_by_default():
     )
 
 
+@pytest.mark.slow
 def test_hoisted_slot_index_never_clashes_with_an_argument():
     """A scalar argument ``P`` must not be reused as a hoisting loop index.
 
@@ -473,6 +479,7 @@ CHAIN_VARIANTS = [
 ]
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 @pytest.mark.parametrize("variant", CHAIN_VARIANTS)
 def test_chain_variant_matches_reference_rkpr(tmp_path, variant):
@@ -517,6 +524,7 @@ def _double_loop_statements(code):
     return _nested_loop_bodies(code)
 
 
+@pytest.mark.slow
 def test_c6n_hessian_has_analytic_structure():
     """With every loop pass the W6 kernel has few O(nc^2) passes and no
     transcendental function inside a double loop except the a_ij matrix."""
@@ -529,6 +537,7 @@ def test_c6n_hessian_has_analytic_structure():
     assert hess, "Hessian loop not found"
 
 
+@pytest.mark.slow
 def test_loop_passes_are_deterministic_and_off_by_default():
     first = compile_model(
         PR76_SYM, derivatives="dn,dndn", **EXTENDED_VARIANTS["c6n"]
@@ -649,8 +658,21 @@ _REVIEW_INITS = {
 }
 
 
+_SLOW_REVIEW_MODELS = ("names", "nested")
+
+
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
-@pytest.mark.parametrize("model", sorted(_REVIEW_MODELS))
+@pytest.mark.parametrize(
+    "model",
+    [
+        (
+            pytest.param(name, marks=pytest.mark.slow)
+            if name in _SLOW_REVIEW_MODELS
+            else name
+        )
+        for name in sorted(_REVIEW_MODELS)
+    ],
+)
 def test_chain_review_regressions(model):
     import model_harness as mh
 
@@ -675,7 +697,17 @@ _MEASURED = [
 ] + [("rkpr", "models/rkpr/rkpr.model", v, "w6") for v in ("a6", "c6n", "c6m")]
 
 
-@pytest.mark.parametrize("model,path,variant,workload", _MEASURED)
+@pytest.mark.parametrize(
+    "model,path,variant,workload",
+    [
+        (
+            pytest.param(*case, marks=pytest.mark.slow)
+            if case[3] == "w6"
+            else case
+        )
+        for case in _MEASURED
+    ],
+)
 def test_measured_kernels_regenerate(model, path, variant, workload):
     from thermodiff.bench_hooks import generate_workload
 
@@ -742,6 +774,7 @@ _NOOPT_VARIANTS = [
 ]
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 @pytest.mark.parametrize("variant", _NOOPT_VARIANTS)
 def test_cmr_rank3_variants_without_optional_outputs(variant):
@@ -879,6 +912,7 @@ def test_stage_key_generates_legacy_code(key):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_contiguous_args_only_adds_the_attribute():
     from thermodiff.bench_hooks import generate_workload
 
@@ -952,6 +986,7 @@ def test_keep_libm_tables_moves_exp_out_of_reductions():
     assert any("= exp(" in l for l in new.splitlines())
 
 
+@pytest.mark.slow
 def test_table_layout_follows_parameter_subscripts():
     import re
     from thermodiff.bench_hooks import generate_workload
@@ -1141,6 +1176,7 @@ def test_share_elementwise_gives_the_same_gradient():
     assert np.max(np.abs(val - ref) / np.maximum(np.abs(ref), 1e-8)) < 1e-12
 
 
+@pytest.mark.slow
 def test_scalar_chain_shrinks_the_scalar_block():
     from thermodiff.bench_hooks import generate_workload
 
@@ -1201,6 +1237,7 @@ def test_scalar_chain_falls_back_on_non_smooth_functions():
         )
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 def test_scalar_chain_gives_the_same_derivatives():
     from model_harness import run
@@ -1242,6 +1279,7 @@ def test_scalar_chain_gives_the_same_derivatives():
         )
 
 
+@pytest.mark.slow
 def test_split_affine_leaves_one_multiply_add_in_the_cmr_nest():
     import re
     from thermodiff.bench_hooks import generate_workload
@@ -1273,6 +1311,7 @@ def test_split_affine_leaves_one_multiply_add_in_the_cmr_nest():
     assert a.replace("_p30_", "_X_") == b.replace("_p31_", "_X_")
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 def test_split_affine_gives_the_same_derivatives():
     from model_harness import run
@@ -1298,7 +1337,10 @@ def test_split_affine_gives_the_same_derivatives():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("workload", ["w0", "w1", "w5b", "w6"])
+@pytest.mark.parametrize(
+    "workload",
+    ["w0", "w1", "w5b", pytest.param("w6", marks=pytest.mark.slow)],
+)
 def test_scalar_chain_estimate_reproduces_cost_choice(workload):
     from thermodiff.bench_hooks import generate_workload
 
@@ -1315,6 +1357,7 @@ def test_scalar_chain_estimate_reproduces_cost_choice(workload):
     assert est["scalar_chain_used"] == cost["scalar_chain_used"]
 
 
+@pytest.mark.slow
 def test_split_acc_uses_two_accumulators_in_the_cmr_nest():
     from thermodiff.bench_hooks import generate_workload
 
@@ -1349,6 +1392,7 @@ def test_split_acc_uses_two_accumulators_in_the_cmr_nest():
     assert a.replace("_p32_", "_X_") == b.replace("_p33_", "_X_")
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 def test_split_acc_gives_the_same_derivatives():
     from model_harness import run
