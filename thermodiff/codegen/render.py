@@ -1,6 +1,8 @@
 """Definition rendering for the Fortran code generator."""
 
 import functools
+from typing import cast
+from collections.abc import Collection, Iterable, Mapping
 
 import sympy as sp
 from sympy.printing.fortran import fcode
@@ -26,7 +28,7 @@ from thermodiff.codegen.ir import (
 from thermodiff.codegen.symmetry import _render_symv
 
 
-def _expand_sums(expr: sp.Expr, namer: _Namer):
+def _expand_sums(expr: sp.Expr, namer: _Namer) -> tuple[list[str], sp.Expr]:
     """Expand ``Sum`` sub-expressions into loop statements.
 
     Parameters
@@ -43,14 +45,16 @@ def _expand_sums(expr: sp.Expr, namer: _Namer):
     residual : sympy expression
         ``expr`` with every ``Sum`` replaced by a temporary symbol.
     """
-    statements = []
+    statements: list[str] = []
     residual = expr
 
-    def enclosing_bound(root):
+    def enclosing_bound(
+        root: sp.Basic,
+    ) -> dict[sp.Sum, set[sp.Idx]]:
         """Map every Sum in ``root`` to the indices bound by its ancestors."""
-        found = {}
+        found: dict[sp.Sum, set[sp.Idx]] = {}
 
-        def walk(sub, bound):
+        def walk(sub: sp.Basic, bound: frozenset[sp.Idx]) -> None:
             if isinstance(sub, sp.Sum):
                 found.setdefault(sub, set()).update(bound)
                 bound = bound | {limit[0] for limit in sub.limits}
@@ -104,9 +108,9 @@ def _expand_sums(expr: sp.Expr, namer: _Namer):
 def _sum_loop_lines(
     tmp: sp.Symbol,
     total: sp.Sum,
-    inner_lines: list,
+    inner_lines: list[str],
     body: sp.Expr,
-) -> list:
+) -> list[str]:
     """Return the Fortran loop nest that accumulates ``total`` in ``tmp``.
 
     Parameters
@@ -161,11 +165,11 @@ def _declare_output(
 def _render_output(
     name: str,
     expr: sp.Expr,
-    free_order: list,
-    namer,
-    mirror=False,
-    column=False,
-) -> list:
+    free_order: list[sp.Idx],
+    namer: _Namer,
+    mirror: bool = False,
+    column: bool = False,
+) -> list[str]:
     """Render the statements that compute a single output.
 
     With ``mirror=True`` (rank-2 outputs known to be symmetric) only the
@@ -211,7 +215,7 @@ def _render_output(
     return lines
 
 
-def _render_column_order(definition) -> list:
+def _render_column_order(definition: TempDef) -> list[str]:
     """Loop nest with the first subscript innermost (column-major)."""
     target = definition.target
     free = definition.free
@@ -241,7 +245,7 @@ def _render_column_order(definition) -> list:
     ]
 
 
-def _render_column_sum(definition) -> list:
+def _render_column_sum(definition: TempDef) -> list[str]:
     """Rank-2 sum in ``jki`` order: for every column ``q``, axpy updates over
     the bound index; a symmetric (``mirror_sum``) sum fills ``p <= q`` and
     mirrors the row."""
@@ -272,7 +276,7 @@ def _render_column_sum(definition) -> list:
     return lines
 
 
-def _render_fused(definition) -> list:
+def _render_fused(definition: FusedNest) -> list[str]:
     group = definition.fused
     f = group[0].free[0]
     b, low, high = group[0].limits[0]
@@ -298,7 +302,7 @@ def _render_fused(definition) -> list:
     return lines
 
 
-def _render_component_fused(definition) -> list:
+def _render_component_fused(definition: ComponentFusedMap) -> list[str]:
     idx = definition.free[0]
     lines = [f"do {idx} = 1, nc"]
     for _kind, target, value in definition.steps:
@@ -307,12 +311,12 @@ def _render_component_fused(definition) -> list:
     return lines
 
 
-def _is_reduction_member(member) -> bool:
+def _is_reduction_member(member: TempDef) -> bool:
     """Whether an outer-fused member is a reduction without free indices."""
     return not isinstance(member, ComponentFusedMap) and not member.free
 
 
-def _reduction_run_length(members: list, start: int) -> int:
+def _reduction_run_length(members: list[TempDef], start: int) -> int:
     """Count the consecutive reductions that share the inner loops.
 
     Parameters
@@ -338,7 +342,7 @@ def _reduction_run_length(members: list, start: int) -> int:
     return length
 
 
-def _render_reduction_run(run: list) -> list:
+def _render_reduction_run(run: list[TempDef]) -> list[str]:
     """Render consecutive reductions that share their inner loops.
 
     Parameters
@@ -391,7 +395,7 @@ def _render_reduction_run(run: list) -> list:
     return lines
 
 
-def _render_outer_fused(definition) -> list:
+def _render_outer_fused(definition: OuterFusedNest) -> list[str]:
     """Render the members of an outer-fused nest in one loop over ``outer``.
 
     Parameters
@@ -436,7 +440,7 @@ def _render_outer_fused(definition) -> list:
     return lines
 
 
-def _render_sibling(definition) -> list:
+def _render_sibling(definition: SiblingNest) -> list[str]:
     a, b = definition.free
     lines = [f"do {b} = 1, nc", f"{_INDENT}do {a} = 1, {b}"]
     for acc in definition.accs:
@@ -445,9 +449,8 @@ def _render_sibling(definition) -> list:
     if definition.accumulators:
         # two partial accumulators (even/odd m): a reduction gcc vectorises
         # without reassociation (reportes/brechas/ronda3-cmr-o3.md)
-        pairs = list(
-            zip(definition.accs, definition.accs2, definition.sibling)
-        )
+        accs2 = cast(list[sp.Symbol], definition.accs2)
+        pairs = list(zip(definition.accs, accs2, definition.sibling))
         for _acc, acc2, _g in pairs:
             lines.append(f"{_INDENT * 2}{acc2} = 0.0d0")
         lines.append(
@@ -486,7 +489,7 @@ def _render_sibling(definition) -> list:
     return lines
 
 
-def _render_mirror_sum_table(definition: TempDef) -> list:
+def _render_mirror_sum_table(definition: TempDef) -> list[str]:
     """Upper triangle of a symmetric rank-2 summation, then its mirror."""
     a, b = definition.free
     target = definition.target
@@ -516,7 +519,7 @@ def _render_mirror_sum_table(definition: TempDef) -> list:
     return out
 
 
-def _render_mirror_triangle(definition: TempDef) -> list:
+def _render_mirror_triangle(definition: TempDef) -> list[str]:
     """Symmetric rank-2 temporary: fill the upper triangle and mirror."""
     free = definition.free
     target = definition.target
@@ -533,7 +536,7 @@ def _render_mirror_triangle(definition: TempDef) -> list:
     ]
 
 
-def _render_factored_reduction(definition: TempDef) -> list:
+def _render_factored_reduction(definition: TempDef) -> list[str]:
     """Double reduction whose inner sum is accumulated in a temporary."""
     limits = definition.limits
     target_s = _print_expr(definition.target)
@@ -552,7 +555,7 @@ def _render_factored_reduction(definition: TempDef) -> list:
     ]
 
 
-def _render_loop_nest(definition: TempDef) -> list:
+def _render_loop_nest(definition: TempDef) -> list[str]:
     """Free loops around an assignment or a reduction."""
     target_s = _print_expr(definition.target)
     limits = definition.limits
@@ -584,7 +587,7 @@ def _render_loop_nest(definition: TempDef) -> list:
 
 
 @functools.singledispatch
-def _render_definition(definition: TempDef) -> list:
+def _render_definition(definition: TempDef) -> list[str]:
     """Render the statements that fill one shared temporary.
 
     The base handler covers plain and annotated temporaries; the
@@ -609,36 +612,36 @@ def _render_definition(definition: TempDef) -> list:
 
 
 @_render_definition.register
-def _(definition: SiblingNest) -> list:
+def _(definition: SiblingNest) -> list[str]:
     """Render a sibling table nest."""
     return _render_sibling(definition)
 
 
 @_render_definition.register
-def _(definition: OuterFusedNest) -> list:
+def _(definition: OuterFusedNest) -> list[str]:
     """Render an outer-fused nest."""
     return _render_outer_fused(definition)
 
 
 @_render_definition.register
-def _(definition: ComponentFusedMap) -> list:
+def _(definition: ComponentFusedMap) -> list[str]:
     """Render a component-fused map."""
     return _render_component_fused(definition)
 
 
 @_render_definition.register
-def _(definition: FusedNest) -> list:
+def _(definition: FusedNest) -> list[str]:
     """Render a fused vector nest."""
     return _render_fused(definition)
 
 
-def _dependency_order(definitions):
+def _dependency_order(definitions: list[TempDef]) -> list[TempDef]:
     """Stable topological order: a definition goes after every one it reads,
     otherwise in its original position (lowest index first)."""
     import heapq
 
     index = {_temp_name(d.target): k for k, d in enumerate(definitions)}
-    deps = []
+    deps: list[set[int]] = []
     for k, d in enumerate(definitions):
         body = d.body
         names = {str(x) for x in body.free_symbols} | {
@@ -647,14 +650,14 @@ def _dependency_order(definitions):
         deps.append(
             {index[nm] for nm in names if nm in index and index[nm] != k}
         )
-    users = {k: [] for k in range(len(definitions))}
+    users: dict[int, list[int]] = {k: [] for k in range(len(definitions))}
     for k, ds in enumerate(deps):
         for dep in ds:
             users[dep].append(k)
     pending = [len(ds) for ds in deps]
     ready = [k for k, count in enumerate(pending) if count == 0]
     heapq.heapify(ready)
-    order = []
+    order: list[TempDef] = []
     while ready:
         k = heapq.heappop(ready)
         order.append(definitions[k])
@@ -667,14 +670,14 @@ def _dependency_order(definitions):
     return order
 
 
-def _guard(attributes, out_names) -> str:
+def _guard(attributes: Collection[str], out_names: Mapping[str, str]) -> str:
     """Return the ``present(...)`` condition for a group of outputs.
 
     Returns an empty string when nothing depends on the group.
     """
     if not attributes:
         return ""
-    names = []
+    names: list[str] = []
     if "value" in attributes and "value" in out_names:
         names.append(out_names["value"])
     names.extend(
@@ -685,7 +688,7 @@ def _guard(attributes, out_names) -> str:
     return " .or. ".join(f"present({name})" for name in names)
 
 
-def _wrap_if(condition, limit=120) -> list:
+def _wrap_if(condition: str, limit: int = 120) -> list[str]:
     """Wrap an ``if (condition) then`` line with continuations."""
     pieces = condition.split(" .or. ")
     lines = []
@@ -701,7 +704,7 @@ def _wrap_if(condition, limit=120) -> list:
     return lines
 
 
-def _guarded(lines, condition) -> list:
+def _guarded(lines: Iterable[str], condition: str) -> list[str]:
     """Wrap ``lines`` in an ``if (condition)`` block when needed."""
     if not condition:
         return list(lines)
@@ -711,7 +714,9 @@ def _guarded(lines, condition) -> list:
     return block
 
 
-def _wrap_name_list(keyword, names, limit=120):
+def _wrap_name_list(
+    keyword: str, names: Iterable[str], limit: int = 120
+) -> list[str]:
     """Split ``keyword`` plus names into continuation-free lines.
 
     Parameters
@@ -729,8 +734,8 @@ def _wrap_name_list(keyword, names, limit=120):
     list of str
         One or more declaration lines.
     """
-    lines = []
-    current = None
+    lines: list[str] = []
+    current: str | None = None
     for name in names:
         if current is None:
             current = name
@@ -744,7 +749,9 @@ def _wrap_name_list(keyword, names, limit=120):
     return lines
 
 
-def _wrap_signature(sub_name, arg_names, limit=120):
+def _wrap_signature(
+    sub_name: str, arg_names: list[str], limit: int = 120
+) -> list[str]:
     """Return the subroutine statement, wrapped if necessary.
 
     Parameters
@@ -766,7 +773,7 @@ def _wrap_signature(sub_name, arg_names, limit=120):
         return [head + ", ".join(arg_names) + ")"]
 
     continuation = _INDENT + "  "
-    lines = []
+    lines: list[str] = []
     current = ""
     for arg in arg_names:
         candidate = arg if not current else current + ", " + arg
