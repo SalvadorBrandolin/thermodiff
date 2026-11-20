@@ -78,7 +78,8 @@ the GUI take a preset of code-generation options:
 Choose it with `--preset` on the command line or `preset=` in Python;
 individual flags and keyword arguments override the preset only when given.
 The gain of `fastest` comes from kernels specialised to one derivative set,
-so use it with `optional_derivatives=False` (the default):
+so use it with `optional_derivatives=False` (the default); with
+`optional_derivatives=True` a warning lists the options that become inactive:
 
 ```python
 from thermodiff.model import compile_model
