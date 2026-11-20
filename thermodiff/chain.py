@@ -1218,6 +1218,55 @@ def split_sum_terms(expr, scheme=DEFAULT_NAME_SCHEME):
     return visit(expr)
 
 
+def _collect_inner_sums(sub, found):
+    """Append to ``found`` the index-free summations nested in ``sub``.
+
+    The search does not enter a summation that is index-free: it is taken
+    whole.
+    """
+    if isinstance(sub, sp.Sum):
+        if not (sub.atoms(sp.Idx) - _bound_all(sub)):
+            found.append(sub)
+            return
+        _collect_inner_sums(sub.function, found)
+        return
+    for arg in getattr(sub, "args", ()):
+        _collect_inner_sums(arg, found)
+
+
+def _inner_sums(body):
+    """Return the index-free summations nested in ``body``."""
+    found = []
+    _collect_inner_sums(body, found)
+    return found
+
+
+def _extract_inner_sums(total, by_key, result, queue):
+    """Give every inner sum of ``total`` a node symbol.
+
+    New nodes are appended to ``result`` and ``queue`` (named after the
+    number of nodes so far) and registered in ``by_key``, all in place.
+
+    Returns
+    -------
+    replacements : dict
+        Inner sum -> node symbol.
+    kids : set
+        The node symbols of the inner sums.
+    """
+    replacements, kids = {}, set()
+    for inner in _inner_sums(total.function):
+        key = _alpha_key(inner)
+        if key not in by_key:
+            new_symbol = sp.Dummy(f"S{len(result)}")
+            by_key[key] = new_symbol
+            result.append((new_symbol, inner))
+            queue.append((new_symbol, inner))
+        replacements[inner] = by_key[key]
+        kids.add(by_key[key])
+    return replacements, kids
+
+
 def _nest_inner_nodes(nodes):
     """Turn index-free summations nested inside node bodies into nodes.
 
@@ -1231,39 +1280,9 @@ def _nest_inner_nodes(nodes):
     result = list(nodes)
     inner_map = {}
     queue = list(nodes)
-    counter = [len(nodes)]
-
-    def inner_sums(body):
-        found = []
-
-        def visit(sub, bound):
-            if isinstance(sub, sp.Sum):
-                if not (sub.atoms(sp.Idx) - _bound_all(sub)):
-                    found.append(sub)
-                    return
-                bound = bound | _bound(sub)
-                visit(sub.function, bound)
-                return
-            for arg in getattr(sub, "args", ()):
-                visit(arg, bound)
-
-        visit(body, set())
-        return found
-
     while queue:
         symbol, total = queue.pop(0)
-        replacements = {}
-        kids = set()
-        for inner in inner_sums(total.function):
-            key = _alpha_key(inner)
-            if key not in by_key:
-                new_symbol = sp.Dummy(f"S{counter[0]}")
-                counter[0] += 1
-                by_key[key] = new_symbol
-                result.append((new_symbol, inner))
-                queue.append((new_symbol, inner))
-            replacements[inner] = by_key[key]
-            kids.add(by_key[key])
+        replacements, kids = _extract_inner_sums(total, by_key, result, queue)
         if replacements:
             new_total = total.func(
                 total.function.xreplace(replacements), *total.limits
