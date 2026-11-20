@@ -126,7 +126,10 @@ def driver(code, inits, present, ncs=(3, 7)):
 
 def run(text, settings, inits=None, present=OUTS, derivs=W6, opt=True):
     code = compile_model(
-        text, derivatives=derivs, optional_derivatives=opt, **settings
+        text,
+        derivatives=derivs,
+        optional_derivatives=opt,
+        **{"preset": "minimal", **settings},
     )
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
