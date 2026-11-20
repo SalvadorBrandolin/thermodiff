@@ -5854,7 +5854,6 @@ _CONTEXT_KEYWORDS = (
     "stats",
     "options",
 )
-_PRIVATE_PARAMETERS = frozenset({"_structured", "_structure_only"})
 _PACKAGE_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -5885,12 +5884,13 @@ def _public_signature() -> inspect.Signature:
 
     The leading parameters of the implementation stay positional, the
     context keywords and ``options`` come next, then every behaviour
-    option, all keyword-only and with the implementation's defaults.
+    option (the keyword-only parameters of the emission stage), all
+    keyword-only and with their defaults.
 
     Returns
     -------
     inspect.Signature
-        Signature without the private re-entry parameters.
+        Signature of the public entry point.
     """
     parameters = inspect.signature(_to_fortran_impl).parameters
     option_parameters = inspect.signature(_emit_code).parameters
@@ -5905,11 +5905,10 @@ def _public_signature() -> inspect.Signature:
         if name in parameters
     ]
     context.append(inspect.Parameter("options", keyword_only, default=None))
-    taken = {p.name for p in leading + context} | _PRIVATE_PARAMETERS
     behaviour = [
         parameter
-        for name, parameter in option_parameters.items()
-        if parameter.kind is keyword_only and name not in taken
+        for parameter in option_parameters.values()
+        if parameter.kind is keyword_only
     ]
     return inspect.Signature(leading + context + behaviour)
 
