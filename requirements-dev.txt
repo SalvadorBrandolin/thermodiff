@@ -22,6 +22,7 @@ numpy
 pytest
 pytest-cov
 pytest-dependency
+pytest-xdist
 tox
 
 # General purpose
