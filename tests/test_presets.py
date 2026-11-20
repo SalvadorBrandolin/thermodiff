@@ -205,6 +205,22 @@ class TestCli:
         assert emitted == expected
         assert emitted != shared
 
+    @pytest.mark.parametrize(
+        ("flags", "overrides"),
+        [
+            (["--optional-derivatives"], {"optional_derivatives": True}),
+            (["--no-array-cse"], {"array_cse": False}),
+            (["--cse-backend", "sympy"], {"cse_backend": "sympy"}),
+        ],
+    )
+    def test_flags_match_the_api_on_top_of_standard(
+        self, tmp_path, capsys, flags, overrides
+    ):
+        emitted = self._run(tmp_path, capsys, "--preset", "standard", *flags)
+        assert emitted == compile_model(
+            SMALL_MODEL, preset="standard", **overrides
+        )
+
     def test_unset_flags_keep_the_preset(self):
         args = _build_parser().parse_args(["m.model"])
         overrides = {
