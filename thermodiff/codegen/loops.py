@@ -706,8 +706,11 @@ def _fuse_component_maps(definitions, namer):
             scalar = (
                 not d.free
                 and not d.limits
-                and not any(
-                    d.get(k) for k in ("mirror", "mirror_sum", "symv", "fused")
+                and not (
+                    d.mirror
+                    or d.mirror_sum
+                    or d.symv
+                    or isinstance(d, FusedNest)
                 )
             )
             reads_group = any(
@@ -768,9 +771,12 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
             and not any(
                 isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)
             )
-            and not any(
-                d.get(k)
-                for k in ("mirror", "mirror_sum", "symv", "fused", "colmajor")
+            and not (
+                d.mirror
+                or d.mirror_sum
+                or d.symv
+                or isinstance(d, FusedNest)
+                or d.colmajor
             )
         )
 
@@ -978,9 +984,12 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
                 or not isinstance(table.target, sp.Indexed)
             ):
                 continue
-            if any(
-                table.get(k)
-                for k in ("mirror_sum", "symv", "fused", "colmajor", "colsum")
+            if (
+                table.mirror_sum
+                or table.symv
+                or isinstance(table, FusedNest)
+                or table.colmajor
+                or table.colsum
             ):
                 continue
             body = table.body
@@ -1286,17 +1295,12 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
             len(d.free) == 1
             and not d.limits
             and not d.body.has(sp.Sum)
-            and not any(
-                d.get(k)
-                for k in (
-                    "mirror",
-                    "mirror_sum",
-                    "symv",
-                    "fused",
-                    "colmajor",
-                    "sibling",
-                    "compfused",
-                )
+            and not (
+                d.mirror
+                or d.mirror_sum
+                or d.symv
+                or isinstance(d, (FusedNest, SiblingNest, ComponentFusedMap))
+                or d.colmajor
             )
         ):
             maps[_temp_name(d.target)] = (d.free[0], d.body)
@@ -1332,10 +1336,11 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
         if (
             len(d.free) != 1
             or len(d.limits) != 1
-            or any(
-                d.get(k)
-                for k in ("mirror", "mirror_sum", "symv", "fused", "colmajor")
-            )
+            or d.mirror
+            or d.mirror_sum
+            or d.symv
+            or isinstance(d, FusedNest)
+            or d.colmajor
         ):
             continue
         (k,), (m, lo, hi) = d.free, d.limits[0]

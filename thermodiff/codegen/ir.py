@@ -7,16 +7,15 @@ wrapper records (fused nests, sibling nests, ...) used to be string-keyed
 dicts.  The records keep the semantics of those dicts exactly: they are
 mutable, compare by value and are unhashable.
 
-While the readers are being converted, :class:`TempDef` also implements
-a transitional mapping protocol (``d["key"]``, ``d.get``, ``in``,
-``set(d)``) over the OLD key names.  An annotation whose value is
-``None`` is absent, any other value (``False`` included) is present.
+An annotation whose value is ``None`` is absent, any other value
+(``False`` included) is present; :meth:`TempDef.present_keys` reports
+the present ones under the old dict key names.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, ClassVar, Iterator, Mapping
+from typing import Any, ClassVar, Mapping
 
 import sympy as sp
 
@@ -111,41 +110,6 @@ class TempDef:
             self,
             **{self._KEY_TO_ATTR[key]: val for key, val in changes.items()},
         )
-
-    # ---- transitional mapping protocol (removed once readers convert)
-
-    def __getitem__(self, key: str) -> Any:
-        """Return the value of an old key (``KeyError`` if absent)."""
-        if key not in self.present_keys():
-            raise KeyError(key)
-        if key in self._CONSTANT_KEYS:
-            return self._CONSTANT_KEYS[key]
-        return getattr(self, self._KEY_TO_ATTR[key])
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """Return the value of an old key, or ``default`` if absent."""
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
-    def __contains__(self, key: object) -> bool:
-        """Tell whether an old key is present."""
-        return key in self.present_keys()
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        """Assign an old key (it must be a field of this record)."""
-        if key not in self._KEY_TO_ATTR:
-            raise KeyError(key)
-        setattr(self, self._KEY_TO_ATTR[key], value)
-
-    def keys(self) -> frozenset[str]:
-        """Return the present old keys."""
-        return self.present_keys()
-
-    def __iter__(self) -> Iterator[str]:
-        """Iterate over the present old keys."""
-        return iter(self.present_keys())
 
 
 @dataclass(eq=True, kw_only=True)

@@ -295,7 +295,7 @@ class TestSharing:
         exprs = [product + x, product + y, product + 1]
         residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
         assert len(definitions) == 1
-        target = definitions[0]["target"]
+        target = definitions[0].target
         assert all(target in expr.free_symbols for expr in residuals)
 
     def test_common_scalars_pinned_order(self):
@@ -320,7 +320,7 @@ class TestSharing:
             "c + t1 + log(t2)",
         ]
         assert [
-            (str(item["target"]), str(item["body"])) for item in definitions
+            (str(item.target), str(item.body)) for item in definitions
         ] == [
             ("t1", "a*b"),
             ("t2", "exp(t1)"),
@@ -349,7 +349,7 @@ class TestSharing:
             "c + t1 + t2",
         ]
         assert [
-            (str(item["target"]), str(item["body"])) for item in definitions
+            (str(item.target), str(item.body)) for item in definitions
         ] == [("t1", "cos(a)"), ("t2", "sin(a)")]
         assert [str(name) for name in namer.created] == ["t1", "t2"]
 
@@ -371,7 +371,7 @@ class TestSharing:
         ]
         assert residuals[2] is exprs[2]
         assert [
-            (str(item["target"]), str(item["body"])) for item in definitions
+            (str(item.target), str(item.body)) for item in definitions
         ] == [("t1", "sqrt(a*b + c)"), ("t2", "sin(a)")]
 
     def test_best_scalar_candidate_ranks_only_top_count(self):
@@ -415,8 +415,8 @@ class TestSharing:
         residuals, definitions = _indexed_cse(exprs, namer, arrays)
         assert len(definitions) == 1
         definition = definitions[0]
-        assert len(definition["free"]) == 1
-        base = definition["target"].base
+        assert len(definition.free) == 1
+        base = definition.target.base
         assert str(base) in arrays
         assert arrays[str(base)] == 1
         assert all(
@@ -431,7 +431,7 @@ class TestSharing:
         exprs = [root * T, root * V, root + 1]
         residuals, definitions = _indexed_cse(exprs, namer, arrays)
         assert len(definitions) == 1
-        base = definitions[0]["target"].base
+        base = definitions[0].target.base
         assert arrays[str(base)] == 2
         assert all(
             any(indexed.base == base for indexed in expr.atoms(sp.Indexed))
@@ -457,9 +457,9 @@ class TestSharing:
             [str(expr) for expr in residuals],
             [
                 (
-                    str(item["target"]),
-                    [str(index) for index in item["free"]],
-                    str(item["body"]),
+                    str(item.target),
+                    [str(index) for index in item.free],
+                    str(item.body),
                 )
                 for item in definitions
             ],

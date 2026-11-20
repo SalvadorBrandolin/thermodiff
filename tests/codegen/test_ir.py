@@ -35,8 +35,8 @@ def test_present_keys_of_a_plain_record():
 
 
 def test_none_annotation_is_absent_and_false_is_present():
-    assert "mirror" not in make()
-    assert "mirror" in make(mirror=False)
+    assert "mirror" not in make().present_keys()
+    assert "mirror" in make(mirror=False).present_keys()
     assert make(mirror=False).present_keys() == BASE_KEYS | {"mirror"}
 
 
@@ -61,41 +61,6 @@ def test_every_annotation_name_is_reported():
         "factored",
         "acc",
     }
-
-
-def test_getitem_get_and_contains():
-    record = make(colmajor=True)
-    assert record["target"] == TARGET
-    assert record["colmajor"] is True
-    assert record.get("colmajor") is True
-    assert record.get("mirror") is None
-    assert record.get("mirror", "dflt") == "dflt"
-    assert record.get("mirror_of") is None
-    with pytest.raises(KeyError):
-        record["mirror"]
-    with pytest.raises(KeyError):
-        record["fused"]
-    assert "colmajor" in record
-    assert "fused" not in record
-
-
-def test_setitem_assigns_fields_and_rejects_unknown_keys():
-    record = make()
-    record["mirror_sum"] = True
-    record["body"] = sp.Integer(5)
-    assert record.mirror_sum is True
-    assert record.body == 5
-    assert set(record) == BASE_KEYS | {"mirror_sum"}
-    with pytest.raises(KeyError):
-        record["fused"] = []
-    with pytest.raises(KeyError):
-        record["unknown"] = 1
-
-
-def test_keys_and_iteration_give_the_present_keys():
-    record = make(mirror=False)
-    assert set(record) == record.present_keys()
-    assert set(record.keys()) == record.present_keys()
 
 
 def test_copy_replaces_fields_with_old_names_and_shares_lists():
@@ -155,6 +120,12 @@ def test_list_operations_use_value_equality():
     assert pool == [second]
 
 
+def test_annotations_are_assignable_attributes():
+    record = make()
+    record.mirror_sum = True
+    assert record.present_keys() == BASE_KEYS | {"mirror_sum"}
+
+
 def test_wrapper_present_keys_use_the_old_names():
     assert make_fused().present_keys() == BASE_KEYS | {"fused"}
     component = ComponentFusedMap(
@@ -170,8 +141,6 @@ def test_wrapper_present_keys_use_the_old_names():
         "steps",
         "members",
     }
-    assert component["compfused"] is True
-    assert component["members"] == [(TARGET, BODY)]
     outer = OuterFusedNest(
         target=TARGET,
         free=[],
@@ -181,9 +150,9 @@ def test_wrapper_present_keys_use_the_old_names():
         outer=IDX,
     )
     assert outer.present_keys() == BASE_KEYS | {"outerfused", "outer"}
-    assert outer["outerfused"] == [make()]
-    assert outer["outer"] == IDX
-    assert "members" not in outer
+    assert outer.members == [make()]
+    assert outer.outer == IDX
+    assert "members" not in outer.present_keys()
 
 
 def test_fused_nest_keeps_the_symv_fields():
