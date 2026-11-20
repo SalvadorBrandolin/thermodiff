@@ -1,6 +1,8 @@
 """Symmetry helpers for the Fortran code generator."""
 
+from collections.abc import Collection, Iterable
 from itertools import permutations
+from typing import Any, cast
 
 import sympy as sp
 
@@ -11,21 +13,28 @@ from thermodiff.codegen.common import (
     _order_free,
     _print_expr,
 )
+from thermodiff.codegen.ir import TempDef
 
 
-def _alpha_key(total):
+def _alpha_key(total: sp.Sum) -> sp.Basic:
     """Canonical form of a summation modulo renaming of its bound indices.
 
     Two summations that differ only in the names of their dummy indices
     (``sum_l x(i,l)`` and ``sum_m x(i,m)``) get the same key.
     """
-    mapping = {}
+    mapping: dict[sp.Idx, sp.Idx] = {}
     for position, limit in enumerate(total.limits):
         mapping[limit[0]] = sp.Idx(f"_bound{position}")
     return total.xreplace(mapping)
 
 
-def _free_alpha_key(total, indexes, symmetric_params=(), *, sym_rank3):
+def _free_alpha_key(
+    total: sp.Sum,
+    indexes: Iterable[sp.Idx],
+    symmetric_params: Collection[str] = (),
+    *,
+    sym_rank3: bool,
+) -> tuple[sp.Basic, list[sp.Idx]]:
     """Canonical form of a summation modulo renaming of all its indices.
 
     Bound indices are renamed by position, free indices by their order, so
@@ -39,7 +48,12 @@ def _free_alpha_key(total, indexes, symmetric_params=(), *, sym_rank3):
     return key, free
 
 
-def _canonical_image(term, bound, symmetric_params, sym_rank3):
+def _canonical_image(
+    term: sp.Basic,
+    bound: list[sp.Idx],
+    symmetric_params: Collection[str],
+    sym_rank3: bool,
+) -> sp.Basic:
     """Return the smallest image of ``term`` under permutations of ``bound``.
 
     Parameters
@@ -59,7 +73,7 @@ def _canonical_image(term, bound, symmetric_params, sym_rank3):
         The image with the smallest ``sp.default_sort_key``; ties keep the
         first permutation that reached it.
     """
-    best = None
+    best: tuple[Any, sp.Basic] | None = None
     for perm in permutations(bound):
         image = term.xreplace(dict(zip(bound, perm)))
         if symmetric_params:
@@ -67,10 +81,15 @@ def _canonical_image(term, bound, symmetric_params, sym_rank3):
         key = sp.default_sort_key(image)
         if best is None or key < best[0]:
             best = (key, image)
-    return best[1]
+    return cast(tuple[Any, sp.Basic], best)[1]
 
 
-def _merge_body_terms(body, bound, symmetric_params, sym_rank3):
+def _merge_body_terms(
+    body: sp.Basic,
+    bound: list[sp.Idx],
+    symmetric_params: Collection[str],
+    sym_rank3: bool,
+) -> sp.Basic:
     """Merge the terms of ``body`` that are images of each other.
 
     Parameters
@@ -93,7 +112,7 @@ def _merge_body_terms(body, bound, symmetric_params, sym_rank3):
     terms = expanded.args if isinstance(expanded, sp.Add) else (expanded,)
     if len(terms) <= 1:
         return body
-    merged = {}
+    merged: dict[sp.Basic, sp.Basic] = {}
     for term in terms:
         image = _canonical_image(term, bound, symmetric_params, sym_rank3)
         coeff, rest = image.as_coeff_Mul()
@@ -105,7 +124,12 @@ def _merge_body_terms(body, bound, symmetric_params, sym_rank3):
     return body
 
 
-def _merge_in_sum(total, symmetric_params, shared_bases, sym_rank3):
+def _merge_in_sum(
+    total: sp.Sum,
+    symmetric_params: Collection[str],
+    shared_bases: Collection[str],
+    sym_rank3: bool,
+) -> sp.Sum:
     """Rebuild a summation with its dummy images merged, innermost first.
 
     Parameters
@@ -137,7 +161,12 @@ def _merge_in_sum(total, symmetric_params, shared_bases, sym_rank3):
     return total.func(body, *total.limits)
 
 
-def _merge_visit(sub, symmetric_params, shared_bases, sym_rank3):
+def _merge_visit(
+    sub: sp.Basic,
+    symmetric_params: Collection[str],
+    shared_bases: Collection[str],
+    sym_rank3: bool,
+) -> sp.Basic:
     """Apply the dummy-image merge to every summation inside ``sub``."""
     if not getattr(sub, "args", ()) or isinstance(sub, (sp.Idx, sp.Indexed)):
         return sub
@@ -152,8 +181,12 @@ def _merge_visit(sub, symmetric_params, shared_bases, sym_rank3):
 
 
 def _merge_dummy_images(
-    expr, symmetric_params=(), shared_bases=frozenset(), *, sym_rank3
-):
+    expr: sp.Basic,
+    symmetric_params: Collection[str] = (),
+    shared_bases: Collection[str] = frozenset(),
+    *,
+    sym_rank3: bool,
+) -> sp.Basic:
     """Merge the terms of a summation that are images under a renaming of
     its bound indices.
 
@@ -172,7 +205,12 @@ def _merge_dummy_images(
     return _merge_visit(expr, symmetric_params, shared_bases, sym_rank3)
 
 
-def _symv_parts(definition, symmetric_params, *, sym_rank3):
+def _symv_parts(
+    definition: TempDef,
+    symmetric_params: Collection[str],
+    *,
+    sym_rank3: bool,
+) -> tuple[sp.Basic, sp.Basic] | None:
     """Split ``v(f) = sum_b P(b,f)*R(b)`` with ``P`` symmetric.
 
     Returns ``(pair, rest)`` when the body is a product of exactly one
@@ -203,7 +241,7 @@ def _symv_parts(definition, symmetric_params, *, sym_rank3):
     return pair[0], sp.Mul(*rest)
 
 
-def _render_symv(definition) -> list:
+def _render_symv(definition: TempDef) -> list[str]:
     """Symmetric matrix-vector product reading the upper triangle only.
 
     For every column ``f``: an axpy into ``v(1:f-1)`` and a dot product for
@@ -212,7 +250,7 @@ def _render_symv(definition) -> list:
     target = definition.target
     f = definition.free[0]
     b = definition.limits[0][0]
-    pair, rest = definition.symv
+    pair, rest = cast(tuple[Any, Any], definition.symv)
     acc = definition.symv_acc
     base = target.base
     rest_f_expr = rest.xreplace({b: f})
@@ -237,7 +275,11 @@ def _render_symv(definition) -> list:
     return lines
 
 
-def _canonical_symmetric(expr, symmetric_params, sym_rank3=False):
+def _canonical_symmetric(
+    expr: sp.Basic,
+    symmetric_params: Collection[str],
+    sym_rank3: bool = False,
+) -> sp.Basic:
     """Sort the subscripts of every symmetric parameter occurrence.
 
     For a parameter declared ``symmetric`` (``k(i,j) == k(j,i)``) the
@@ -259,7 +301,7 @@ def _canonical_symmetric(expr, symmetric_params, sym_rank3=False):
     if not symmetric_params:
         return expr
     names = set(symmetric_params)
-    replacements = {}
+    replacements: dict[sp.Basic, sp.Basic] = {}
     for indexed in expr.atoms(sp.Indexed):
         if str(indexed.base) not in names:
             continue
@@ -278,7 +320,13 @@ def _canonical_symmetric(expr, symmetric_params, sym_rank3=False):
     return expr.xreplace(replacements) if replacements else expr
 
 
-def _swap(expr, a, b, symmetric_params, sym_rank3=False):
+def _swap(
+    expr: sp.Basic,
+    a: sp.Idx,
+    b: sp.Idx,
+    symmetric_params: Collection[str],
+    sym_rank3: bool = False,
+) -> sp.Basic:
     """Swap the indices ``a`` and ``b`` and re-canonicalise.
 
     ``sym_rank3`` keeps a default only because the chain-rule stage
@@ -288,7 +336,9 @@ def _swap(expr, a, b, symmetric_params, sym_rank3=False):
     return _canonical_symmetric(swapped, symmetric_params, sym_rank3)
 
 
-def _fold_symmetric_sums(expr, symmetric_params, *, sym_rank3):
+def _fold_symmetric_sums(
+    expr: sp.Basic, symmetric_params: Collection[str], *, sym_rank3: bool
+) -> sp.Basic:
     """Fold double summations whose body is symmetric in its two indices.
 
     ``sum_a sum_b F(a,b)`` with ``F(a,b) == F(b,a)`` is rewritten as
@@ -302,7 +352,7 @@ def _fold_symmetric_sums(expr, symmetric_params, *, sym_rank3):
     order in which the code generator emits the ``do`` loops.  The object is
     only used for code generation, never evaluated by SymPy.
     """
-    replacements = {}
+    replacements: dict[sp.Basic, sp.Basic] = {}
     for total in expr.atoms(sp.Sum):
         if len(total.limits) != 2:
             continue
