@@ -704,6 +704,34 @@ def _loop_order(definition):
     return free + bound
 
 
+def _permute_body(body, order, names):
+    """Order the subscripts of the symmetric arrays in ``body`` by depth.
+
+    ``order`` lists the loop variables, outermost first; a subscript tuple
+    is rewritten only when all its indices are loop variables.
+    """
+    depth = {idx: k for k, idx in enumerate(order)}
+    replacements = {}
+    for indexed in body.atoms(sp.Indexed):
+        if str(indexed.base) not in names or len(indexed.indices) < 2:
+            continue
+        if not all(idx in depth for idx in indexed.indices):
+            continue
+        ordered = sorted(indexed.indices, key=lambda idx: -depth[idx])
+        if list(ordered) != list(indexed.indices):
+            replacements[indexed] = sp.Indexed(indexed.base, *ordered)
+    return body.xreplace(replacements) if replacements else body
+
+
+def _nest_members(definition) -> list:
+    """Return the records whose bodies a nest renders (itself if plain)."""
+    if isinstance(definition, FusedNest):
+        return definition.fused
+    if isinstance(definition, SiblingNest):
+        return definition.sibling
+    return [definition]
+
+
 def _permute_symmetric_subscripts(definitions, symmetric_params):
     """Order the subscripts of symmetric parameters by loop depth.
 
@@ -717,34 +745,12 @@ def _permute_symmetric_subscripts(definitions, symmetric_params):
     names = set(symmetric_params)
     if not names:
         return definitions
-
-    def permute(body, order):
-        depth = {idx: k for k, idx in enumerate(order)}
-        replacements = {}
-        for indexed in body.atoms(sp.Indexed):
-            if str(indexed.base) not in names or len(indexed.indices) < 2:
-                continue
-            if not all(idx in depth for idx in indexed.indices):
-                continue
-            ordered = sorted(indexed.indices, key=lambda idx: -depth[idx])
-            if list(ordered) != list(indexed.indices):
-                replacements[indexed] = sp.Indexed(indexed.base, *ordered)
-        return body.xreplace(replacements) if replacements else body
-
     for definition in definitions:
         order = _loop_order(definition)
         if order is None:
             continue
-        if isinstance(definition, (FusedNest, SiblingNest)):
-            members = (
-                definition.fused
-                if isinstance(definition, FusedNest)
-                else definition.sibling
-            )
-            for member in members:
-                member.body = permute(member.body, order)
-        else:
-            definition.body = permute(definition.body, order)
+        for member in _nest_members(definition):
+            member.body = _permute_body(member.body, order, names)
     return definitions
 
 
