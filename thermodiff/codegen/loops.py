@@ -586,10 +586,11 @@ def _permute_symmetric_subscripts(definitions, symmetric_params):
         if order is None:
             continue
         if isinstance(definition, (FusedNest, SiblingNest)):
-            if isinstance(definition, FusedNest):
-                members = definition.fused
-            else:
-                members = definition.sibling
+            members = (
+                definition.fused
+                if isinstance(definition, FusedNest)
+                else definition.sibling
+            )
             for member in members:
                 member.body = permute(member.body, order)
         else:
