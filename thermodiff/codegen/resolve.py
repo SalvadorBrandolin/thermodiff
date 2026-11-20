@@ -1,6 +1,7 @@
 """Placeholder resolution for the Fortran code generator."""
 
-from typing import NamedTuple
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, NamedTuple
 
 import sympy as sp
 from sympy.core.function import DefinedFunction
@@ -9,8 +10,11 @@ from thermodiff.codegen.common import _DERIV_ORDER, _sanitize
 from thermodiff.derivatives import resolve_derivatives
 from thermodiff.thermovars import nc
 
+if TYPE_CHECKING:
+    from thermodiff.diffplz import DiffPlz
 
-def _is_placeholder(func) -> bool:
+
+def _is_placeholder(func: sp.Basic) -> bool:
     """Return whether ``func`` is a user defined placeholder function.
 
     Placeholder functions are the ones created with
@@ -34,10 +38,10 @@ class _PlaceholderResolver:
         instead of exposing it as an argument.
     """
 
-    def __init__(self, strict: bool = False):
+    def __init__(self, strict: bool = False) -> None:
         self.strict = strict
         #: name -> rank (0 for scalars)
-        self.ranks: dict = {}
+        self.ranks: dict[str, int] = {}
 
     def resolve(self, expr: sp.Expr) -> sp.Expr:
         """Return ``expr`` with placeholders replaced by plain variables."""
@@ -73,9 +77,9 @@ class _PlaceholderResolver:
         replacements = {func: self._function_var(func) for func in bare}
         return resolved.xreplace(replacements)
 
-    def _index_dims(self, func: sp.Function) -> list:
+    def _index_dims(self, func: sp.Function) -> list[str]:
         """Return the index labels used as array dimensions by ``func``."""
-        dims = []
+        dims: list[str] = []
         for arg in func.args:
             if isinstance(arg, sp.Idx):
                 dims.append(str(arg))
@@ -92,7 +96,7 @@ class _PlaceholderResolver:
             )
         self.ranks[name] = rank
 
-    def _build(self, name: str, labels: list) -> sp.Expr:
+    def _build(self, name: str, labels: list[str]) -> sp.Expr:
         rank = len(labels)
         self._register(name, rank)
         if rank == 0:
@@ -127,7 +131,9 @@ class _PlaceholderResolver:
         return self._build(base, dims)
 
 
-def _derivative_function_atoms(expr: sp.Basic) -> tuple[set, set]:
+def _derivative_function_atoms(
+    expr: sp.Basic,
+) -> tuple[set[sp.Basic], set[sp.Basic]]:
     """Return ``expr.atoms(Derivative)`` and ``expr.atoms(Function)``.
 
     Both sets come from a single ``preorder_traversal`` of ``expr``.
@@ -155,11 +161,11 @@ def _derivative_function_atoms(expr: sp.Basic) -> tuple[set, set]:
 class _ScanAtoms(NamedTuple):
     """Atoms of one expression gathered by :func:`_scan_atoms`."""
 
-    indexed: set
-    sums: set
-    idxs: set
-    bases: set
-    symbols: set
+    indexed: set[sp.Indexed]
+    sums: set[sp.Sum]
+    idxs: set[sp.Idx]
+    bases: set[sp.IndexedBase]
+    symbols: set[sp.Symbol]
 
 
 def _scan_atoms(expr: sp.Basic) -> _ScanAtoms:
@@ -193,7 +199,9 @@ def _scan_atoms(expr: sp.Basic) -> _ScanAtoms:
     return scan
 
 
-def _select_derivatives(diff, derivatives) -> list:
+def _select_derivatives(
+    diff: DiffPlz, derivatives: Iterable[str] | None
+) -> list[str]:
     """Return the derivative attributes to emit, in canonical order.
 
     Parameters
