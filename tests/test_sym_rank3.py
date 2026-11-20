@@ -5,6 +5,8 @@ import hashlib
 import pytest
 import sympy as sp
 
+
+from thermodiff import fortran
 from thermodiff.fortran import _canonical_symmetric
 from thermodiff.model import compile_model
 
@@ -76,3 +78,40 @@ def test_end_to_end_output_is_pinned(sym_rank3):
     )
     digest = hashlib.sha256(code.encode()).hexdigest()
     assert digest == EXPECTED_DIGESTS[sym_rank3]
+
+
+def _generate(sym_rank3: bool) -> str:
+    """Generate the rank-3 model with ``param_symmetry`` enabled."""
+    return compile_model(
+        RANK3_MODEL,
+        derivatives="dn,dndn",
+        preset="minimal",
+        param_symmetry=True,
+        sym_rank3=sym_rank3,
+    )
+
+
+def _digest(code: str) -> str:
+    """Return the sha256 hex digest of generated code."""
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
+def _raise_midway(*args, **kwargs):
+    """Stand-in for a later pipeline stage that fails."""
+    raise RuntimeError("stage failed")
+
+
+def test_failed_sym_rank3_call_does_not_leak(monkeypatch):
+    with monkeypatch.context() as patched:
+        patched.setattr(fortran, "_fold_symmetric_sums", _raise_midway)
+        with pytest.raises(RuntimeError, match="stage failed"):
+            _generate(True)
+    assert _digest(_generate(False)) == EXPECTED_DIGESTS[False]
+
+
+def test_interleaved_calls_match_separate_calls():
+    interleaved = [
+        _digest(_generate(flag)) for flag in (True, False, False, True)
+    ]
+    separate = [EXPECTED_DIGESTS[flag] for flag in (True, False, False, True)]
+    assert interleaved == separate
