@@ -6,7 +6,7 @@ import warnings
 
 import pytest
 
-from thermodiff import bench_hooks
+from benchmarks import td_bench as bench_hooks
 from thermodiff.codegen import (
     CodegenOptions,
     CseBackend,

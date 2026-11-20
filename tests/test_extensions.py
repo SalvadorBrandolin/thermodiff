@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import sympy as sp
 
-from thermodiff.bench_hooks import EXTENDED_VARIANTS
+from benchmarks.td_bench import EXTENDED_VARIANTS
 from thermodiff.fortran import _canonical_symmetric, _fold_symmetric_sums
 from thermodiff.model import compile_model
 from thermodiff.model.errors import ModelError
@@ -747,7 +747,7 @@ _MEASURED = [
     ],
 )
 def test_measured_kernels_regenerate(model, path, variant, workload):
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     stored = os.path.join(
         _ROOT,
@@ -924,7 +924,7 @@ function
 
 
 def test_stage_keys_cover_legacy_keys_one_to_one():
-    from thermodiff.bench_hooks import LEGACY_KEYS, STAGE_VARIANTS
+    from benchmarks.td_bench import LEGACY_KEYS, STAGE_VARIANTS
 
     assert len(set(LEGACY_KEYS.values())) == len(LEGACY_KEYS)
     for key, old in LEGACY_KEYS.items():
@@ -937,7 +937,7 @@ def test_stage_keys_cover_legacy_keys_one_to_one():
     "key", ["e0", "e2", "e3", "e5", "e7", "e8", "e2h", "p13", "p22"]
 )
 def test_stage_key_generates_legacy_code(key):
-    from thermodiff.bench_hooks import LEGACY_KEYS, generate_workload
+    from benchmarks.td_bench import LEGACY_KEYS, generate_workload
 
     path = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
     new = generate_workload(
@@ -957,7 +957,7 @@ def test_stage_key_generates_legacy_code(key):
 
 @pytest.mark.slow
 def test_contiguous_args_only_adds_the_attribute():
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
     base = generate_workload(
@@ -995,7 +995,7 @@ def _loops_with_nested_loop(source):
 
 
 def test_fuse_libm_guard_keeps_libm_maps_out_of_double_reductions():
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "rkpr", "rkpr.model")
     old = generate_workload(
@@ -1014,7 +1014,7 @@ def test_fuse_libm_guard_keeps_libm_maps_out_of_double_reductions():
 
 def test_keep_libm_tables_moves_exp_out_of_reductions():
     import re
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "uniquac", "uniquac.model")
     acc = re.compile(r"^\s*(\w+)(\(\w+\))? = \1(\(\w+\))? \+ .*exp\(")
@@ -1032,7 +1032,7 @@ def test_keep_libm_tables_moves_exp_out_of_reductions():
 @pytest.mark.slow
 def test_table_layout_follows_parameter_subscripts():
     import re
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "nrtl", "nrtl.model")
     old = generate_workload(
@@ -1084,7 +1084,7 @@ def _hessian_nest(source):
 
 
 def test_lowrank_hess_assembles_columns_from_vectors():
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "uniquac", "uniquac.model")
     old = generate_workload(
@@ -1119,7 +1119,7 @@ def test_lowrank_hess_assembles_columns_from_vectors():
 
 def test_lowrank_hess_gives_the_same_hessian():
     from model_harness import run
-    from thermodiff.bench_hooks import EXTENDED_VARIANTS
+    from benchmarks.td_bench import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")).read()
     inits = {
@@ -1140,7 +1140,7 @@ def test_lowrank_hess_gives_the_same_hessian():
 
 
 def test_drop_pair_tables_inlines_the_dispersion_table():
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "pcsaft", "pcsaft.model")
     old = generate_workload(
@@ -1164,7 +1164,7 @@ def test_drop_pair_tables_inlines_the_dispersion_table():
 
 def test_share_elementwise_reuses_logs_between_value_and_gradient():
     import re
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "uniquac", "uniquac.model")
     old = generate_workload(
@@ -1196,7 +1196,7 @@ def test_share_elementwise_reuses_logs_between_value_and_gradient():
 
 def test_share_elementwise_gives_the_same_gradient():
     from model_harness import run
-    from thermodiff.bench_hooks import EXTENDED_VARIANTS
+    from benchmarks.td_bench import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "uniquac", "uniquac.model")).read()
     inits = {
@@ -1221,7 +1221,7 @@ def test_share_elementwise_gives_the_same_gradient():
 
 @pytest.mark.slow
 def test_scalar_chain_shrinks_the_scalar_block():
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "rkpr", "rkpr.model")
     old = generate_workload(
@@ -1284,7 +1284,7 @@ def test_scalar_chain_falls_back_on_non_smooth_functions():
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 def test_scalar_chain_gives_the_same_derivatives():
     from model_harness import run
-    from thermodiff.bench_hooks import EXTENDED_VARIANTS
+    from benchmarks.td_bench import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "rkpr", "rkpr.model")).read()
     inits = {
@@ -1325,7 +1325,7 @@ def test_scalar_chain_gives_the_same_derivatives():
 @pytest.mark.slow
 def test_split_affine_leaves_one_multiply_add_in_the_cmr_nest():
     import re
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "cmr", "cmr.model")
     old = generate_workload(
@@ -1358,7 +1358,7 @@ def test_split_affine_leaves_one_multiply_add_in_the_cmr_nest():
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 def test_split_affine_gives_the_same_derivatives():
     from model_harness import run
-    from thermodiff.bench_hooks import EXTENDED_VARIANTS
+    from benchmarks.td_bench import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "cmr", "cmr.model")).read()
     inits = {
@@ -1385,7 +1385,7 @@ def test_split_affine_gives_the_same_derivatives():
     ["w0", "w1", "w5b", pytest.param("w6", marks=pytest.mark.slow)],
 )
 def test_scalar_chain_estimate_reproduces_cost_choice(workload):
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
     cost = generate_workload(
@@ -1402,7 +1402,7 @@ def test_scalar_chain_estimate_reproduces_cost_choice(workload):
 
 @pytest.mark.slow
 def test_split_acc_uses_two_accumulators_in_the_cmr_nest():
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "cmr", "cmr.model")
     old = generate_workload(
@@ -1439,7 +1439,7 @@ def test_split_acc_uses_two_accumulators_in_the_cmr_nest():
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 def test_split_acc_gives_the_same_derivatives():
     from model_harness import run
-    from thermodiff.bench_hooks import EXTENDED_VARIANTS
+    from benchmarks.td_bench import EXTENDED_VARIANTS
 
     text = open(os.path.join(_ROOT_MODELS, "cmr", "cmr.model")).read()
     inits = {

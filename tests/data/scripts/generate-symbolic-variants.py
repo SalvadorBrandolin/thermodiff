@@ -5,7 +5,7 @@ One ``.f90`` file per (workload x variant) plus ``manifest.json`` per
 variant directory, under ``bench/src/generated/<model>_<variant>_<token>/``
 (consumer-side interface contract, frozen file set).  The generation
 metrics required by ``reports/protocol.md`` section 8.2 are captured
-through :mod:`thermodiff.bench_hooks`: generation wall time and sub-phase
+through :mod:`benchmarks.td_bench`: generation wall time and sub-phase
 times, path/lines/bytes of each file, and the symbolic operation count.
 
 Usage (from the session root):
@@ -24,8 +24,9 @@ import sys
 
 SESSION_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SESSION_ROOT, "thermodiff"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(SESSION_ROOT)))
 
-from thermodiff.bench_hooks import (  # noqa: E402
+from benchmarks.td_bench import (  # noqa: E402
     VARIANTS,
     WORKLOADS,
     generate_workload,

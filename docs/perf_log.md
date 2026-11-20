@@ -3,7 +3,7 @@
 Purpose: record the serial wall time of symbolic generation (`parse`, `diff`,
 `emit`) for representative cases, so that every change in the
 `refactor/perf-arch` branch can be compared against the same measurement
-protocol. Generation is measured with `thermodiff.bench_hooks.generate_workload`
+protocol. Generation is measured with `benchmarks.td_bench.generate_workload`
 and `time.perf_counter`, without any profiler. Profiles (cProfile) are kept
 separate and are used only to locate hotspots; their times are inflated and
 must not be used as absolute timings.
@@ -30,7 +30,7 @@ taskset -c 0-4,6-10 $PY tools/check_golden.py --tier complete -j 8
 ```python
 import json, os, sys, tempfile, time
 import thermodiff
-from thermodiff.bench_hooks import generate_workload
+from benchmarks.td_bench import generate_workload
 
 model, variant, workload, reps, tag = sys.argv[1:6]
 print(json.dumps({"thermodiff": thermodiff.__file__, "tag": tag}), flush=True)

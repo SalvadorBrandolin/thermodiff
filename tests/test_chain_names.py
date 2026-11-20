@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 import sympy as sp
 
-from thermodiff import bench_hooks, chain
+from benchmarks import td_bench as bench_hooks
+from thermodiff import chain
 from thermodiff.model.emit import build_diff
 from thermodiff.model.ir import build_ir
 from thermodiff.model.parser import read_sections

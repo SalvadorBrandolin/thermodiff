@@ -18,7 +18,7 @@ import warnings
 
 import pytest
 
-from thermodiff.bench_hooks import (
+from benchmarks.td_bench import (
     VARIANTS,
     WORKLOADS,
     generate_workload,

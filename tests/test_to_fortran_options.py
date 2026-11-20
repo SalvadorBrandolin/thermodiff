@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from thermodiff import bench_hooks
+from benchmarks import td_bench as bench_hooks
 from thermodiff.codegen import CodegenOptions
 from thermodiff.fortran import to_fortran
 from thermodiff.model.emit import build_diff

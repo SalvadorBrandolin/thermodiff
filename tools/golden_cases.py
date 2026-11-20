@@ -122,7 +122,7 @@ def available_variants() -> tuple[str, ...]:
     tuple of str
         Matrix variants present in ``STAGE_VARIANTS``.
     """
-    from thermodiff.bench_hooks import STAGE_VARIANTS
+    from benchmarks.td_bench import STAGE_VARIANTS
 
     present = tuple(v for v in MATRIX_VARIANTS if v in STAGE_VARIANTS)
     for missing in sorted(set(MATRIX_VARIANTS) - set(present)):

@@ -67,7 +67,7 @@ def generate_case(case: Case, repo: Path = REPO_ROOT) -> dict[str, Any]:
     dict
         ``source`` (file text) and the per-phase times.
     """
-    from thermodiff.bench_hooks import generate_workload
+    from benchmarks.td_bench import generate_workload
 
     result = generate_workload(
         str(repo / case.model.path),

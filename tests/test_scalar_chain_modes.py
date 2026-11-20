@@ -16,7 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from thermodiff import bench_hooks, fortran
+from benchmarks import td_bench as bench_hooks
+from thermodiff import fortran
 from thermodiff.codegen import pipeline
 from thermodiff.fortran import to_fortran
 from thermodiff.model.emit import build_diff

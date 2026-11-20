@@ -79,7 +79,6 @@ tox -e coverage
 ```
 thermodiff/
 ├── __init__.py          # Public exports
-├── bench_hooks.py       # Measurement hooks for the benchmark's generation phase
 ├── chain.py             # Structured differentiation by the chain rule over summation nodes
 ├── derivatives.py       # Resolution of user supplied derivative selections
 ├── diffplz.py           # DiffPlz class (main feature)

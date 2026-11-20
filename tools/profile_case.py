@@ -25,7 +25,7 @@ if sys.path[0] != str(REPO_ROOT):
     sys.path.insert(0, str(REPO_ROOT))
 
 import thermodiff  # noqa: E402
-from thermodiff.bench_hooks import generate_workload  # noqa: E402
+from benchmarks.td_bench import generate_workload  # noqa: E402
 
 PHASE_KEYS = (
     "parse_time_s",

@@ -39,6 +39,7 @@ gui = ["streamlit>=1.30", "pandas"]
 include = ["thermodiff*"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 markers = [
     "thesis: tests that need models or data outside the repository (deselected with -m 'not thesis')",
     "slow: long-running tests (Fortran compile-and-run or large generations); run in G2, deselected in G1-full with -m 'not slow'",

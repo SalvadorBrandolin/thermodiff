@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from thermodiff.bench_hooks import generate_workload, variant_settings
+from benchmarks.td_bench import generate_workload, variant_settings
 
 #: Root of the test fixtures (``models/`` and ``scripts/``).
 SESSION_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
