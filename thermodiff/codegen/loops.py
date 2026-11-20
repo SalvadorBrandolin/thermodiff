@@ -1103,6 +1103,206 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
     return groups.out
 
 
+_VECTOR_SLOT = sp.Symbol("__slot")
+
+
+def _pair_readers(name, definitions, outputs):
+    """Return the definitions and outputs that read the array ``name``."""
+    readers = [
+        d
+        for d in definitions
+        if any(str(x.base) == name for x in d.body.atoms(sp.Indexed))
+    ]
+    outs = [
+        e
+        for e in outputs
+        if any(str(x.base) == name for x in e.atoms(sp.Indexed))
+    ]
+    return readers, outs
+
+
+def _is_triangular(definition) -> bool:
+    """Whether an inner limit starts at the outer loop index."""
+    return any(
+        isinstance(x, _LoopStart)
+        for lim in definition.limits[1:]
+        for x in sp.sympify(lim[1]).atoms(sp.Symbol)
+    )
+
+
+def _is_plain_pair_table(table) -> bool:
+    """Whether ``table`` is a rank-2 table that may be inlined.
+
+    It has two free indexes and an indexed target, no summation, no layout
+    annotation, and a body without ``Sum``, ``Piecewise`` or libm calls.
+    """
+    if (
+        len(table.free) != 2
+        or table.limits
+        or not isinstance(table.target, sp.Indexed)
+    ):
+        return False
+    if (
+        table.mirror_sum
+        or table.symv
+        or isinstance(table, FusedNest)
+        or table.colmajor
+        or table.colsum
+    ):
+        return False
+    body = table.body
+    return not (
+        body.has(sp.Sum) or body.has(sp.Piecewise) or _calls_libm(body)
+    )
+
+
+def _read_only_by_reductions(table, readers, outs) -> bool:
+    """Whether the readers of ``table`` are scalar reductions only.
+
+    At most one of them may be a double reduction, and when the table is
+    mirrored that one must be triangular.
+    """
+    if outs or not readers:
+        return False
+    if any(d.free or not d.limits or len(d.limits) > 2 for d in readers):
+        return False
+    double = [d for d in readers if len(d.limits) == 2]
+    if len(double) > 1:
+        return False
+    return not (double and table.mirror and not _is_triangular(double[0]))
+
+
+def _find_droppable_table(definitions, outputs):
+    """Return ``(table, name, readers)`` of the last droppable table.
+
+    Returns ``None`` when no table qualifies.
+    """
+    for table in reversed(definitions):
+        if not _is_plain_pair_table(table):
+            continue
+        name = _temp_name(table.target)
+        readers, outs = _pair_readers(name, definitions, outputs)
+        if _read_only_by_reductions(table, readers, outs):
+            return table, name, readers
+    return None
+
+
+def _inline_pair_table(table, name, readers) -> None:
+    """Substitute the body of ``table`` into its readers, in place."""
+    free = table.free
+    for reader in readers:
+        replacements = {
+            x: table.body.xreplace(
+                {free[0]: x.indices[0], free[1]: x.indices[1]}
+            )
+            for x in reader.body.atoms(sp.Indexed)
+            if str(x.base) == name
+        }
+        reader.body = reader.body.xreplace(replacements)
+
+
+def _inline_pair_tables(definitions, outputs, arrays):
+    """Inline every droppable table; ``arrays`` loses the dropped ones."""
+    while True:
+        found = _find_droppable_table(definitions, outputs)
+        if found is None:
+            return definitions
+        table, name, readers = found
+        _inline_pair_table(table, name, readers)
+        definitions = [d for d in definitions if d is not table]
+        arrays.pop(name, None)
+
+
+def _shared_inner_vector(only_inner, outer, inner, vectors, namer, arrays):
+    """Return ``(factors, new definitions)`` for a product over ``inner``.
+
+    The product becomes a vector over ``outer`` (created unless an equal
+    one exists in ``vectors``) read at the inner index.
+    """
+    product = sp.Mul(*only_inner)
+    key = product.xreplace({inner: _VECTOR_SLOT})
+    created = []
+    if key not in vectors:
+        target = _new_shared_temp(namer, [outer], arrays)
+        vectors[key] = target.base
+        created.append(
+            TempDef(
+                target=target,
+                free=[outer],
+                limits=[],
+                body=product.xreplace({inner: outer}),
+            )
+        )
+    return [sp.Indexed(vectors[key], inner)], created
+
+
+def _outer_factors_with_vector(outer_factors, outer, vectors):
+    """Read an existing vector in place of a product over ``outer``."""
+    only_outer = [f for f in outer_factors if f.atoms(sp.Idx) == {outer}]
+    if len(only_outer) > 1:
+        key = sp.Mul(*only_outer).xreplace({outer: _VECTOR_SLOT})
+        if key in vectors:
+            return [f for f in outer_factors if f not in only_outer] + [
+                sp.Indexed(vectors[key], outer)
+            ]
+    return outer_factors
+
+
+def _factor_double_reduction(definition, vectors, namer, arrays):
+    """Return the definitions that replace a scalar double reduction.
+
+    The factors independent of the inner index are applied once per outer
+    iteration (``factored``); a product over the inner index only becomes
+    a vector.  A definition that does not qualify comes back unchanged.
+    """
+    if (
+        definition.free
+        or len(definition.limits) != 2
+        or not isinstance(definition.body, sp.Mul)
+        or definition.body.has(sp.Piecewise)
+    ):
+        return [definition]
+    outer, inner = definition.limits[0][0], definition.limits[1][0]
+    factors = sp.Mul.make_args(definition.body)
+    outer_factors = [f for f in factors if inner not in f.atoms(sp.Idx)]
+    inner_factors = [f for f in factors if inner in f.atoms(sp.Idx)]
+    if not outer_factors or not inner_factors:
+        return [definition]
+    only_inner = [f for f in inner_factors if f.atoms(sp.Idx) == {inner}]
+    rest = [f for f in inner_factors if f not in only_inner]
+    created = []
+    if len(only_inner) > 1:
+        only_inner, created = _shared_inner_vector(
+            only_inner, outer, inner, vectors, namer, arrays
+        )
+    outer_factors = _outer_factors_with_vector(outer_factors, outer, vectors)
+    factored = definition.copy(
+        body=sp.Mul(*outer_factors) * sp.Mul(*(only_inner + rest)),
+        factored=True,
+        acc=sp.Symbol(str(namer("t"))),
+    )
+    return created + [factored]
+
+
+def _place_new_vectors(out, vectors) -> None:
+    """Move each new vector right after the definitions it reads.
+
+    The double reductions then stay consecutive and share their inner
+    loops.  ``out`` is edited in place.
+    """
+    new_vectors = {str(b) for b in vectors.values()}
+    for vec in [d for d in out if _temp_name(d.target) in new_vectors]:
+        out.remove(vec)
+        names = {str(x.base) for x in vec.body.atoms(sp.Indexed)} | {
+            str(x) for x in vec.body.free_symbols
+        }
+        position = 0
+        for k, other in enumerate(out):
+            if other.target is not None and _temp_name(other.target) in names:
+                position = k + 1
+        out.insert(position, vec)
+
+
 def _drop_pair_tables(definitions, outputs, namer, arrays):
     """Inline pair tables read only by scalar reductions; factor double sums.
 
@@ -1122,137 +1322,14 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
 
     Returns the new definitions; ``arrays`` loses the dropped tables.
     """
-
-    def readers(name):
-        defs = [
-            d
-            for d in definitions
-            if any(str(x.base) == name for x in d.body.atoms(sp.Indexed))
-        ]
-        outs = [
-            e
-            for e in outputs
-            if any(str(x.base) == name for x in e.atoms(sp.Indexed))
-        ]
-        return defs, outs
-
-    def triangular(d):
-        return any(
-            isinstance(x, _LoopStart)
-            for lim in d.limits[1:]
-            for x in sp.sympify(lim[1]).atoms(sp.Symbol)
-        )
-
-    changed = True
-    while changed:
-        changed = False
-        for table in reversed(definitions):
-            free = table.free
-            if (
-                len(free) != 2
-                or table.limits
-                or not isinstance(table.target, sp.Indexed)
-            ):
-                continue
-            if (
-                table.mirror_sum
-                or table.symv
-                or isinstance(table, FusedNest)
-                or table.colmajor
-                or table.colsum
-            ):
-                continue
-            body = table.body
-            if body.has(sp.Sum) or body.has(sp.Piecewise) or _calls_libm(body):
-                continue
-            name = _temp_name(table.target)
-            defs, outs = readers(name)
-            if outs or not defs:
-                continue
-            if any(d.free or not d.limits or len(d.limits) > 2 for d in defs):
-                continue
-            double = [d for d in defs if len(d.limits) == 2]
-            if len(double) > 1 or (
-                double and table.mirror and not triangular(double[0])
-            ):
-                continue
-            for d in defs:
-                rep = {
-                    x: body.xreplace(
-                        {free[0]: x.indices[0], free[1]: x.indices[1]}
-                    )
-                    for x in d.body.atoms(sp.Indexed)
-                    if str(x.base) == name
-                }
-                d.body = d.body.xreplace(rep)
-            definitions = [d for d in definitions if d is not table]
-            arrays.pop(name, None)
-            changed = True
-            break
-
+    definitions = _inline_pair_tables(definitions, outputs, arrays)
     vectors = {}
-    canon_slot = sp.Symbol("__slot")
     out = []
-    for d in definitions:
-        if d.free or len(d.limits) != 2 or not isinstance(d.body, sp.Mul):
-            out.append(d)
-            continue
-        if d.body.has(sp.Piecewise):
-            out.append(d)
-            continue
-        outer, inner = d.limits[0][0], d.limits[1][0]
-        factors = sp.Mul.make_args(d.body)
-        o_f = [f for f in factors if inner not in f.atoms(sp.Idx)]
-        i_f = [f for f in factors if inner in f.atoms(sp.Idx)]
-        if not o_f or not i_f:
-            out.append(d)
-            continue
-        only_inner = [f for f in i_f if f.atoms(sp.Idx) == {inner}]
-        rest = [f for f in i_f if f not in only_inner]
-        new_defs = []
-        if len(only_inner) > 1:
-            prod = sp.Mul(*only_inner)
-            key = prod.xreplace({inner: canon_slot})
-            if key not in vectors:
-                target = _new_shared_temp(namer, [outer], arrays)
-                vectors[key] = target.base
-                new_defs.append(
-                    TempDef(
-                        target=target,
-                        free=[outer],
-                        limits=[],
-                        body=prod.xreplace({inner: outer}),
-                    )
-                )
-            only_inner = [sp.Indexed(vectors[key], inner)]
-        only_outer = [f for f in o_f if f.atoms(sp.Idx) == {outer}]
-        if len(only_outer) > 1:
-            key = sp.Mul(*only_outer).xreplace({outer: canon_slot})
-            if key in vectors:
-                o_f = [f for f in o_f if f not in only_outer] + [
-                    sp.Indexed(vectors[key], outer)
-                ]
-        out.extend(new_defs)
-        out.append(
-            d.copy(
-                body=sp.Mul(*o_f) * sp.Mul(*(only_inner + rest)),
-                factored=True,
-                acc=sp.Symbol(str(namer("t"))),
-            )
+    for definition in definitions:
+        out.extend(
+            _factor_double_reduction(definition, vectors, namer, arrays)
         )
-    # each new vector goes right after the definitions it reads, so that the
-    # double reductions stay consecutive (and share their inner loops)
-    new_vectors = {str(b) for b in vectors.values()}
-    for vec in [d for d in out if _temp_name(d.target) in new_vectors]:
-        out.remove(vec)
-        names = {str(x.base) for x in vec.body.atoms(sp.Indexed)} | {
-            str(x) for x in vec.body.free_symbols
-        }
-        position = 0
-        for k, d in enumerate(out):
-            if d.target is not None and _temp_name(d.target) in names:
-                position = k + 1
-        out.insert(position, vec)
+    _place_new_vectors(out, vectors)
     return out
 
 
