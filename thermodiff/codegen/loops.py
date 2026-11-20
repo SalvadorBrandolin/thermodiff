@@ -1,13 +1,14 @@
 """Loop fusion and table rewrites for the Fortran code generator."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import sympy as sp
 
 from thermodiff.codegen.common import (
     _LoopStart,
+    _Namer,
     _calls_libm,
     _free_indices,
     _is_expensive,
@@ -19,10 +20,21 @@ from thermodiff.codegen.ir import (
     ComponentFusedMap,
     FusedNest,
     OuterFusedNest,
+    Limit,
+    Namer,
     SiblingNest,
     TempDef,
 )
 from thermodiff.codegen.symmetry import _alpha_key, _canonical_symmetric
+
+Staged = list[tuple[str, str, sp.Expr]]
+"""Output expressions as ``(attribute, output name, expression)``."""
+
+Nesting = tuple[Any, Any, sp.Sum, Any]
+"""One nesting of a sum: outer part, factors, inner sum, limits or None."""
+
+VectorTable = dict[sp.Basic, sp.IndexedBase]
+"""New shared vectors by the product they hold (slot-normalised)."""
 
 
 class _NestContext(NamedTuple):
@@ -40,8 +52,8 @@ class _NestContext(NamedTuple):
         Nest sums over three or more indices too.
     """
 
-    indexes: Sequence
-    symmetric_params: tuple
+    indexes: Sequence[sp.Idx]
+    symmetric_params: tuple[str, ...]
     sym_rank3: bool
     general: bool
 
@@ -61,13 +73,13 @@ class _NestChoice(NamedTuple):
         Nest by cost when no inner sum is shared.
     """
 
-    vectors: set
-    shared: set
-    counts: dict
+    vectors: set[sp.Basic]
+    shared: set[sp.Basic]
+    counts: dict[sp.Basic, int]
     cost: bool
 
 
-def _sum_key(total, context):
+def _sum_key(total: sp.Sum, context: _NestContext) -> sp.Basic:
     """Return the canonical key of a sum, free indices renamed by order."""
     free = _order_free(_free_indices(total), context.indexes)
     mapping = {index: sp.Idx(f"_free{pos}") for pos, index in enumerate(free)}
@@ -79,7 +91,9 @@ def _sum_key(total, context):
     return renamed
 
 
-def _split_product(total, outer_factors):
+def _split_product(
+    total: sp.Sum, outer_factors: list[sp.Expr]
+) -> tuple[list[sp.Expr], list[sp.Expr]]:
     """Return the numeric factors and the rest of the product of ``total``."""
     numbers = [f for f in total.function.args if f.is_Number]
     rest = [
@@ -90,7 +104,7 @@ def _split_product(total, outer_factors):
     return numbers, rest
 
 
-def _orientations_general(total):
+def _orientations_general(total: sp.Sum) -> list[Nesting]:
     """Nestings of a sum over two or more indices.
 
     One bound index goes to an inner sum (rank 1 or 2 in its free indices),
@@ -102,7 +116,7 @@ def _orientations_general(total):
     ranges = {(lim[1], lim[2]) for lim in total.limits}
     if len(ranges) != 1:
         return []
-    result = []
+    result: list[Nesting] = []
     for pos, (bound, low, high) in enumerate(total.limits):
         outer_factors = [
             f
@@ -120,14 +134,14 @@ def _orientations_general(total):
     return result
 
 
-def _orientations_pair(total):
+def _orientations_pair(total: sp.Sum) -> list[Nesting]:
     """Nestings of a double sum: ``(outer index, factors, inner, limits)``."""
     if len(total.limits) != 2 or not isinstance(total.function, sp.Mul):
         return []
     (first, low_a, high_a), (second, low_b, high_b) = total.limits
     if (low_a, high_a) != (low_b, high_b):
         return []
-    result = []
+    result: list[Nesting] = []
     for outer, inner_index, lims in (
         (first, second, (low_a, high_a)),
         (second, first, (low_b, high_b)),
@@ -145,16 +159,16 @@ def _orientations_pair(total):
     return result
 
 
-def _orientations(total, general):
+def _orientations(total: sp.Sum, general: bool) -> list[Nesting]:
     """Return the nestings of ``total`` (general or double-sum form)."""
     if general:
         return _orientations_general(total)
     return _orientations_pair(total)
 
 
-def _vector_keys(staged, context):
+def _vector_keys(staged: Staged, context: _NestContext) -> set[sp.Basic]:
     """Return the keys of the vector sums the outputs already contain."""
-    vectors = set()
+    vectors: set[sp.Basic] = set()
     for _, _, expr in staged:
         for total in expr.atoms(sp.Sum):
             if len(total.limits) == 1 and _free_indices(total):
@@ -162,9 +176,11 @@ def _vector_keys(staged, context):
     return vectors
 
 
-def _inner_key_counts(staged, context):
+def _inner_key_counts(
+    staged: Staged, context: _NestContext
+) -> dict[sp.Basic, int]:
     """Count, per inner-sum key, the sums that can nest onto it."""
-    counts = {}
+    counts: dict[sp.Basic, int] = {}
     for _, _, expr in staged:
         for total in expr.atoms(sp.Sum):
             options = _orientations(total, context.general)
@@ -173,7 +189,7 @@ def _inner_key_counts(staged, context):
     return counts
 
 
-def _nest_by_cost(total, context):
+def _nest_by_cost(total: sp.Sum, context: _NestContext) -> sp.Sum | None:
     """Nest by cost: fewest free indices inside, most factors outside."""
     options = sorted(
         _orientations(total, context.general),
@@ -185,7 +201,9 @@ def _nest_by_cost(total, context):
     return sp.Sum(sp.Mul(*outer_factors) * inner, *outer_limits)
 
 
-def _nest_sum(total, context, choice):
+def _nest_sum(
+    total: sp.Sum, context: _NestContext, choice: _NestChoice
+) -> sp.Sum | None:
     """Return ``total`` nested onto a shared inner sum, or ``None``."""
     options = [
         o
@@ -212,10 +230,12 @@ def _nest_sum(total, context, choice):
     return sp.Sum(sp.Mul(*outer_factors) * inner, (outer, *lims))
 
 
-def _nest_expression(expr, context, choice):
+def _nest_expression(
+    expr: sp.Expr, context: _NestContext, choice: _NestChoice
+) -> sp.Expr:
     """Nest the sums of ``expr`` repeatedly (up to three rounds if general)."""
     for _ in range(3 if context.general else 1):
-        replacements = {}
+        replacements: dict[sp.Sum, sp.Sum] = {}
         for total in expr.atoms(sp.Sum):
             nested = _nest_sum(total, context, choice)
             if nested is not None:
@@ -227,15 +247,15 @@ def _nest_expression(expr, context, choice):
 
 
 def _nest_double_sums(
-    staged,
-    indexes,
-    symmetric_params=(),
-    shared_inner=False,
-    general=False,
-    cost=False,
+    staged: Staged,
+    indexes: Sequence[sp.Idx],
+    symmetric_params: tuple[str, ...] = (),
+    shared_inner: bool = False,
+    general: bool = False,
+    cost: bool = False,
     *,
-    sym_rank3,
-):
+    sym_rank3: bool,
+) -> Staged:
     """Rewrite double sums as dot products with existing vector sums.
 
     ``sum_k sum_l n(k)*n(l)*m(k,l)`` equals ``sum_k n(k)*v(k)`` with
@@ -255,7 +275,8 @@ def _nest_double_sums(
     context = _NestContext(indexes, symmetric_params, sym_rank3, general)
     # factors that do not depend on the bound indices leave the sums first
     staged = [
-        (attr, out_name, factor_sums(expr)) for attr, out_name, expr in staged
+        (attr, out_name, factor_sums(expr))  # type: ignore[no-untyped-call]
+        for attr, out_name, expr in staged
     ]
     vectors = _vector_keys(staged, context)
     # inner sums shared by several double sums are worth a vector too
@@ -291,12 +312,12 @@ class _FuseSettings(NamedTuple):
     keep_libm: bool
 
 
-def _temp_refs(expr, name) -> list:
+def _temp_refs(expr: sp.Basic, name: str) -> list[sp.Indexed]:
     """Return the reads of the array ``name`` inside ``expr``."""
     return [x for x in expr.atoms(sp.Indexed) if str(x.base) == name]
 
 
-def _read_outside_sums(expr, name) -> bool:
+def _read_outside_sums(expr: sp.Basic, name: str) -> bool:
     """Whether ``expr`` reads the array ``name`` outside every summation."""
     if isinstance(expr, sp.Sum):
         return False
@@ -307,14 +328,14 @@ def _read_outside_sums(expr, name) -> bool:
     )
 
 
-def _free_alpha_key(total):
+def _free_alpha_key(total: sp.Sum) -> sp.Basic:
     """Return the alpha key of a summation with its free indices renamed."""
     free = sorted(_free_indices(total), key=str)
     mapping = {index: sp.Idx(f"_free{pos}") for pos, index in enumerate(free)}
     return _alpha_key(total.xreplace(mapping))
 
 
-def _direct_reads(total, name) -> list:
+def _direct_reads(total: sp.Sum, name: str) -> list[sp.Indexed]:
     """Return the reads of ``name`` in a summation outside its inner sums."""
     body = total.function
     return [
@@ -326,14 +347,14 @@ def _direct_reads(total, name) -> list:
     ]
 
 
-def _read_weight(exprs, name, dedup) -> float:
+def _read_weight(exprs: Sequence[sp.Expr], name: str, dedup: bool) -> float:
     """Return how many times each element of ``name`` is read.
 
     Diagonal reads count 0, a triangular (folded) summation 1/2 and a full
     summation 1.  With ``dedup`` equal summations count once.
     """
     weight = 0.0
-    seen_keys = set()
+    seen_keys: set[sp.Basic] = set()
     for expr in exprs:
         for total in expr.atoms(sp.Sum):
             key = _free_alpha_key(total)
@@ -352,12 +373,12 @@ def _read_weight(exprs, name, dedup) -> float:
     return weight
 
 
-def _direct_sum_count(exprs, name) -> int:
+def _direct_sum_count(exprs: Sequence[sp.Expr], name: str) -> int:
     """Count the distinct summations that read ``name`` in their own body.
 
     Distinct means by alpha key; nested summations are included.
     """
-    keys = set()
+    keys: set[sp.Basic] = set()
     for expr in exprs:
         for total in expr.atoms(sp.Sum):
             if _direct_reads(total, name):
@@ -365,7 +386,7 @@ def _direct_sum_count(exprs, name) -> int:
     return len(keys)
 
 
-def _has_pair_libm(body, free) -> bool:
+def _has_pair_libm(body: sp.Expr, free: Iterable[sp.Idx]) -> bool:
     """Whether ``body`` has a libm call that depends on both pair indices.
 
     A separable ``sqrt(e_i)*sqrt(e_j)`` is hoisted into vectors later
@@ -383,7 +404,7 @@ def _has_pair_libm(body, free) -> bool:
     return False
 
 
-def _only_vector_reads(exprs, name) -> bool:
+def _only_vector_reads(exprs: Sequence[sp.Expr], name: str) -> bool:
     """Whether every summation reading ``name`` directly keeps a free index.
 
     A table read by scalar double sums is better inlined
@@ -400,7 +421,9 @@ def _only_vector_reads(exprs, name) -> bool:
     return found
 
 
-def _inline_read(expr, name, body, free):
+def _inline_read(
+    expr: sp.Expr, name: str, body: sp.Expr, free: Sequence[sp.Idx]
+) -> sp.Expr:
     """Substitute the body of the table ``name`` into its reads in ``expr``."""
     mapping = {
         x: body.xreplace(dict(zip(free, x.indices)))
@@ -409,7 +432,12 @@ def _inline_read(expr, name, body, free):
     return expr.xreplace(mapping) if mapping else expr
 
 
-def _keeps_for_cost(definition, name, exprs, settings) -> bool:
+def _keeps_for_cost(
+    definition: TempDef,
+    name: str,
+    exprs: Sequence[sp.Expr],
+    settings: _FuseSettings,
+) -> bool:
     """Whether the cost of the table ``name`` argues against inlining it."""
     body = definition.body
     expensive = _is_expensive(body)
@@ -433,7 +461,12 @@ def _keeps_for_cost(definition, name, exprs, settings) -> bool:
     return not cheap and _read_weight(exprs, name, settings.dedup) > 1
 
 
-def _try_inline_temporary(definition, array_defs, exprs, settings):
+def _try_inline_temporary(
+    definition: TempDef,
+    array_defs: list[TempDef],
+    exprs: list[sp.Expr],
+    settings: _FuseSettings,
+) -> tuple[list[sp.Expr], str | None]:
     """Inline one rank-2 temporary if its reads allow it.
 
     Parameters
@@ -481,8 +514,12 @@ def _try_inline_temporary(definition, array_defs, exprs, settings):
 
 
 def _fuse_temporaries(
-    array_defs, exprs, dedup=False, guard=False, keep_libm=False
-):
+    array_defs: list[TempDef],
+    exprs: Sequence[sp.Expr],
+    dedup: bool = False,
+    guard: bool = False,
+    keep_libm: bool = False,
+) -> tuple[list[TempDef], list[sp.Expr], set[str]]:
     """Inline cheap rank-2 array temporaries read only inside summations.
 
     The indexed CSE materialises ``t(p,q) = n(q)*m(p,q)`` when the product
@@ -501,7 +538,7 @@ def _fuse_temporaries(
     """
     settings = _FuseSettings(dedup, guard, keep_libm)
     exprs = list(exprs)
-    removed = set()
+    removed: set[str] = set()
     changed = True
     while changed:
         changed = False
@@ -515,7 +552,7 @@ def _fuse_temporaries(
     return array_defs, exprs, removed
 
 
-def _prefers_column_order(definition):
+def _prefers_column_order(definition: TempDef) -> bool:
     """Whether a rank-1 sum or a rank-2 table reads its arrays by rows.
 
     In ``t(f) = sum_b M(f, b) x(b)`` the natural nest (``f`` outer, ``b``
@@ -563,7 +600,9 @@ def _prefers_column_order(definition):
     return False
 
 
-def _prefers_column_sum(definition, symmetric_params=()):
+def _prefers_column_sum(
+    definition: TempDef, symmetric_params: Iterable[str] = ()
+) -> bool:
     """Whether a rank-2 sum ``t(p, q) = sum_b B`` reads its tables by rows.
 
     ``sum_b G(p, b) H(q, b) w(b)`` (the subscript order of ``table_layout``)
@@ -597,7 +636,7 @@ def _prefers_column_sum(definition, symmetric_params=()):
     return last > first
 
 
-def _is_simple_nest(definition) -> bool:
+def _is_simple_nest(definition: TempDef) -> bool:
     """Whether a vector sum has the plain loop structure of a fusable nest."""
     if len(definition.free) != 1 or len(definition.limits) != 1:
         return False
@@ -612,7 +651,7 @@ def _is_simple_nest(definition) -> bool:
     )
 
 
-def _rename_nest(definition, first):
+def _rename_nest(definition: TempDef, first: TempDef) -> TempDef:
     """Return a copy of a vector sum over the indices of ``first``."""
     free_index, bound_index = first.free[0], first.limits[0][0]
     renamed = definition.copy()
@@ -627,7 +666,9 @@ def _rename_nest(definition, first):
     return renamed
 
 
-def _joins_nest_group(definition, renamed, group) -> bool:
+def _joins_nest_group(
+    definition: TempDef, renamed: TempDef, group: list[TempDef]
+) -> bool:
     """Whether ``renamed`` may join the group: independent, same order."""
     names = {_temp_name(member.target) for member in group}
     depends = any(str(x.base) in names for x in renamed.body.atoms(sp.Indexed))
@@ -635,7 +676,7 @@ def _joins_nest_group(definition, renamed, group) -> bool:
     return not depends and same_order
 
 
-def _flush_nest_group(out, group) -> None:
+def _flush_nest_group(out: list[TempDef], group: list[TempDef]) -> None:
     """Append the open group to ``out`` (one nest if it has several)."""
     if len(group) <= 1:
         out.extend(group)
@@ -652,7 +693,9 @@ def _flush_nest_group(out, group) -> None:
     group.clear()
 
 
-def _fuse_loop_nests(definitions, namer):
+def _fuse_loop_nests(
+    definitions: Iterable[TempDef], namer: Namer
+) -> list[TempDef]:
     """Merge consecutive vector sums that share their loop structure.
 
     ``v1(f) = sum_b B1``, ``v2(f) = sum_b B2``, ... computed one after the
@@ -662,8 +705,8 @@ def _fuse_loop_nests(definitions, namer):
     index, no special rendering, and no dependence on each other are
     merged.
     """
-    out = []
-    group = []
+    out: list[TempDef] = []
+    group: list[TempDef] = []
     for definition in definitions:
         simple = _is_simple_nest(definition)
         if simple and group:
@@ -681,7 +724,7 @@ def _fuse_loop_nests(definitions, namer):
     return out
 
 
-def _loop_order(definition):
+def _loop_order(definition: TempDef) -> list[sp.Idx] | None:
     """Loop variables of a rendered definition, outermost first (None if unknown)."""
     free = list(definition.free)
     bound = [lim[0] for lim in definition.limits]
@@ -704,14 +747,16 @@ def _loop_order(definition):
     return free + bound
 
 
-def _permute_body(body, order, names):
+def _permute_body(
+    body: sp.Expr, order: Sequence[sp.Idx], names: set[str]
+) -> sp.Expr:
     """Order the subscripts of the symmetric arrays in ``body`` by depth.
 
     ``order`` lists the loop variables, outermost first; a subscript tuple
     is rewritten only when all its indices are loop variables.
     """
     depth = {idx: k for k, idx in enumerate(order)}
-    replacements = {}
+    replacements: dict[sp.Indexed, sp.Indexed] = {}
     for indexed in body.atoms(sp.Indexed):
         if str(indexed.base) not in names or len(indexed.indices) < 2:
             continue
@@ -723,7 +768,7 @@ def _permute_body(body, order, names):
     return body.xreplace(replacements) if replacements else body
 
 
-def _nest_members(definition) -> list:
+def _nest_members(definition: TempDef) -> list[TempDef]:
     """Return the records whose bodies a nest renders (itself if plain)."""
     if isinstance(definition, FusedNest):
         return definition.fused
@@ -732,7 +777,9 @@ def _nest_members(definition) -> list:
     return [definition]
 
 
-def _permute_symmetric_subscripts(definitions, symmetric_params):
+def _permute_symmetric_subscripts(
+    definitions: list[TempDef], symmetric_params: Iterable[str]
+) -> list[TempDef]:
     """Order the subscripts of symmetric parameters by loop depth.
 
     A parameter declared ``symmetric`` has the same value under any
@@ -754,7 +801,7 @@ def _permute_symmetric_subscripts(definitions, symmetric_params):
     return definitions
 
 
-def _is_fusable_map(definition) -> bool:
+def _is_fusable_map(definition: TempDef) -> bool:
     """Whether ``definition`` is a plain per-component map over ``1..nc``."""
     if len(definition.free) != 1 or definition.limits:
         return False
@@ -774,13 +821,13 @@ def _is_fusable_map(definition) -> bool:
     )
 
 
-def _reads_group(definition, group) -> bool:
+def _reads_group(definition: TempDef, group: list[TempDef]) -> bool:
     """Whether the body of ``definition`` reads an array defined in group."""
     names = {_temp_name(member.target) for member in group}
     return any(str(x.base) in names for x in definition.body.atoms(sp.Indexed))
 
 
-def _is_independent_scalar(definition, group) -> bool:
+def _is_independent_scalar(definition: TempDef, group: list[TempDef]) -> bool:
     """Whether a non-map definition may move ahead of the open group."""
     scalar = (
         not definition.free
@@ -795,7 +842,7 @@ def _is_independent_scalar(definition, group) -> bool:
     return bool(group) and scalar and not _reads_group(definition, group)
 
 
-def _rename_map(definition, index):
+def _rename_map(definition: TempDef, index: sp.Idx) -> TempDef:
     """Return a copy of a map with its free index renamed to ``index``."""
     renamed = definition.copy()
     mapping = {definition.free[0]: index}
@@ -805,7 +852,9 @@ def _rename_map(definition, index):
     return renamed
 
 
-def _reads_group_at_element(renamed, group, index) -> bool:
+def _reads_group_at_element(
+    renamed: TempDef, group: list[TempDef], index: sp.Idx
+) -> bool:
     """Whether every read of a group member in ``renamed`` is at ``index``."""
     names = {_temp_name(member.target) for member in group}
     return all(
@@ -815,16 +864,18 @@ def _reads_group_at_element(renamed, group, index) -> bool:
     )
 
 
-def _cse_symbols(namer):
+def _cse_symbols(namer: Namer) -> Iterator[sp.Symbol]:
     """Yield the names of the loop-local scalars, drawn lazily."""
     while True:
         yield sp.Symbol(str(namer("t")))
 
 
-def _order_steps(pending, needed):
+def _order_steps(
+    pending: list[tuple[str, sp.Basic, sp.Basic]], needed: set[sp.Basic]
+) -> list[tuple[str, sp.Basic, sp.Basic]]:
     """Order the ``(kind, symbol, value)`` items by their dependencies."""
-    known = set()
-    steps = []
+    known: set[sp.Basic] = set()
+    steps: list[tuple[str, sp.Basic, sp.Basic]] = []
     while pending:
         for item in pending:
             deps = item[2].free_symbols & needed
@@ -838,7 +889,7 @@ def _order_steps(pending, needed):
     return steps
 
 
-def _fuse_map_group(group, namer):
+def _fuse_map_group(group: list[TempDef], namer: Namer) -> ComponentFusedMap:
     """Fuse a group of two or more maps into a :class:`ComponentFusedMap`.
 
     Member values read by later members become placeholders, so the
@@ -873,7 +924,9 @@ def _fuse_map_group(group, namer):
     )
 
 
-def _to_holders(expr, holder_of, index):
+def _to_holders(
+    expr: sp.Expr, holder_of: dict[str, sp.Dummy], index: sp.Idx
+) -> sp.Expr:
     """Replace the reads of group members at ``index`` by placeholders."""
     return expr.xreplace(
         {
@@ -884,7 +937,9 @@ def _to_holders(expr, holder_of, index):
     )
 
 
-def _flush_map_group(out, group, namer) -> None:
+def _flush_map_group(
+    out: list[TempDef], group: list[TempDef], namer: Namer
+) -> None:
     """Append the open group to ``out`` (fused if it has several maps)."""
     if len(group) <= 1:
         out.extend(group)
@@ -893,7 +948,9 @@ def _flush_map_group(out, group, namer) -> None:
     group.clear()
 
 
-def _fuse_component_maps(definitions, namer):
+def _fuse_component_maps(
+    definitions: Iterable[TempDef], namer: Namer
+) -> list[TempDef]:
     """Fuse consecutive per-component maps into one loop with per-element CSE.
 
     ``cmp0(i) = f(i)``, ``cmp0_T(i) = f'(i)``, ``cmp0_TT(i) = f''(i)``, ...
@@ -905,8 +962,8 @@ def _fuse_component_maps(definitions, namer):
     bodies of one element computes every shared sub-expression once, into
     loop-local scalars.
     """
-    out = []
-    group = []
+    out: list[TempDef] = []
+    group: list[TempDef] = []
     for definition in definitions:
         if not _is_fusable_map(definition):
             if _is_independent_scalar(definition, group):
@@ -933,7 +990,7 @@ _MAP = "map"
 _REDUCTION = "red"
 
 
-def _is_plain_outer_candidate(definition):
+def _is_plain_outer_candidate(definition: TempDef) -> bool:
     """Whether ``definition`` has no annotation that blocks outer fusion.
 
     Parameters
@@ -963,7 +1020,7 @@ def _is_plain_outer_candidate(definition):
     )
 
 
-def _outer_kind(definition):
+def _outer_kind(definition: TempDef) -> str | None:
     """Classify a definition for outer-loop fusion.
 
     Parameters
@@ -994,14 +1051,14 @@ def _outer_kind(definition):
     return None
 
 
-def _outer_index(definition):
+def _outer_index(definition: TempDef) -> sp.Idx:
     """Return the index of the loop that outer fusion would share."""
     if _outer_kind(definition) == _MAP:
         return definition.free[0]
     return definition.limits[0][0]
 
 
-def _is_libm_map(definition):
+def _is_libm_map(definition: TempDef) -> bool:
     """Whether ``definition`` is a map that calls a libm routine."""
     if _outer_kind(definition) != _MAP:
         return False
@@ -1010,12 +1067,12 @@ def _is_libm_map(definition):
     return _calls_libm(definition.body)
 
 
-def _is_double_reduction(definition):
+def _is_double_reduction(definition: TempDef) -> bool:
     """Whether ``definition`` is a reduction with an inner loop."""
     return _outer_kind(definition) == _REDUCTION and len(definition.limits) > 1
 
 
-def _is_libm_reduction(definition, libm_reductions):
+def _is_libm_reduction(definition: TempDef, libm_reductions: bool) -> bool:
     """Whether ``definition`` is a single reduction calling libm."""
     return (
         libm_reductions
@@ -1025,14 +1082,16 @@ def _is_libm_reduction(definition, libm_reductions):
     )
 
 
-def _is_libm_member(definition, libm_reductions):
+def _is_libm_member(definition: TempDef, libm_reductions: bool) -> bool:
     """Whether ``definition`` is a libm map or (optionally) reduction."""
     return _is_libm_map(definition) or _is_libm_reduction(
         definition, libm_reductions
     )
 
 
-def _libm_clash(definition, group, libm_reductions):
+def _libm_clash(
+    definition: TempDef, group: list[TempDef], libm_reductions: bool
+) -> bool:
     """Whether ``definition`` cannot join ``group`` under ``libm_guard``.
 
     Parameters
@@ -1058,14 +1117,16 @@ def _libm_clash(definition, group, libm_reductions):
     return False
 
 
-def _produced_names(definition):
+def _produced_names(definition: TempDef) -> set[str]:
     """Return the base names of the arrays ``definition`` writes."""
     if isinstance(definition, ComponentFusedMap):
         return {_temp_name(target) for target, _ in definition.members}
     return {_temp_name(definition.target)}
 
 
-def _outer_reads(definition):
+def _outer_reads(
+    definition: TempDef,
+) -> tuple[list[sp.Indexed], set[sp.Basic]]:
     """Return ``(indexed reads, free symbols)`` of a definition's values."""
     if isinstance(definition, ComponentFusedMap):
         values = [value for _k, _t, value in definition.steps]
@@ -1079,12 +1140,14 @@ def _outer_reads(definition):
     )
 
 
-def _loop_start_renames(definition, old, new):
+def _loop_start_renames(
+    definition: TempDef, old: sp.Idx, new: sp.Idx
+) -> dict[sp.Basic, sp.Basic]:
     """Return the substitution of ``old`` by ``new`` for a definition.
 
     The opaque lower bound ``old + 1`` of a triangular loop follows too.
     """
-    mapping = {old: new}
+    mapping: dict[sp.Basic, sp.Basic] = {old: new}
     for limit in definition.limits:
         for bound in (limit[1], limit[2]):
             for symbol in sp.sympify(bound).atoms(sp.Symbol):
@@ -1093,7 +1156,9 @@ def _loop_start_renames(definition, old, new):
     return mapping
 
 
-def _rename_outer_member(definition, old, new):
+def _rename_outer_member(
+    definition: TempDef, old: sp.Idx, new: sp.Idx
+) -> TempDef:
     """Return ``definition`` with the outer index ``old`` renamed ``new``.
 
     Parameters
@@ -1150,17 +1215,17 @@ class _OuterGroups:
         Members of the open group; cleared (same list object) on flush.
     """
 
-    def __init__(self):
-        self.out = []
-        self.group = []
+    def __init__(self) -> None:
+        self.out: list[TempDef] = []
+        self.group: list[TempDef] = []
 
-    def flush(self):
+    def flush(self) -> None:
         """Emit the open group, as an outer nest if it has 2+ members."""
         group = self.group
         if len(group) <= 1:
             self.out.extend(group)
         else:
-            limits = []
+            limits: list[Limit] = []
             for member in group:
                 limits += [lim for lim in member.limits if lim not in limits]
             self.out.append(
@@ -1176,7 +1241,13 @@ class _OuterGroups:
         group.clear()
 
 
-def _joined_member(definition, kind, group, libm_guard, libm_reductions):
+def _joined_member(
+    definition: TempDef,
+    kind: str,
+    group: list[TempDef],
+    libm_guard: bool,
+    libm_reductions: bool,
+) -> TempDef | None:
     """Return the renamed member that joins ``group``, or ``None``.
 
     Parameters
@@ -1223,7 +1294,7 @@ def _joined_member(definition, kind, group, libm_guard, libm_reductions):
     return None
 
 
-def _moves_ahead_of_group(definition, group):
+def _moves_ahead_of_group(definition: TempDef, group: list[TempDef]) -> bool:
     """Whether an unfusable definition is an independent scalar.
 
     Such a scalar is emitted before the open group instead of ending it.
@@ -1244,7 +1315,11 @@ def _moves_ahead_of_group(definition, group):
     return not reads_group
 
 
-def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
+def _fuse_outer_loops(
+    definitions: Iterable[TempDef],
+    libm_guard: bool = False,
+    libm_reductions: bool = False,
+) -> list[TempDef]:
     """Fuse consecutive loop nests that share the outer loop ``1..nc``.
 
     Per-component maps (``x(i) = ...``, fused or not) and scalar reductions
@@ -1287,7 +1362,9 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
 _VECTOR_SLOT = sp.Symbol("__slot")
 
 
-def _pair_readers(name, definitions, outputs):
+def _pair_readers(
+    name: str, definitions: Iterable[TempDef], outputs: Iterable[sp.Expr]
+) -> tuple[list[TempDef], list[sp.Expr]]:
     """Return the definitions and outputs that read the array ``name``."""
     readers = [
         d
@@ -1302,7 +1379,7 @@ def _pair_readers(name, definitions, outputs):
     return readers, outs
 
 
-def _is_triangular(definition) -> bool:
+def _is_triangular(definition: TempDef) -> bool:
     """Whether an inner limit starts at the outer loop index."""
     return any(
         isinstance(x, _LoopStart)
@@ -1311,7 +1388,7 @@ def _is_triangular(definition) -> bool:
     )
 
 
-def _is_plain_pair_table(table) -> bool:
+def _is_plain_pair_table(table: TempDef) -> bool:
     """Whether ``table`` is a rank-2 table that may be inlined.
 
     It has two free indexes and an indexed target, no summation, no layout
@@ -1337,7 +1414,9 @@ def _is_plain_pair_table(table) -> bool:
     )
 
 
-def _read_only_by_reductions(table, readers, outs) -> bool:
+def _read_only_by_reductions(
+    table: TempDef, readers: list[TempDef], outs: list[sp.Expr]
+) -> bool:
     """Whether the readers of ``table`` are scalar reductions only.
 
     At most one of them may be a double reduction, and when the table is
@@ -1353,7 +1432,9 @@ def _read_only_by_reductions(table, readers, outs) -> bool:
     return not (double and table.mirror and not _is_triangular(double[0]))
 
 
-def _find_droppable_table(definitions, outputs):
+def _find_droppable_table(
+    definitions: Sequence[TempDef], outputs: Iterable[sp.Expr]
+) -> tuple[TempDef, str, list[TempDef]] | None:
     """Return ``(table, name, readers)`` of the last droppable table.
 
     Returns ``None`` when no table qualifies.
@@ -1368,7 +1449,9 @@ def _find_droppable_table(definitions, outputs):
     return None
 
 
-def _inline_pair_table(table, name, readers) -> None:
+def _inline_pair_table(
+    table: TempDef, name: str, readers: list[TempDef]
+) -> None:
     """Substitute the body of ``table`` into its readers, in place."""
     free = table.free
     for reader in readers:
@@ -1382,7 +1465,11 @@ def _inline_pair_table(table, name, readers) -> None:
         reader.body = reader.body.xreplace(replacements)
 
 
-def _inline_pair_tables(definitions, outputs, arrays):
+def _inline_pair_tables(
+    definitions: list[TempDef],
+    outputs: Iterable[sp.Expr],
+    arrays: dict[str, int],
+) -> list[TempDef]:
     """Inline every droppable table; ``arrays`` loses the dropped ones."""
     while True:
         found = _find_droppable_table(definitions, outputs)
@@ -1394,7 +1481,14 @@ def _inline_pair_tables(definitions, outputs, arrays):
         arrays.pop(name, None)
 
 
-def _shared_inner_vector(only_inner, outer, inner, vectors, namer, arrays):
+def _shared_inner_vector(
+    only_inner: list[sp.Expr],
+    outer: sp.Idx,
+    inner: sp.Idx,
+    vectors: VectorTable,
+    namer: _Namer,
+    arrays: dict[str, int],
+) -> tuple[list[sp.Expr], list[TempDef]]:
     """Return ``(factors, new definitions)`` for a product over ``inner``.
 
     The product becomes a vector over ``outer`` (created unless an equal
@@ -1402,7 +1496,7 @@ def _shared_inner_vector(only_inner, outer, inner, vectors, namer, arrays):
     """
     product = sp.Mul(*only_inner)
     key = product.xreplace({inner: _VECTOR_SLOT})
-    created = []
+    created: list[TempDef] = []
     if key not in vectors:
         target = _new_shared_temp(namer, [outer], arrays)
         vectors[key] = target.base
@@ -1417,7 +1511,9 @@ def _shared_inner_vector(only_inner, outer, inner, vectors, namer, arrays):
     return [sp.Indexed(vectors[key], inner)], created
 
 
-def _outer_factors_with_vector(outer_factors, outer, vectors):
+def _outer_factors_with_vector(
+    outer_factors: list[sp.Expr], outer: sp.Idx, vectors: VectorTable
+) -> list[sp.Expr]:
     """Read an existing vector in place of a product over ``outer``."""
     only_outer = [f for f in outer_factors if f.atoms(sp.Idx) == {outer}]
     if len(only_outer) > 1:
@@ -1429,7 +1525,12 @@ def _outer_factors_with_vector(outer_factors, outer, vectors):
     return outer_factors
 
 
-def _factor_double_reduction(definition, vectors, namer, arrays):
+def _factor_double_reduction(
+    definition: TempDef,
+    vectors: VectorTable,
+    namer: _Namer,
+    arrays: dict[str, int],
+) -> list[TempDef]:
     """Return the definitions that replace a scalar double reduction.
 
     The factors independent of the inner index are applied once per outer
@@ -1451,7 +1552,7 @@ def _factor_double_reduction(definition, vectors, namer, arrays):
         return [definition]
     only_inner = [f for f in inner_factors if f.atoms(sp.Idx) == {inner}]
     rest = [f for f in inner_factors if f not in only_inner]
-    created = []
+    created: list[TempDef] = []
     if len(only_inner) > 1:
         only_inner, created = _shared_inner_vector(
             only_inner, outer, inner, vectors, namer, arrays
@@ -1465,7 +1566,7 @@ def _factor_double_reduction(definition, vectors, namer, arrays):
     return created + [factored]
 
 
-def _place_new_vectors(out, vectors) -> None:
+def _place_new_vectors(out: list[TempDef], vectors: VectorTable) -> None:
     """Move each new vector right after the definitions it reads.
 
     The double reductions then stay consecutive and share their inner
@@ -1484,7 +1585,12 @@ def _place_new_vectors(out, vectors) -> None:
         out.insert(position, vec)
 
 
-def _drop_pair_tables(definitions, outputs, namer, arrays):
+def _drop_pair_tables(
+    definitions: list[TempDef],
+    outputs: Iterable[sp.Expr],
+    namer: _Namer,
+    arrays: dict[str, int],
+) -> list[TempDef]:
     """Inline pair tables read only by scalar reductions; factor double sums.
 
     A rank-2 table ``M(a, b)`` without summation, whose body calls no libm
@@ -1504,8 +1610,8 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
     Returns the new definitions; ``arrays`` loses the dropped tables.
     """
     definitions = _inline_pair_tables(definitions, outputs, arrays)
-    vectors = {}
-    out = []
+    vectors: VectorTable = {}
+    out: list[TempDef] = []
     for definition in definitions:
         out.extend(
             _factor_double_reduction(definition, vectors, namer, arrays)
@@ -1520,7 +1626,7 @@ _PLAIN_SCALAR_FLAGS = frozenset(
 _ELEMENT_SLOT = sp.Idx("__elem")
 
 
-def _is_plain_scalar(definition) -> bool:
+def _is_plain_scalar(definition: TempDef) -> bool:
     """Whether ``definition`` is a plain scalar without a summation.
 
     Parameters
@@ -1543,7 +1649,12 @@ def _is_plain_scalar(definition) -> bool:
     )
 
 
-def _canonical_scalar(scalar, scalar_def, memo, max_ops):
+def _canonical_scalar(
+    scalar: sp.Symbol,
+    scalar_def: dict[sp.Basic, TempDef],
+    memo: dict[sp.Basic, sp.Expr],
+    max_ops: int,
+) -> sp.Expr:
     """Expand a plain scalar temporary into its recursive definition.
 
     Parameters
@@ -1579,7 +1690,7 @@ def _canonical_scalar(scalar, scalar_def, memo, max_ops):
     return value
 
 
-def _is_shareable_candidate(sub) -> bool:
+def _is_shareable_candidate(sub: sp.Basic) -> bool:
     """Whether ``sub`` is a rank-1 libm sub-expression worth sharing."""
     if not isinstance(sub, sp.Expr) or sub.is_Atom:
         return False
@@ -1592,7 +1703,12 @@ def _is_shareable_candidate(sub) -> bool:
     return len(sub.atoms(sp.Idx)) == 1 and _calls_libm(sub)
 
 
-def _occurrence_key(sub, scalar_def, memo, max_ops):
+def _occurrence_key(
+    sub: sp.Expr,
+    scalar_def: dict[sp.Basic, TempDef],
+    memo: dict[sp.Basic, sp.Expr],
+    max_ops: int,
+) -> sp.Expr:
     """Return ``sub`` with its index as a slot and scalars expanded."""
     (index,) = sub.atoms(sp.Idx)
     replacements = {
@@ -1603,12 +1719,12 @@ def _occurrence_key(sub, scalar_def, memo, max_ops):
     return sub.xreplace({index: _ELEMENT_SLOT}).xreplace(replacements)
 
 
-def _is_editable(definition) -> bool:
+def _is_editable(definition: TempDef) -> bool:
     """Whether the body of ``definition`` may be rewritten."""
     return definition.present_keys() <= _PLAIN_SCALAR_FLAGS
 
 
-def _is_component_map(defs, pos) -> bool:
+def _is_component_map(defs: Sequence[TempDef], pos: int) -> bool:
     """Whether site ``pos`` is a definition that is a per-component map."""
     if pos >= len(defs):
         return False
@@ -1642,17 +1758,17 @@ class _ShareState:
         Index in ``defs`` of every plain scalar definition.
     """
 
-    defs: list
-    outs: list
+    defs: list[TempDef]
+    outs: list[sp.Expr]
     max_ops: int
-    memo: dict = field(default_factory=dict)
-    touched: set = field(default_factory=set)
-    merged: set = field(default_factory=set)
-    sites: list = field(init=False)
-    scalar_def: dict = field(init=False)
-    position: dict = field(init=False)
+    memo: dict[sp.Basic, sp.Expr] = field(default_factory=dict)
+    touched: set[sp.Basic] = field(default_factory=set)
+    merged: set[sp.Basic] = field(default_factory=set)
+    sites: list[sp.Expr] = field(init=False)
+    scalar_def: dict[sp.Basic, TempDef] = field(init=False)
+    position: dict[sp.Basic, int] = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Index the plain scalars and collect the sites."""
         self.refresh()
 
@@ -1667,10 +1783,12 @@ class _ShareState:
         }
 
 
-def _collect_occurrences(state):
+def _collect_occurrences(
+    state: _ShareState,
+) -> dict[sp.Expr, list[tuple[int, sp.Expr]]]:
     """Group the shareable sub-expressions of every editable site by key."""
     n_defs = len(state.defs)
-    found = {}
+    found: dict[sp.Expr, list[tuple[int, sp.Expr]]] = {}
     for pos, expr in enumerate(state.sites):
         if pos < n_defs and not _is_editable(state.defs[pos]):
             continue
@@ -1683,7 +1801,10 @@ def _collect_occurrences(state):
     return found
 
 
-def _best_occurrences(found, defs):
+def _best_occurrences(
+    found: dict[sp.Expr, list[tuple[int, sp.Expr]]],
+    defs: Sequence[TempDef],
+) -> list[tuple[int, sp.Expr]] | None:
     """Return the occurrences of the key worth sharing, or ``None``.
 
     Per-component maps share per element anyway (``comp_fuse``): they do
@@ -1703,7 +1824,9 @@ def _best_occurrences(found, defs):
     return None if best is None else found[best]
 
 
-def _scalar_merges(occurrences, state):
+def _scalar_merges(
+    occurrences: list[tuple[int, sp.Expr]], state: _ShareState
+) -> dict[sp.Basic, sp.Basic]:
     """Map each later spelling of a scalar to the earliest equal one."""
     scalar_def = state.scalar_def
     rep_sub = occurrences[0][1]
@@ -1712,7 +1835,7 @@ def _scalar_merges(occurrences, state):
         for x in rep_sub.free_symbols
         if x in scalar_def
     }
-    merge = {}
+    merge: dict[sp.Basic, sp.Basic] = {}
     for _pos, sub in occurrences[1:]:
         for symbol in sub.free_symbols:
             if symbol not in scalar_def:
@@ -1732,10 +1855,12 @@ def _scalar_merges(occurrences, state):
     return merge
 
 
-def _resolve_merge_chains(merge):
+def _resolve_merge_chains(
+    merge: dict[sp.Basic, sp.Basic],
+) -> dict[sp.Basic, sp.Basic]:
     """Point every merged scalar at the end of its chain."""
 
-    def final(symbol):
+    def final(symbol: sp.Basic) -> sp.Basic:
         while symbol in merge:
             symbol = merge[symbol]
         return symbol
@@ -1743,7 +1868,12 @@ def _resolve_merge_chains(merge):
     return {symbol: final(symbol) for symbol in merge}
 
 
-def _share_occurrences(state, occurrences, namer, arrays):
+def _share_occurrences(
+    state: _ShareState,
+    occurrences: list[tuple[int, sp.Expr]],
+    namer: _Namer,
+    arrays: dict[str, int],
+) -> None:
     """Replace ``occurrences`` by a new vector placed before its first reader.
 
     Parameters
@@ -1762,7 +1892,7 @@ def _share_occurrences(state, occurrences, namer, arrays):
     merge = _scalar_merges(occurrences, state)
     target = _new_shared_temp(namer, [index0], arrays)
     vector = TempDef(target=target, free=[index0], limits=[], body=rep_sub)
-    replacements = {}
+    replacements: dict[int, dict[sp.Expr, sp.Indexed]] = {}
     for pos, sub in occurrences:
         (index,) = sub.atoms(sp.Idx)
         replacements.setdefault(pos, {})[sub] = sp.Indexed(target.base, index)
@@ -1778,7 +1908,12 @@ def _share_occurrences(state, occurrences, namer, arrays):
     _insert_vector(state, vector, first_pos, set(merge))
 
 
-def _insert_vector(state, vector, first_pos, dropped):
+def _insert_vector(
+    state: _ShareState,
+    vector: TempDef,
+    first_pos: int,
+    dropped: set[sp.Basic],
+) -> None:
     """Write the new sites back and insert ``vector`` before its reader."""
     n_defs = len(state.defs)
     new_sites = list(state.sites)
@@ -1793,10 +1928,10 @@ def _insert_vector(state, vector, first_pos, dropped):
     state.refresh()
 
 
-def _drop_dead_scalars(state) -> None:
+def _drop_dead_scalars(state: _ShareState) -> None:
     """Drop the touched plain scalars that nothing reads any more."""
     while True:
-        read = set()
+        read: set[sp.Basic] = set()
         for expr in [d.body for d in state.defs] + state.outs:
             read |= expr.free_symbols
         for d in state.defs:
@@ -1814,7 +1949,7 @@ def _drop_dead_scalars(state) -> None:
         state.defs = [d for d in state.defs if not any(d is x for x in dead)]
 
 
-def _undeclare_dropped(state, namer) -> None:
+def _undeclare_dropped(state: _ShareState, namer: _Namer) -> None:
     """Remove the dropped scalars from the namer's declarations."""
     alive = {d.target for d in state.defs} | {d.acc for d in state.defs}
     for expr in state.outs:
@@ -1823,7 +1958,13 @@ def _undeclare_dropped(state, namer) -> None:
     namer.created[:] = [s for s in namer.created if s not in dropped]
 
 
-def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
+def _share_elementwise(
+    definitions: Iterable[TempDef],
+    outputs: Iterable[sp.Expr],
+    namer: _Namer,
+    arrays: dict[str, int],
+    max_ops: int = 40,
+) -> tuple[list[TempDef], list[sp.Expr]]:
     """Share costly rank-1 sub-expressions between summations and outputs.
 
     ``log(t13*r(k))`` in the body of a scalar reduction over ``k`` and
@@ -1870,12 +2011,12 @@ class _DiagonalContext(NamedTuple):
         Also sort the subscripts of symmetric tensors of rank three.
     """
 
-    maps: dict
+    maps: dict[str, tuple[sp.Idx, sp.Expr]]
     symmetric_params: Sequence[str]
     sym_rank3: bool
 
 
-def _is_inlinable_map(definition) -> bool:
+def _is_inlinable_map(definition: TempDef) -> bool:
     """Whether ``definition`` is a plain rank-1 map without a summation."""
     return (
         len(definition.free) == 1
@@ -1893,9 +2034,11 @@ def _is_inlinable_map(definition) -> bool:
     )
 
 
-def _inline_maps(expr, maps):
+def _inline_maps(
+    expr: sp.Expr, maps: dict[str, tuple[sp.Idx, sp.Expr]]
+) -> sp.Expr:
     """Replace the reads of the maps in ``maps`` by their bodies."""
-    replacements = {}
+    replacements: dict[sp.Indexed, sp.Expr] = {}
     for indexed in expr.atoms(sp.Indexed):
         if str(indexed.base) in maps and len(indexed.indices) == 1:
             index, body = maps[str(indexed.base)]
@@ -1903,7 +2046,9 @@ def _inline_maps(expr, maps):
     return expr.xreplace(replacements) if replacements else expr
 
 
-def _canonical_diagonal_body(expr, context):
+def _canonical_diagonal_body(
+    expr: sp.Expr, context: _DiagonalContext
+) -> sp.Expr:
     """Expand ``expr`` after inlining the maps, symmetric subscripts sorted."""
     expr = sp.expand(_inline_maps(expr, context.maps))
     if context.symmetric_params:
@@ -1913,7 +2058,9 @@ def _canonical_diagonal_body(expr, context):
     return expr
 
 
-def _mirror_tables(definitions):
+def _mirror_tables(
+    definitions: Iterable[TempDef],
+) -> tuple[list[TempDef], dict[int, TempDef]]:
     """Return the rank-2 summed tables and the definition hosting each.
 
     Parameters
@@ -1927,7 +2074,8 @@ def _mirror_tables(definitions):
         ``(tables, owner)``: the tables, and a dict from ``id(table)`` to
         the definition that holds it (the sibling nest or the table itself).
     """
-    tables, owner = [], {}
+    tables: list[TempDef] = []
+    owner: dict[int, TempDef] = {}
     for definition in definitions:
         if isinstance(definition, SiblingNest):
             members = definition.sibling
@@ -1940,7 +2088,7 @@ def _mirror_tables(definitions):
     return tables, owner
 
 
-def _is_diagonal_candidate(definition) -> bool:
+def _is_diagonal_candidate(definition: TempDef) -> bool:
     """Whether ``definition`` is a plain rank-1 reduction over one index."""
     return not (
         len(definition.free) != 1
@@ -1953,7 +2101,11 @@ def _is_diagonal_candidate(definition) -> bool:
     )
 
 
-def _matching_table(definition, tables, context):
+def _matching_table(
+    definition: TempDef,
+    tables: Iterable[TempDef],
+    context: _DiagonalContext,
+) -> TempDef | None:
     """Return the first table whose diagonal equals ``definition``.
 
     Tables with other limits, another diagonal body, or a body that reads
@@ -1980,7 +2132,9 @@ def _matching_table(definition, tables, context):
     return None
 
 
-def _move_diagonal_after_table(out, definition, table, host) -> None:
+def _move_diagonal_after_table(
+    out: list[TempDef], definition: TempDef, table: TempDef, host: TempDef
+) -> None:
     """Replace ``definition`` by a read of ``table`` placed after ``host``.
 
     Nothing changes when a consumer of the definition sits between it and
@@ -2009,7 +2163,12 @@ def _move_diagonal_after_table(out, definition, table, host) -> None:
     out.insert(out.index(host) + 1, new)
 
 
-def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
+def _diagonal_from_tables(
+    definitions: list[TempDef],
+    symmetric_params: Sequence[str],
+    *,
+    sym_rank3: bool,
+) -> list[TempDef]:
     """Read the diagonal of an existing rank-2 table instead of recomputing it.
 
     ``d(k) = sum_m B(k, k, m)`` and ``t(a, b) = sum_m B(a, b, m)`` (filled in
@@ -2035,7 +2194,7 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
     return out
 
 
-def _is_sibling_table(definition) -> bool:
+def _is_sibling_table(definition: TempDef) -> bool:
     """Whether ``definition`` is a mirrored rank-2 table with one sum."""
     return bool(
         definition.mirror_sum
@@ -2046,23 +2205,23 @@ def _is_sibling_table(definition) -> bool:
     )
 
 
-def _reads_names(definition, names) -> bool:
+def _reads_names(definition: TempDef, names: set[str]) -> bool:
     """Whether the body of ``definition`` reads any of the ``names``."""
     return any(
         str(x.base) in names for x in definition.body.atoms(sp.Indexed)
     ) or any(str(sy) in names for sy in definition.body.free_symbols)
 
 
-def _target_names(definitions) -> set:
+def _target_names(definitions: Iterable[TempDef]) -> set[str]:
     """Return the names of the temporaries the definitions produce."""
-    names = set()
+    names: set[str] = set()
     for definition in definitions:
         if definition.target is not None:
             names.add(_temp_name(definition.target))
     return names
 
 
-def _rename_sibling(definition, first):
+def _rename_sibling(definition: TempDef, first: TempDef) -> TempDef:
     """Return a copy of a table over the indices of the group's first one."""
     (first_a, first_b), (first_m, _, _) = first.free, first.limits[0]
     mapping = {
@@ -2078,7 +2237,12 @@ def _rename_sibling(definition, first):
     return renamed
 
 
-def _flush_sibling_group(out, group, waiting, namer) -> None:
+def _flush_sibling_group(
+    out: list[TempDef],
+    group: list[TempDef],
+    waiting: list[TempDef],
+    namer: Namer,
+) -> None:
     """Append the open group, then the waiting definitions, to ``out``.
 
     A group of several tables becomes a :class:`SiblingNest` and draws one
@@ -2102,7 +2266,9 @@ def _flush_sibling_group(out, group, waiting, namer) -> None:
     waiting.clear()
 
 
-def _fuse_sibling_tables(definitions, namer):
+def _fuse_sibling_tables(
+    definitions: Iterable[TempDef], namer: Namer
+) -> list[TempDef]:
     """One nest for symmetric rank-2 tables with the same loops.
 
     ``t5(k, l) = sum_m A``, ``t7(k, l) = sum_m B`` (triangle + mirror) become
@@ -2111,7 +2277,9 @@ def _fuse_sibling_tables(definitions, namer):
     between two such tables that do not read the first one are emitted
     after the fused nest, unless the second table reads them.
     """
-    out, group, waiting = [], [], []
+    out: list[TempDef] = []
+    group: list[TempDef] = []
+    waiting: list[TempDef] = []
     for definition in definitions:
         if _is_sibling_table(definition) and group:
             renamed = _rename_sibling(definition, group[0])
@@ -2135,7 +2303,9 @@ def _fuse_sibling_tables(definitions, namer):
     return out
 
 
-def _split_accumulators(definitions, namer):
+def _split_accumulators(
+    definitions: Iterable[TempDef], namer: Namer
+) -> list[TempDef]:
     """Mark the O(N^3) nests (``split_acc=2``).
 
     A symmetric rank-2 table filled by a sum whose body reads a parameter of
@@ -2145,11 +2315,11 @@ def _split_accumulators(definitions, namer):
     renders the same loops with a scalar accumulator.
     """
 
-    def rank3(body):
+    def rank3(body: sp.Expr) -> bool:
         return any(len(x.indices) >= 3 for x in body.atoms(sp.Indexed))
 
-    def lone(d):
-        return (
+    def lone(d: TempDef) -> bool:
+        return bool(
             d.mirror_sum
             and len(d.free) == 2
             and len(d.limits) == 1
@@ -2158,7 +2328,7 @@ def _split_accumulators(definitions, namer):
             <= {"target", "free", "limits", "body", "mirror_sum"}
         )
 
-    out = []
+    out: list[TempDef] = []
     for d in definitions:
         if isinstance(d, SiblingNest) and any(
             rank3(g.body) for g in d.sibling
