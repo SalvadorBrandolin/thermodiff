@@ -314,6 +314,160 @@ def _lowrank_bilinear(expr, free, namer, arrays):
     return sp.Add(*new_terms), definitions
 
 
+def _loop_names_in_use(definitions, outputs, arrays, reserved):
+    """Lower-cased names already used by the definitions and the outputs.
+
+    Parameters
+    ----------
+    definitions : list of TempDef
+        Temporaries in dependency order.
+    outputs : list of (expr, free_order)
+        Output residuals.
+    arrays : dict
+        Array temporaries created so far (their names are read here).
+    reserved : iterable
+        Extra names that must stay free.
+
+    Returns
+    -------
+    set of str
+    """
+    used = {"nc", "res"} | {str(x).lower() for x in reserved}
+    for definition in definitions:
+        used |= {str(x).lower() for x in definition.body.atoms(sp.Symbol)}
+        used |= {str(x).lower() for x in definition.body.atoms(sp.IndexedBase)}
+        used |= {str(x).lower() for x in definition.free}
+    for expr, _ in outputs:
+        used |= {str(x).lower() for x in expr.atoms(sp.Symbol)}
+    used |= {str(name).lower() for name in arrays}
+    return used
+
+
+def _loop_aux_slots(definitions, outputs, arrays, reserved):
+    """Auxiliary index slots whose names are not in use.
+
+    Returns
+    -------
+    list of sympy.Idx
+    """
+    used = _loop_names_in_use(definitions, outputs, arrays, reserved)
+    return [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
+
+
+def _has_unhoistable_shape(sub):
+    """Whether ``sub`` can never become a loop-invariant temporary."""
+    if not isinstance(sub, sp.Expr) or sub.is_Atom or sub.is_Number:
+        return True
+    if isinstance(sub, (sp.Indexed, sp.Sum)) or sub.has(sp.Sum):
+        return True
+    if sub.has(sp.Piecewise) or sub.is_Relational or sub.is_Boolean:
+        return True
+    return any(isinstance(x, _LoopStart) for x in sub.atoms(sp.Symbol))
+
+
+def _is_loop_candidate(sub, bound):
+    """Whether ``sub`` is worth a temporary hoisted out of the loops."""
+    if _has_unhoistable_shape(sub):
+        return False
+    indices = set(_index_symbols(sub))
+    if indices >= bound or len(indices) > _MAX_ARRAY_CSE_RANK:
+        return False
+    if not indices:
+        return True
+    return _is_expensive(sub) or sp.count_ops(sub) >= 3
+
+
+class _LoopHoister:
+    """Per-call state of :func:`_hoist_loop_invariants`.
+
+    Parameters
+    ----------
+    namer : _Namer
+        Generator of temporary names; called by :meth:`make` only, in the
+        depth-first order of :meth:`rewrite`.
+    arrays : dict
+        Records the rank of every array temporary created.
+    slots : list of sympy.Idx
+        Auxiliary indices used to canonicalise the temporaries.
+
+    Attributes
+    ----------
+    temps : dict
+        Canonical body -> target; a per-call cache.
+    pending : list of TempDef
+        Temporaries created and not yet placed before a definition.
+    """
+
+    def __init__(self, namer, arrays, slots):
+        self.namer = namer
+        self.arrays = arrays
+        self.slots = slots
+        self.temps = {}
+        self.pending = []
+
+    def flush(self):
+        """Return the pending temporaries and clear the list."""
+        flushed = list(self.pending)
+        self.pending.clear()
+        return flushed
+
+    def make(self, sub):
+        """Return the reference to the temporary holding ``sub``."""
+        indices = _index_symbols(sub)
+        mapping = {index: self.slots[pos] for pos, index in enumerate(indices)}
+        canon = sub.xreplace(mapping)
+        if canon not in self.temps:
+            free = self.slots[: len(indices)]
+            target = _new_shared_temp(self.namer, free, self.arrays)
+            self.pending.append(
+                TempDef(target=target, free=free, limits=[], body=canon)
+            )
+            self.temps[canon] = target
+        target = self.temps[canon]
+        return target if not indices else sp.Indexed(target.base, *indices)
+
+    def rewrite(self, sub, bound):
+        """Replace the hoistable parts of ``sub`` by temporaries."""
+        if _is_loop_candidate(sub, bound):
+            return self.make(sub)
+        if not getattr(sub, "args", ()) or isinstance(
+            sub, (sp.Indexed, sp.Idx)
+        ):
+            return sub
+        if isinstance(sub, (sp.Sum, sp.Piecewise)):
+            return sub
+        if isinstance(sub, (sp.Mul, sp.Add)):
+            return self._rewrite_terms(sub, bound)
+        return sub.func(*[self.rewrite(arg, bound) for arg in sub.args])
+
+    def _rewrite_terms(self, sub, bound):
+        """Rewrite a product or sum, grouping the arguments by indices."""
+        groups = {}
+        rest = []
+        for arg in sub.args:
+            key = frozenset(_index_symbols(arg))
+            if (
+                key >= bound
+                or arg.has(sp.Sum)
+                or arg.is_Number
+                or arg.has(sp.Piecewise)
+            ):
+                rest.append(self.rewrite(arg, bound))
+            else:
+                groups.setdefault(key, []).append(arg)
+        new = list(rest)
+        for key in sorted(groups, key=lambda x: sorted(map(str, x))):
+            new.extend(self._rewrite_group(sub.func, groups[key], bound))
+        return sub.func(*new)
+
+    def _rewrite_group(self, func, members, bound):
+        """Rewrite the arguments of one index group; combine if possible."""
+        combined = func(*members)
+        if len(members) > 1 and _is_loop_candidate(combined, bound):
+            return [self.make(combined)]
+        return [self.rewrite(arg, bound) for arg in members]
+
+
 def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
     """Move loop invariants out of the loops over free indices.
 
@@ -343,98 +497,22 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
     definitions : list of dict
     outputs : list of sympy expressions
     """
-    used = {"nc", "res"} | {str(x).lower() for x in reserved}
-    for definition in definitions:
-        used |= {str(x).lower() for x in definition.body.atoms(sp.Symbol)}
-        used |= {str(x).lower() for x in definition.body.atoms(sp.IndexedBase)}
-        used |= {str(x).lower() for x in definition.free}
-    for expr, _ in outputs:
-        used |= {str(x).lower() for x in expr.atoms(sp.Symbol)}
-    used |= {str(name).lower() for name in arrays}
-    slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
-    temps = {}
-    pending = []
-
-    def make(sub):
-        indices = _index_symbols(sub)
-        mapping = {index: slots[pos] for pos, index in enumerate(indices)}
-        canon = sub.xreplace(mapping)
-        if canon not in temps:
-            free = slots[: len(indices)]
-            target = _new_shared_temp(namer, free, arrays)
-            pending.append(
-                TempDef(target=target, free=free, limits=[], body=canon)
-            )
-            temps[canon] = target
-        target = temps[canon]
-        return target if not indices else sp.Indexed(target.base, *indices)
-
-    def candidate(sub, bound):
-        if not isinstance(sub, sp.Expr) or sub.is_Atom or sub.is_Number:
-            return False
-        if isinstance(sub, (sp.Indexed, sp.Sum)) or sub.has(sp.Sum):
-            return False
-        if sub.has(sp.Piecewise) or sub.is_Relational or sub.is_Boolean:
-            return False
-        if any(isinstance(x, _LoopStart) for x in sub.atoms(sp.Symbol)):
-            return False
-        indices = set(_index_symbols(sub))
-        if indices >= bound or len(indices) > _MAX_ARRAY_CSE_RANK:
-            return False
-        if not indices:
-            return True
-        return _is_expensive(sub) or sp.count_ops(sub) >= 3
-
-    def rewrite(sub, bound):
-        if candidate(sub, bound):
-            return make(sub)
-        if not getattr(sub, "args", ()) or isinstance(
-            sub, (sp.Indexed, sp.Idx)
-        ):
-            return sub
-        if isinstance(sub, sp.Sum) or isinstance(sub, sp.Piecewise):
-            return sub
-        if isinstance(sub, (sp.Mul, sp.Add)):
-            groups = {}
-            rest = []
-            for arg in sub.args:
-                key = frozenset(_index_symbols(arg))
-                if (
-                    key >= bound
-                    or arg.has(sp.Sum)
-                    or arg.is_Number
-                    or arg.has(sp.Piecewise)
-                ):
-                    rest.append(rewrite(arg, bound))
-                else:
-                    groups.setdefault(key, []).append(arg)
-            new = list(rest)
-            for key in sorted(groups, key=lambda x: sorted(map(str, x))):
-                members = groups[key]
-                combined = sub.func(*members)
-                if len(members) > 1 and candidate(combined, bound):
-                    new.append(make(combined))
-                else:
-                    new.extend(rewrite(arg, bound) for arg in members)
-            return sub.func(*new)
-        return sub.func(*[rewrite(arg, bound) for arg in sub.args])
-
+    slots = _loop_aux_slots(definitions, outputs, arrays, reserved)
+    hoister = _LoopHoister(namer, arrays, slots)
     new_definitions = []
     for definition in definitions:
         bound = set(definition.free) | {lim[0] for lim in definition.limits}
         if bound:
             body = _collect_terms(definition.body)
-            definition = definition.copy(body=rewrite(body, bound))
-            new_definitions.extend(pending)
-            pending.clear()
+            definition = definition.copy(body=hoister.rewrite(body, bound))
+            new_definitions.extend(hoister.flush())
         new_definitions.append(definition)
     new_outputs = []
     for expr, free in outputs:
         if free:
-            expr = rewrite(_collect_terms(expr), set(free))
+            expr = hoister.rewrite(_collect_terms(expr), set(free))
         new_outputs.append(expr)
-    new_definitions.extend(pending)
-    pending.clear()
+    new_definitions.extend(hoister.flush())
     return new_definitions, new_outputs
 
 
