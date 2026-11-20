@@ -325,159 +325,276 @@ def abstract_component_functions(
     ``scheme`` gives the slot indices and array prefixes of the new
     functions (:class:`NameScheme`).
     """
-    from thermodiff.fortran import _canonical_symmetric, _swap
-
-    def plain(arg):
-        # only functions of T (and parameters): V and P dependence would be
-        # lost, because the abstract functions are differentiated in T only
-        return (
-            _mole_free(arg)
-            and not arg.has(sp.Sum)
-            and not arg.has(sp.Piecewise)
-            and not arg.has(V)
-            and not arg.has(P)
-        )
-
-    def make(body, indices):
-        indices = sorted(indices, key=str)
-        if len(indices) == 1:
-            canon = body.xreplace({indices[0]: scheme.component_slot})
-            key = ("c", canon)
-            if key not in registry:
-                registry[key] = _Param(
-                    f"{scheme.prefixes[CMP_KIND]}{len(registry)}", canon, 1
-                )
-            return registry[key].func(indices[0], T)
-        a, b = indices
-        slot_a, slot_b = scheme.pair_slots
-        canon = body.xreplace({a: slot_a, b: slot_b})
-        canon = _canonical_symmetric(canon, symmetric_params)
-        if (
-            table_layout
-            and _subscript_order(body, a, b) == (b, a)
-            and _swap(canon, slot_a, slot_b, symmetric_params) != canon
-        ):
-            a, b = b, a
-            canon = body.xreplace({a: slot_a, b: slot_b})
-            canon = _canonical_symmetric(canon, symmetric_params)
-        inner = abstract_component_functions(
-            canon, registry, symmetric_params, pairs=False, scheme=scheme
-        )
-        key = ("p", canon)
-        if key not in registry:
-            sym = _swap(canon, slot_a, slot_b, symmetric_params) == canon
-            registry[key] = _Param(
-                f"{scheme.prefixes[MAT_KIND]}{len(registry)}", inner, 2, sym
-            )
-        if canon.has(T):
-            return registry[key].func(a, b, T)
-        return registry[key].func(a, b)
-
-    def _split_pair_roots(group, idx):
-        """sqrt(c*A_a*A_b)*K_ab -> sqrt(c)*sqrt(A_a)*sqrt(A_b)*K_ab.
-
-        The per-component factors are first abstracted, then the roots of
-        their products are split (valid for non-negative component
-        functions, as the attractive parameters of cubic equations).
-        Returns the list of factors, or None when the group does not split
-        into per-component functions and a temperature-free pair factor.
-        """
-        inner = abstract_component_functions(
-            group, registry, symmetric_params, pairs=False, scheme=scheme
-        )
-        expanded = sp.expand_power_base(inner, force=True)
-        factors = (
-            expanded.args if isinstance(expanded, sp.Mul) else (expanded,)
-        )
-        out = []
-        for f in factors:
-            fidx = f.atoms(sp.Idx)
-            if len(fidx) == 2 and f.has(T):
-                return None  # still a genuine function of the pair and T
-            if len(fidx) == 1 and f.has(T):
-                if isinstance(f, sp.core.function.AppliedUndef):
-                    out.append(f)
-                else:
-                    # e.g. sqrt(cmp0(k, T)): a new component function
-                    (index,) = fidx
-                    canon = f.xreplace({index: scheme.component_slot})
-                    key = ("c", canon)
-                    if key not in registry:
-                        registry[key] = _Param(
-                            f"{scheme.prefixes[CMP_KIND]}{len(registry)}",
-                            canon,
-                            1,
-                        )
-                    out.append(registry[key].func(index, T))
-            else:
-                out.append(f)
-        return out
-
-    def rewrite(sub, inside):
-        if not getattr(sub, "args", ()) or isinstance(
-            sub, (sp.Idx, sp.Indexed)
-        ):
-            return sub
-        if isinstance(sub, sp.Sum):
-            return sub.func(rewrite(sub.function, True), *sub.limits)
-        if inside and isinstance(sub, sp.Mul):
-            free = [a for a in sub.args if plain(a) and a.atoms(sp.Idx)]
-            rest = [a for a in sub.args if a not in free]
-            pair_groups = {}
-            for a in free:
-                idx = frozenset(a.atoms(sp.Idx))
-                if len(idx) == 2 and pairs:
-                    pair_groups.setdefault(idx, []).append(a)
-            new = [rewrite(a, inside) for a in rest]
-            used = set()
-            for idx in sorted(pair_groups, key=lambda x: sorted(map(str, x))):
-                members = [
-                    a
-                    for a in free
-                    if a.atoms(sp.Idx) <= idx and id(a) not in used
-                ]
-                if len(members) < 2 and not any(m.has(T) for m in members):
-                    continue
-                for m in members:
-                    used.add(id(m))
-                group = sp.Mul(*members)
-                if (
-                    split_sqrt
-                    and group.has(T)
-                    and any(
-                        isinstance(x, sp.Pow) and not x.exp.is_integer
-                        for x in sp.preorder_traversal(group)
-                    )
-                ):
-                    split = _split_pair_roots(group, idx)
-                    if split is not None:
-                        new.extend(split)
-                        continue
-                new.append(make(group, idx))
-            singles = {}
-            for a in free:
-                if id(a) in used:
-                    continue
-                idx = a.atoms(sp.Idx)
-                if len(idx) == 1:
-                    singles.setdefault(next(iter(idx)), []).append(a)
-                else:
-                    new.append(rewrite(a, inside))
-            for index in sorted(singles, key=str):
-                members = singles[index]
-                if any(m.has(T) for m in members):
-                    new.append(make(sp.Mul(*members), {index}))
-                else:
-                    new.extend(members)
-            return sp.Mul(*new)
-        if inside and plain(sub) and sub.has(T):
-            idx = sub.atoms(sp.Idx)
-            if len(idx) == 1 or (len(idx) == 2 and pairs):
-                return make(sub, idx)
-        return sub.func(*[rewrite(arg, inside) for arg in sub.args])
-
+    context = _AbstractionContext(
+        registry, symmetric_params, pairs, split_sqrt, table_layout, scheme
+    )
     # called on a pair body (no Sum): treat it as "inside"
-    return rewrite(expr, not expr.has(sp.Sum))
+    return _rewrite_factors(expr, not expr.has(sp.Sum), context)
+
+
+@dataclass(frozen=True)
+class _AbstractionContext:
+    """Options and per-call state of :func:`abstract_component_functions`.
+
+    Attributes
+    ----------
+    registry : dict
+        Canonical body -> :class:`_Param`; filled while rewriting.
+    symmetric_params : tuple
+        Names of the symmetric parameters.
+    pairs : bool
+        Abstract the pair functions.
+    split_sqrt : bool
+        Split the roots of pair groups into per-component functions.
+    table_layout : bool
+        Follow the subscript order of the parameters in pair slots.
+    scheme : NameScheme
+        Slot indices and array prefixes of the new functions.
+    """
+
+    registry: dict
+    symmetric_params: tuple
+    pairs: bool
+    split_sqrt: bool
+    table_layout: bool
+    scheme: NameScheme
+
+
+def _is_plain_factor(arg) -> bool:
+    """Tell whether ``arg`` is a function of ``T`` and parameters only.
+
+    ``V`` and ``P`` dependence would be lost, because the abstract
+    functions are differentiated in ``T`` only.
+    """
+    return (
+        _mole_free(arg)
+        and not arg.has(sp.Sum)
+        and not arg.has(sp.Piecewise)
+        and not arg.has(V)
+        and not arg.has(P)
+    )
+
+
+def _register_component(canon, index, context):
+    """Return the component function of ``canon`` applied to ``index``.
+
+    The function is added to the registry when the body is new.
+    """
+    registry, scheme = context.registry, context.scheme
+    key = ("c", canon)
+    if key not in registry:
+        registry[key] = _Param(
+            f"{scheme.prefixes[CMP_KIND]}{len(registry)}", canon, 1
+        )
+    return registry[key].func(index, T)
+
+
+def _canonical_pair(body, first, second, context):
+    """Return ``body`` in the pair slots, with canonical symmetric terms."""
+    from thermodiff.fortran import _canonical_symmetric
+
+    slot_a, slot_b = context.scheme.pair_slots
+    canon = body.xreplace({first: slot_a, second: slot_b})
+    return _canonical_symmetric(canon, context.symmetric_params)
+
+
+def _make_pair_function(body, first, second, context):
+    """Return the pair function of ``body`` over two indices.
+
+    With ``table_layout`` the slots follow the subscript order of the
+    parameters when that differs from the alphabetical order and swapping
+    the slots changes the canonical body.
+    """
+    from thermodiff.fortran import _swap
+
+    registry, scheme = context.registry, context.scheme
+    slot_a, slot_b = scheme.pair_slots
+    canon = _canonical_pair(body, first, second, context)
+    if (
+        context.table_layout
+        and _subscript_order(body, first, second) == (second, first)
+        and _swap(canon, slot_a, slot_b, context.symmetric_params) != canon
+    ):
+        first, second = second, first
+        canon = _canonical_pair(body, first, second, context)
+    inner = abstract_component_functions(
+        canon,
+        registry,
+        context.symmetric_params,
+        pairs=False,
+        scheme=scheme,
+    )
+    key = ("p", canon)
+    if key not in registry:
+        symmetric = (
+            _swap(canon, slot_a, slot_b, context.symmetric_params) == canon
+        )
+        registry[key] = _Param(
+            f"{scheme.prefixes[MAT_KIND]}{len(registry)}",
+            inner,
+            2,
+            symmetric,
+        )
+    if canon.has(T):
+        return registry[key].func(first, second, T)
+    return registry[key].func(first, second)
+
+
+def _make_function(body, indices, context):
+    """Abstract ``body`` as a component or a pair function of ``indices``."""
+    indices = sorted(indices, key=str)
+    if len(indices) == 1:
+        slot = context.scheme.component_slot
+        canon = body.xreplace({indices[0]: slot})
+        return _register_component(canon, indices[0], context)
+    first, second = indices
+    return _make_pair_function(body, first, second, context)
+
+
+def _as_component_function(factor, index, context):
+    """Return ``factor`` as a component function of ``index``.
+
+    A factor that is already an applied function is kept; anything else
+    (e.g. ``sqrt(cmp0(k, T))``) becomes a new component function.
+    """
+    if isinstance(factor, sp.core.function.AppliedUndef):
+        return factor
+    canon = factor.xreplace({index: context.scheme.component_slot})
+    return _register_component(canon, index, context)
+
+
+def _split_pair_roots(group, context):
+    """sqrt(c*A_a*A_b)*K_ab -> sqrt(c)*sqrt(A_a)*sqrt(A_b)*K_ab.
+
+    The per-component factors are first abstracted, then the roots of
+    their products are split (valid for non-negative component
+    functions, as the attractive parameters of cubic equations).
+    Returns the list of factors, or None when the group does not split
+    into per-component functions and a temperature-free pair factor.
+    """
+    inner = abstract_component_functions(
+        group,
+        context.registry,
+        context.symmetric_params,
+        pairs=False,
+        scheme=context.scheme,
+    )
+    expanded = sp.expand_power_base(inner, force=True)
+    factors = expanded.args if isinstance(expanded, sp.Mul) else (expanded,)
+    out = []
+    for factor in factors:
+        factor_indices = factor.atoms(sp.Idx)
+        if len(factor_indices) == 2 and factor.has(T):
+            return None  # still a genuine function of the pair and T
+        if len(factor_indices) == 1 and factor.has(T):
+            (index,) = factor_indices
+            out.append(_as_component_function(factor, index, context))
+        else:
+            out.append(factor)
+    return out
+
+
+def _has_non_integer_power(group) -> bool:
+    """Tell whether ``group`` contains a power with a non-integer exponent."""
+    return any(
+        isinstance(node, sp.Pow) and not node.exp.is_integer
+        for node in sp.preorder_traversal(group)
+    )
+
+
+def _abstract_pair_groups(free, pair_groups, context):
+    """Abstract the groups of factors over the same two indices.
+
+    Returns ``(items, used)``: the new factors, and the ``id`` of every
+    member of ``free`` that went into a group.
+    """
+    items, used = [], set()
+    for indices in sorted(pair_groups, key=lambda x: sorted(map(str, x))):
+        members = [
+            factor
+            for factor in free
+            if factor.atoms(sp.Idx) <= indices and id(factor) not in used
+        ]
+        if len(members) < 2 and not any(m.has(T) for m in members):
+            continue
+        used.update(id(member) for member in members)
+        group = sp.Mul(*members)
+        if (
+            context.split_sqrt
+            and group.has(T)
+            and _has_non_integer_power(group)
+        ):
+            split = _split_pair_roots(group, context)
+            if split is not None:
+                items.extend(split)
+                continue
+        items.append(_make_function(group, indices, context))
+    return items, used
+
+
+def _abstract_single_indices(free, used, context):
+    """Abstract the factors of ``free`` that depend on a single index.
+
+    Factors over other index sets are rewritten on their own, and come
+    first; the groups of single-index factors follow in index order.
+    """
+    items, singles = [], {}
+    for factor in free:
+        if id(factor) in used:
+            continue
+        indices = factor.atoms(sp.Idx)
+        if len(indices) == 1:
+            singles.setdefault(next(iter(indices)), []).append(factor)
+        else:
+            items.append(_rewrite_factors(factor, True, context))
+    for index in sorted(singles, key=str):
+        members = singles[index]
+        if any(member.has(T) for member in members):
+            items.append(_make_function(sp.Mul(*members), {index}, context))
+        else:
+            items.extend(members)
+    return items
+
+
+def _rewrite_product(product, context):
+    """Abstract the plain factors of a product inside a summation."""
+    free = [
+        arg
+        for arg in product.args
+        if _is_plain_factor(arg) and arg.atoms(sp.Idx)
+    ]
+    rest = [arg for arg in product.args if arg not in free]
+    pair_groups = {}
+    for factor in free:
+        indices = frozenset(factor.atoms(sp.Idx))
+        if len(indices) == 2 and context.pairs:
+            pair_groups.setdefault(indices, []).append(factor)
+    new = [_rewrite_factors(arg, True, context) for arg in rest]
+    pair_items, used = _abstract_pair_groups(free, pair_groups, context)
+    new.extend(pair_items)
+    new.extend(_abstract_single_indices(free, used, context))
+    return sp.Mul(*new)
+
+
+def _rewrite_factors(sub, inside, context):
+    """Rewrite ``sub``, abstracting what lies inside summations.
+
+    ``inside`` tells whether ``sub`` is the body of a summation.
+    """
+    if not getattr(sub, "args", ()) or isinstance(sub, (sp.Idx, sp.Indexed)):
+        return sub
+    if isinstance(sub, sp.Sum):
+        body = _rewrite_factors(sub.function, True, context)
+        return sub.func(body, *sub.limits)
+    if inside and isinstance(sub, sp.Mul):
+        return _rewrite_product(sub, context)
+    if inside and _is_plain_factor(sub) and sub.has(T):
+        indices = sub.atoms(sp.Idx)
+        if len(indices) == 1 or (len(indices) == 2 and context.pairs):
+            return _make_function(sub, indices, context)
+    return sub.func(
+        *[_rewrite_factors(arg, inside, context) for arg in sub.args]
+    )
 
 
 @dataclass(frozen=True)
