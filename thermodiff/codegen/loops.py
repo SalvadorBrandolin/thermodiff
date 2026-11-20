@@ -193,6 +193,213 @@ def _nest_double_sums(
     return result
 
 
+class _FuseSettings(NamedTuple):
+    """Switches of :func:`_fuse_temporaries`.
+
+    Attributes
+    ----------
+    dedup : bool
+        Count equal summations once when weighing the reads of a table.
+    guard : bool
+        Keep a costly table read by two or more different summations.
+    keep_libm : bool
+        Keep a pair table that calls libm and is read as a matrix-vector.
+    """
+
+    dedup: bool
+    guard: bool
+    keep_libm: bool
+
+
+def _temp_refs(expr, name) -> list:
+    """Return the reads of the array ``name`` inside ``expr``."""
+    return [x for x in expr.atoms(sp.Indexed) if str(x.base) == name]
+
+
+def _read_outside_sums(expr, name) -> bool:
+    """Whether ``expr`` reads the array ``name`` outside every summation."""
+    if isinstance(expr, sp.Sum):
+        return False
+    if isinstance(expr, sp.Indexed):
+        return str(expr.base) == name
+    return any(
+        _read_outside_sums(arg, name) for arg in getattr(expr, "args", ())
+    )
+
+
+def _free_alpha_key(total):
+    """Return the alpha key of a summation with its free indices renamed."""
+    free = sorted(_free_indices(total), key=str)
+    mapping = {index: sp.Idx(f"_free{pos}") for pos, index in enumerate(free)}
+    return _alpha_key(total.xreplace(mapping))
+
+
+def _direct_reads(total, name) -> list:
+    """Return the reads of ``name`` in a summation outside its inner sums."""
+    body = total.function
+    return [
+        x
+        for x in _temp_refs(body, name)
+        if not any(
+            x in inner.atoms(sp.Indexed) for inner in body.atoms(sp.Sum)
+        )
+    ]
+
+
+def _read_weight(exprs, name, dedup) -> float:
+    """Return how many times each element of ``name`` is read.
+
+    Diagonal reads count 0, a triangular (folded) summation 1/2 and a full
+    summation 1.  With ``dedup`` equal summations count once.
+    """
+    weight = 0.0
+    seen_keys = set()
+    for expr in exprs:
+        for total in expr.atoms(sp.Sum):
+            key = _free_alpha_key(total)
+            if dedup and key in seen_keys:
+                continue
+            seen_keys.add(key)
+            inner_refs = _temp_refs(total.function, name)
+            if not inner_refs or total.function.atoms(sp.Sum):
+                continue
+            if all(len(set(x.indices)) < len(x.indices) for x in inner_refs):
+                continue
+            folded = any(
+                isinstance(lim[1], _LoopStart) for lim in total.limits
+            )
+            weight += 0.5 if folded else 1.0
+    return weight
+
+
+def _direct_sum_count(exprs, name) -> int:
+    """Count the distinct summations that read ``name`` in their own body.
+
+    Distinct means by alpha key; nested summations are included.
+    """
+    keys = set()
+    for expr in exprs:
+        for total in expr.atoms(sp.Sum):
+            if _direct_reads(total, name):
+                keys.add(_free_alpha_key(total))
+    return len(keys)
+
+
+def _has_pair_libm(body, free) -> bool:
+    """Whether ``body`` has a libm call that depends on both pair indices.
+
+    A separable ``sqrt(e_i)*sqrt(e_j)`` is hoisted into vectors later
+    anyway, so it does not count.
+    """
+    both = set(free)
+    for sub in sp.preorder_traversal(body):
+        call = (
+            isinstance(sub, sp.Function) and not isinstance(sub, sp.Piecewise)
+        ) or (isinstance(sub, sp.Pow) and not sub.exp.is_Integer)
+        if call and both <= {
+            idx for x in sub.atoms(sp.Indexed) for idx in x.indices
+        }:
+            return True
+    return False
+
+
+def _only_vector_reads(exprs, name) -> bool:
+    """Whether every summation reading ``name`` directly keeps a free index.
+
+    A table read by scalar double sums is better inlined
+    (reportes/brechas/ronda2-pcsaft.md, T1).
+    """
+    found = False
+    for expr in exprs:
+        for total in expr.atoms(sp.Sum):
+            if not _direct_reads(total, name):
+                continue
+            found = True
+            if not _free_indices(total):
+                return False
+    return found
+
+
+def _inline_read(expr, name, body, free):
+    """Substitute the body of the table ``name`` into its reads in ``expr``."""
+    mapping = {
+        x: body.xreplace(dict(zip(free, x.indices)))
+        for x in _temp_refs(expr, name)
+    }
+    return expr.xreplace(mapping) if mapping else expr
+
+
+def _keeps_for_cost(definition, name, exprs, settings) -> bool:
+    """Whether the cost of the table ``name`` argues against inlining it."""
+    body = definition.body
+    expensive = _is_expensive(body)
+    ops = sp.count_ops(body)
+    trivial = not expensive and ops <= 3
+    if not trivial and any(_read_outside_sums(e, name) for e in exprs):
+        return True
+    if (
+        settings.keep_libm
+        and _has_pair_libm(body, definition.free)
+        and _direct_sum_count(exprs, name) >= 1
+        and _only_vector_reads(exprs, name)
+    ):
+        return True
+    if settings.guard and expensive and _direct_sum_count(exprs, name) >= 2:
+        # an expensive body (exp, log, root, ...) read by two or more
+        # different summations, at any nesting depth, is computed once
+        return True
+    cheap = not expensive and ops <= 8
+    # costly body read more than once per element: keep it
+    return not cheap and _read_weight(exprs, name, settings.dedup) > 1
+
+
+def _try_inline_temporary(definition, array_defs, exprs, settings):
+    """Inline one rank-2 temporary if its reads allow it.
+
+    Parameters
+    ----------
+    definition : TempDef
+        Candidate; only a rank-2 table without limits qualifies.
+    array_defs : list of TempDef
+        The temporaries; the candidate is removed from it (in place) and
+        the bodies of the ones that read it are rewritten.
+    exprs : list of sympy expressions
+        Expressions to rewrite.
+    settings : _FuseSettings
+        Switches of the pass.
+
+    Returns
+    -------
+    tuple
+        ``(exprs, name)``: the rewritten expressions and the removed array
+        name, or ``(exprs, None)`` when the temporary stays.
+    """
+    free = definition.free
+    if len(free) != 2 or definition.limits:
+        return exprs, None
+    name = _temp_name(definition.target)
+    if _keeps_for_cost(definition, name, exprs, settings):
+        return exprs, None
+    readers = [
+        d
+        for d in array_defs
+        if d is not definition and _temp_refs(d.body, name)
+    ]
+    if any(
+        len(set(x.indices)) == len(x.indices)
+        for d in readers
+        for x in _temp_refs(d.body, name)
+    ):
+        # another temporary reads it off the diagonal: keep it
+        return exprs, None
+    body = definition.body
+    exprs = [_inline_read(e, name, body, free) for e in exprs]
+    for reader in readers:
+        reader.body = _inline_read(reader.body, name, body, free)
+    array_defs.remove(definition)
+    return exprs, name
+
+
 def _fuse_temporaries(
     array_defs, exprs, dedup=False, guard=False, keep_libm=False
 ):
@@ -212,174 +419,19 @@ def _fuse_temporaries(
     forces the accumulators to memory and stops unrolling, while a separate map
     loop is vectorised (reportes/brechas/ronda2-ge-cmr.md, UNIQUAC G0).
     """
-
-    def refs(expr, name):
-        return [x for x in expr.atoms(sp.Indexed) if str(x.base) == name]
-
-    def outside_sums(expr, name):
-        if isinstance(expr, sp.Sum):
-            return False
-        if isinstance(expr, sp.Indexed):
-            return str(expr.base) == name
-        return any(
-            outside_sums(arg, name) for arg in getattr(expr, "args", ())
-        )
-
-    def read_weight(exprs_, name):
-        """How many times each element is read: diagonal reads count 0,
-        a triangular (folded) summation 1/2, a full summation 1."""
-        weight = 0.0
-        seen_keys = set()
-        for e in exprs_:
-            for total in e.atoms(sp.Sum):
-                free = sorted(_free_indices(total), key=str)
-                key = _alpha_key(
-                    total.xreplace(
-                        {
-                            x: sp.Idx(f"_free{pos}")
-                            for pos, x in enumerate(free)
-                        }
-                    )
-                )
-                if dedup and key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                inner_refs = [x for x in refs(total.function, name)]
-                if not inner_refs or total.function.atoms(sp.Sum):
-                    continue
-                if all(
-                    len(set(x.indices)) < len(x.indices) for x in inner_refs
-                ):
-                    continue
-                folded = any(
-                    isinstance(lim[1], _LoopStart) for lim in total.limits
-                )
-                weight += 0.5 if folded else 1.0
-        return weight
-
-    def sum_count(exprs_, name):
-        """Number of distinct summations (by alpha key) that read ``name``
-        directly in their body, nested summations included."""
-        keys = set()
-        for e in exprs_:
-            for total in e.atoms(sp.Sum):
-                body_ = total.function
-                direct = [
-                    x
-                    for x in refs(body_, name)
-                    if not any(
-                        x in inner.atoms(sp.Indexed)
-                        for inner in body_.atoms(sp.Sum)
-                    )
-                ]
-                if not direct:
-                    continue
-                free = sorted(_free_indices(total), key=str)
-                keys.add(
-                    _alpha_key(
-                        total.xreplace(
-                            {
-                                x: sp.Idx(f"_free{pos}")
-                                for pos, x in enumerate(free)
-                            }
-                        )
-                    )
-                )
-        return len(keys)
-
-    def pair_libm(body_, free_):
-        """A libm call whose argument depends on both indices of the pair (a
-        separable sqrt(e_i)*sqrt(e_j) is hoisted into vectors later anyway)."""
-        both = set(free_)
-        for sub in sp.preorder_traversal(body_):
-            call = (
-                isinstance(sub, sp.Function)
-                and not isinstance(sub, sp.Piecewise)
-            ) or (isinstance(sub, sp.Pow) and not sub.exp.is_Integer)
-            if call and both <= {
-                i for x in sub.atoms(sp.Indexed) for i in x.indices
-            }:
-                return True
-        return False
-
-    def vector_reads_only(exprs_, name):
-        """Every summation that reads ``name`` directly keeps a free index
-        (a matrix-vector product): a table read by scalar double sums is
-        better inlined (reportes/brechas/ronda2-pcsaft.md, T1)."""
-        found = False
-        for e in exprs_:
-            for total in e.atoms(sp.Sum):
-                body_ = total.function
-                direct = [
-                    x
-                    for x in refs(body_, name)
-                    if not any(
-                        x in inner.atoms(sp.Indexed)
-                        for inner in body_.atoms(sp.Sum)
-                    )
-                ]
-                if not direct:
-                    continue
-                found = True
-                if not _free_indices(total):
-                    return False
-        return found
-
+    settings = _FuseSettings(dedup, guard, keep_libm)
     exprs = list(exprs)
     removed = set()
     changed = True
     while changed:
         changed = False
         for definition in list(array_defs):
-            free = definition.free
-            if len(free) != 2 or definition.limits:
-                continue
-            body = definition.body
-            name = _temp_name(definition.target)
-            trivial = not _is_expensive(body) and sp.count_ops(body) <= 3
-            if not trivial and any(outside_sums(e, name) for e in exprs):
-                continue
-            cheap = not _is_expensive(body) and sp.count_ops(body) <= 8
-            if (
-                keep_libm
-                and pair_libm(body, free)
-                and sum_count(exprs, name) >= 1
-                and vector_reads_only(exprs, name)
-            ):
-                continue
-            if guard and _is_expensive(body) and sum_count(exprs, name) >= 2:
-                # an expensive body (exp, log, root, ...) read by two or more
-                # different summations, at any nesting depth, is computed once
-                continue
-            if not cheap and read_weight(exprs, name) > 1:
-                # costly body read more than once per element: keep it
-                continue
-            other = [
-                d
-                for d in array_defs
-                if d is not definition and refs(d.body, name)
-            ]
-            if any(
-                len(set(x.indices)) == len(x.indices)
-                for d in other
-                for x in refs(d.body, name)
-            ):
-                # another temporary reads it off the diagonal: keep it
-                continue
-
-            def inline(expr):
-                mapping = {
-                    x: body.xreplace(dict(zip(free, x.indices)))
-                    for x in refs(expr, name)
-                }
-                return expr.xreplace(mapping) if mapping else expr
-
-            exprs = [inline(e) for e in exprs]
-            for d in other:
-                d.body = inline(d.body)
-            array_defs.remove(definition)
-            removed.add(name)
-            changed = True
+            exprs, name = _try_inline_temporary(
+                definition, array_defs, exprs, settings
+            )
+            if name is not None:
+                removed.add(name)
+                changed = True
     return array_defs, exprs, removed
 
 
