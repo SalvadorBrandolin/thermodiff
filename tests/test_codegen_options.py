@@ -28,6 +28,7 @@ CONTEXT_PARAMETERS = {
     "module_symbols",
     "symmetric_params",
     "stats",
+    "options",
     "_structured",
     "_structure_only",
 }

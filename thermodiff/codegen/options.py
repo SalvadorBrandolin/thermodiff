@@ -325,8 +325,16 @@ class CodegenOptions:
         """
         return dataclasses.replace(self, **changes)
 
-    def validate(self) -> tuple[CodegenOptions, tuple[str, ...]]:
+    def validate(
+        self, stacklevel: int = 1
+    ) -> tuple[CodegenOptions, tuple[str, ...]]:
         """Disable options that today's generator silently ignores.
+
+        Parameters
+        ----------
+        stacklevel : int, optional
+            Frame the warning is attributed to: ``1`` is the caller of
+            this method, ``2`` its caller, and so on.
 
         Returns
         -------
@@ -340,7 +348,7 @@ class CodegenOptions:
             If ``split_acc`` is not 2 and ``optional_derivatives`` is off
             (the only case where ``to_fortran`` raises).
         """
-        return _validate(self)
+        return _validate(self, stacklevel + 2)
 
 
 _FIELD_ORDER = tuple(
@@ -468,7 +476,7 @@ def _check_split_acc(options: CodegenOptions) -> None:
 
 
 def _validate(
-    options: CodegenOptions,
+    options: CodegenOptions, stacklevel: int = 3
 ) -> tuple[CodegenOptions, tuple[str, ...]]:
     """Implement :meth:`CodegenOptions.validate`."""
     _check_split_acc(options)
@@ -478,7 +486,7 @@ def _validate(
             "options ignored by the current combination and disabled: "
             + ", ".join(ignored),
             UserWarning,
-            stacklevel=3,
+            stacklevel=stacklevel,
         )
     return normalised, tuple(ignored)
 

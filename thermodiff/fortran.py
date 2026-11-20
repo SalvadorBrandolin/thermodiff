@@ -28,7 +28,10 @@ raise an error instead.
 """
 
 import functools
+import inspect
+import os
 import re
+import sys
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -5260,6 +5263,7 @@ def to_fortran(
     derivatives=None,
     name=None,
     subroutine_name=None,
+    *,
     integer_args=None,
     module_symbols=None,
     symmetric_params=(),
@@ -5342,6 +5346,14 @@ def to_fortran(
         :func:`_share_sums` and the scalar common sub-expression pass.
         ``None`` (the default) inherits the value of ``share``.  Used by the
         ablation study.
+    options : CodegenOptions, optional
+        Behaviour options.  Defaults to ``CodegenOptions()``, that is the
+        defaults of the behaviour keywords.  A keyword passed explicitly in
+        the same call overrides the matching field of ``options``.
+    **legacy
+        Any behaviour option by name (``strict``, ``optional_derivatives``,
+        ``chain_rule``, ...; see the entries of this section and the fields
+        of :class:`CodegenOptions`).  An unknown name raises ``TypeError``.
     symmetric_params : iterable of str, optional
         Names of rank-2 parameters known to be symmetric (declared with the
         ``symmetric`` attribute in a ``.model`` file).
@@ -5556,17 +5568,6 @@ def to_fortran(
         the summation order.  Only without ``optional_derivatives``.  Off by
         default.
 
-    options : CodegenOptions, optional
-        Behaviour options.  Defaults to ``CodegenOptions()``, that is the
-        defaults of the keywords below.  Keywords passed explicitly in the
-        same call override the matching field of ``options``.
-    **legacy
-        Behaviour keywords, documented in the entries of this section that
-        follow the ``symmetric_params`` entry and in the field names of
-        :class:`CodegenOptions` (``strict``, ``optional_derivatives``,
-        ``array_cse``, ``share``, ``chain_rule``, ...).  Each overrides the
-        field of the same name.  An unknown keyword raises ``TypeError``.
-
     Returns
     -------
     str
@@ -5587,7 +5588,7 @@ def to_fortran(
     """
     base = CodegenOptions() if options is None else options
     resolved = base.replace(**legacy) if legacy else base
-    normalised, _ignored = resolved.validate()
+    normalised, _ignored = resolved.validate(stacklevel=_external_stacklevel())
     return _to_fortran_impl(
         diff,
         derivatives=derivatives,
@@ -5601,5 +5602,70 @@ def to_fortran(
     )
 
 
-# Keep the full keyword list visible to ``inspect.signature`` and IDEs.
-to_fortran.__wrapped__ = _to_fortran_impl
+_CONTEXT_KEYWORDS = (
+    "integer_args",
+    "module_symbols",
+    "symmetric_params",
+    "stats",
+    "options",
+)
+_PRIVATE_PARAMETERS = frozenset({"_structured", "_structure_only"})
+_PACKAGE_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+
+
+def _external_stacklevel() -> int:
+    """Return the stack level of the first frame outside the package.
+
+    Called from :func:`to_fortran`, level 1 is that function; the result is
+    the level, relative to it, of the user code that called it (also when
+    the call goes through :meth:`DiffPlz.to_fortran`).
+
+    Returns
+    -------
+    int
+        Level to hand to ``CodegenOptions.validate(stacklevel=...)``.
+    """
+    frame = sys._getframe(1)
+    level = 1
+    while frame is not None and os.path.abspath(
+        frame.f_code.co_filename
+    ).startswith(_PACKAGE_DIRECTORY):
+        frame = frame.f_back
+        level += 1
+    return level
+
+
+def _public_signature() -> inspect.Signature:
+    """Build the signature advertised by :func:`to_fortran`.
+
+    The leading parameters of the implementation stay positional, the
+    context keywords and ``options`` come next, then every behaviour
+    option, all keyword-only and with the implementation's defaults.
+
+    Returns
+    -------
+    inspect.Signature
+        Signature without the private re-entry parameters.
+    """
+    parameters = inspect.signature(_to_fortran_impl).parameters
+    keyword_only = inspect.Parameter.KEYWORD_ONLY
+    leading = [
+        parameters[name].replace(kind=inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        for name in ("diff", "derivatives", "name", "subroutine_name")
+    ]
+    context = [
+        parameters[name].replace(kind=keyword_only)
+        for name in _CONTEXT_KEYWORDS
+        if name in parameters
+    ]
+    context.append(inspect.Parameter("options", keyword_only, default=None))
+    taken = {p.name for p in leading + context} | _PRIVATE_PARAMETERS
+    behaviour = [
+        parameter.replace(kind=keyword_only)
+        for name, parameter in parameters.items()
+        if name not in taken
+    ]
+    return inspect.Signature(leading + context + behaviour)
+
+
+to_fortran.__signature__ = _public_signature()
