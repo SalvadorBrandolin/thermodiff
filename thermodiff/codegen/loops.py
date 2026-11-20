@@ -1,6 +1,8 @@
 """Loop fusion and table rewrites for the Fortran code generator."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import sympy as sp
 
@@ -1676,6 +1678,158 @@ def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
     return state.defs, state.outs
 
 
+class _DiagonalContext(NamedTuple):
+    """Inputs of the canonical comparison of diagonal bodies.
+
+    Attributes
+    ----------
+    maps : dict
+        Inlinable per-component maps by name, as ``(index, body)``.
+    symmetric_params : iterable of str
+        Parameters declared ``symmetric``.
+    sym_rank3 : bool
+        Also sort the subscripts of symmetric tensors of rank three.
+    """
+
+    maps: dict
+    symmetric_params: Sequence[str]
+    sym_rank3: bool
+
+
+def _is_inlinable_map(definition) -> bool:
+    """Whether ``definition`` is a plain rank-1 map without a summation."""
+    return (
+        len(definition.free) == 1
+        and not definition.limits
+        and not definition.body.has(sp.Sum)
+        and not (
+            definition.mirror
+            or definition.mirror_sum
+            or definition.symv
+            or isinstance(
+                definition, (FusedNest, SiblingNest, ComponentFusedMap)
+            )
+            or definition.colmajor
+        )
+    )
+
+
+def _inline_maps(expr, maps):
+    """Replace the reads of the maps in ``maps`` by their bodies."""
+    replacements = {}
+    for indexed in expr.atoms(sp.Indexed):
+        if str(indexed.base) in maps and len(indexed.indices) == 1:
+            index, body = maps[str(indexed.base)]
+            replacements[indexed] = body.xreplace({index: indexed.indices[0]})
+    return expr.xreplace(replacements) if replacements else expr
+
+
+def _canonical_diagonal_body(expr, context):
+    """Expand ``expr`` after inlining the maps, symmetric subscripts sorted."""
+    expr = sp.expand(_inline_maps(expr, context.maps))
+    if context.symmetric_params:
+        return _canonical_symmetric(
+            expr, context.symmetric_params, context.sym_rank3
+        )
+    return expr
+
+
+def _mirror_tables(definitions):
+    """Return the rank-2 summed tables and the definition hosting each.
+
+    Parameters
+    ----------
+    definitions : list
+        Definitions in emission order.
+
+    Returns
+    -------
+    tuple
+        ``(tables, owner)``: the tables, and a dict from ``id(table)`` to
+        the definition that holds it (the sibling nest or the table itself).
+    """
+    tables, owner = [], {}
+    for definition in definitions:
+        if isinstance(definition, SiblingNest):
+            members = definition.sibling
+        else:
+            members = [definition] if definition.mirror_sum else []
+        for table in members:
+            if len(table.free) == 2 and len(table.limits) == 1:
+                tables.append(table)
+                owner[id(table)] = definition
+    return tables, owner
+
+
+def _is_diagonal_candidate(definition) -> bool:
+    """Whether ``definition`` is a plain rank-1 reduction over one index."""
+    return not (
+        len(definition.free) != 1
+        or len(definition.limits) != 1
+        or definition.mirror
+        or definition.mirror_sum
+        or definition.symv
+        or isinstance(definition, FusedNest)
+        or definition.colmajor
+    )
+
+
+def _matching_table(definition, tables, context):
+    """Return the first table whose diagonal equals ``definition``.
+
+    Tables with other limits, another diagonal body, or a body that reads
+    the definition's own array are skipped.  Returns ``None`` if none is
+    left.
+    """
+    (k,), (m, low, high) = definition.free, definition.limits[0]
+    name = _temp_name(definition.target)
+    for table in tables:
+        (a, b), (m2, low2, high2) = table.free, table.limits[0]
+        if (low2, high2) != (low, high):
+            continue
+        diagonal = _canonical_diagonal_body(
+            table.body.xreplace({a: k, b: k, m2: m}), context
+        )
+        difference = diagonal - _canonical_diagonal_body(
+            definition.body, context
+        )
+        if sp.expand(difference) != 0:
+            continue
+        if any(str(x.base) == name for x in table.body.atoms(sp.Indexed)):
+            continue
+        return table
+    return None
+
+
+def _move_diagonal_after_table(out, definition, table, host) -> None:
+    """Replace ``definition`` by a read of ``table`` placed after ``host``.
+
+    Nothing changes when a consumer of the definition sits between it and
+    the table.  ``out`` is edited in place.
+    """
+    (k,) = definition.free
+    name = _temp_name(definition.target)
+    new = TempDef(
+        target=definition.target,
+        free=[k],
+        limits=[],
+        body=sp.Indexed(table.target.base, k, k),
+    )
+    pos_table = out.index(host)
+    pos_diagonal = out.index(definition)
+    if pos_diagonal < pos_table:
+        # every consumer of the diagonal must come after the table
+        between = out[pos_diagonal + 1 : pos_table + 1]
+        if any(
+            str(x.base) == name
+            for other in between
+            for x in other.body.atoms(sp.Indexed)
+        ):
+            return
+    out.remove(definition)
+    out.insert(out.index(host) + 1, new)
+
+
 def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
     """Read the diagonal of an existing rank-2 table instead of recomputing it.
 
@@ -1683,94 +1837,22 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
     a triangle and mirrored) give ``d(k) == t(k, k)``.  The rank-1 sum is
     replaced by the map ``d(k) = t(k, k)``, placed right after the table.
     """
-    maps = {}
-    for d in definitions:
-        if (
-            len(d.free) == 1
-            and not d.limits
-            and not d.body.has(sp.Sum)
-            and not (
-                d.mirror
-                or d.mirror_sum
-                or d.symv
-                or isinstance(d, (FusedNest, SiblingNest, ComponentFusedMap))
-                or d.colmajor
-            )
-        ):
-            maps[_temp_name(d.target)] = (d.free[0], d.body)
-
-    def inline_maps(e):
-        rep = {}
-        for x in e.atoms(sp.Indexed):
-            if str(x.base) in maps and len(x.indices) == 1:
-                f, body = maps[str(x.base)]
-                rep[x] = body.xreplace({f: x.indices[0]})
-        return e.xreplace(rep) if rep else e
-
-    def canon(e):
-        e = sp.expand(inline_maps(e))
-        return (
-            _canonical_symmetric(e, symmetric_params, sym_rank3)
-            if symmetric_params
-            else e
-        )
-
-    tables, owner = [], {}
-    for d in definitions:
-        if isinstance(d, SiblingNest):
-            members = d.sibling
-        else:
-            members = [d] if d.mirror_sum else []
-        for t in members:
-            if len(t.free) == 2 and len(t.limits) == 1:
-                tables.append(t)
-                owner[id(t)] = d
+    maps = {
+        _temp_name(d.target): (d.free[0], d.body)
+        for d in definitions
+        if _is_inlinable_map(d)
+    }
+    context = _DiagonalContext(maps, symmetric_params, sym_rank3)
+    tables, owner = _mirror_tables(definitions)
     out = list(definitions)
-    for d in definitions:
-        if (
-            len(d.free) != 1
-            or len(d.limits) != 1
-            or d.mirror
-            or d.mirror_sum
-            or d.symv
-            or isinstance(d, FusedNest)
-            or d.colmajor
-        ):
+    for definition in definitions:
+        if not _is_diagonal_candidate(definition):
             continue
-        (k,), (m, lo, hi) = d.free, d.limits[0]
-        for t in tables:
-            (a, b), (m2, lo2, hi2) = t.free, t.limits[0]
-            if (lo2, hi2) != (lo, hi):
-                continue
-            diag = canon(t.body.xreplace({a: k, b: k, m2: m}))
-            if sp.expand(diag - canon(d.body)) != 0:
-                continue
-            name = _temp_name(d.target)
-            if any(str(x.base) == name for x in t.body.atoms(sp.Indexed)):
-                continue
-            host = owner[id(t)]
-            pos_t = out.index(host)
-            new = TempDef(
-                target=d.target,
-                free=[k],
-                limits=[],
-                body=sp.Indexed(t.target.base, k, k),
+        table = _matching_table(definition, tables, context)
+        if table is not None:
+            _move_diagonal_after_table(
+                out, definition, table, owner[id(table)]
             )
-            pos_d = out.index(d)
-            if pos_d < pos_t:
-                # every consumer of d must come after the table
-                users = [
-                    e
-                    for e in out[pos_d + 1 : pos_t + 1]
-                    if any(
-                        str(x.base) == name for x in e.body.atoms(sp.Indexed)
-                    )
-                ]
-                if users:
-                    break
-            out.remove(d)
-            out.insert(out.index(host) + 1, new)
-            break
     return out
 
 
