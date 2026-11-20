@@ -186,3 +186,14 @@ def test_pair_dependent_terms_needs_two_indexes():
     base = sp.IndexedBase("c")
     assert chain._pair_dependent_terms((base[first, second],))
     assert not chain._pair_dependent_terms((base[first], base[second]))
+
+
+def test_needed_node_derivatives_are_sorted_and_complete():
+    assert chain._needed_node_derivatives(["dt"]) == ["dt"]
+    assert chain._needed_node_derivatives(["dnidnj", "dtdni"]) == [
+        "dni",
+        "dnidnj",
+        "dt",
+        "dtdni",
+    ]
+    assert chain._needed_node_derivatives(["dtdv"]) == ["dt", "dtdv", "dv"]

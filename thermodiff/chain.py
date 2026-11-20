@@ -34,7 +34,7 @@ number outside every summation, pressure as a variable) the caller falls
 back to the plain derivatives.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
@@ -1451,6 +1451,683 @@ def _node_derivative(diff, attr):
     return sp.S.Zero if value is None else value
 
 
+#: first-order node derivative attribute of a variable
+_FIRST_ATTR = {"T": "dt", "V": "dv"}
+#: mixed (variable, n) node derivative attribute of a variable
+_MIXED_ATTR = {"T": "dtdni", "V": "dvdni"}
+#: second-order node derivative attribute of two T/V variables
+_SECOND_ATTR = {("T", "T"): "dt2", ("V", "V"): "dv2", ("T", "V"): "dtdv"}
+
+
+def _needed_for_attribute(variables):
+    """Return the node derivatives that one attribute needs.
+
+    Parameters
+    ----------
+    variables : tuple of str
+        The variables of the attribute (``_ATTR_VARS`` value).
+
+    Returns
+    -------
+    set of str
+        Attributes of the node derivatives.
+    """
+    if variables == ("n",):
+        return {"dni"}
+    if variables == ("n", "n"):
+        return {"dni", "dnidnj"}
+    if "n" in variables:
+        first = variables[0]
+        return {"dni", _MIXED_ATTR[first], _FIRST_ATTR[first]}
+    needed = {_FIRST_ATTR[var] for var in variables}
+    if len(variables) == 2:
+        needed.add(_SECOND_ATTR[variables])
+    return needed
+
+
+def _needed_node_derivatives(attributes):
+    """Return the sorted node derivatives that ``attributes`` involve.
+
+    Any attribute that involves ``n`` needs the node gradient or Hessian;
+    the T and V attributes need the T and V node derivatives.
+
+    Parameters
+    ----------
+    attributes : list of str
+        Derivative attributes of the outer function.
+
+    Returns
+    -------
+    list of str
+        Sorted node derivative attributes.
+    """
+    needed = set()
+    for attr in attributes:
+        needed |= _needed_for_attribute(_ATTR_VARS[attr])
+    return sorted(needed)
+
+
+def _outer_and_nodes(expression):
+    """Split ``expression`` into the outer function and its summation nodes.
+
+    Parameters
+    ----------
+    expression : sympy expression
+        The fully expanded function.
+
+    Returns
+    -------
+    tuple or None
+        ``(outer, nodes)``; ``None`` when there are no nodes or the outer
+        function still depends on the mole numbers.
+    """
+    outer, nodes = summation_nodes(factor_sums(expression))
+    if not nodes:
+        return None
+    if any(base == n for base in outer.atoms(sp.IndexedBase)) or outer.has(
+        sp.Sum
+    ):
+        return None
+    return outer, nodes
+
+
+def _abstract_nodes(
+    nodes, registry, symmetric_params, split_sqrt, table_layout, scheme
+):
+    """Abstract the component functions of every node, filling ``registry``.
+
+    Parameters
+    ----------
+    nodes : list of (symbol, sympy expression)
+        Summation nodes.
+    registry : dict
+        Filled with the abstracted functions.
+    symmetric_params : tuple
+        Symmetric parameters.
+    split_sqrt, table_layout : bool
+        Options of :func:`abstract_component_functions`.
+    scheme : NameScheme
+        Names of the abstracted arrays.
+
+    Returns
+    -------
+    list of (symbol, sympy expression)
+        The nodes in terms of the abstracted functions.
+    """
+    return [
+        (
+            symbol,
+            abstract_component_functions(
+                total,
+                registry,
+                symmetric_params,
+                split_sqrt=split_sqrt,
+                table_layout=table_layout,
+                scheme=scheme,
+            ),
+        )
+        for symbol, total in nodes
+    ]
+
+
+def _node_derivative_table(nodes, indexes, needed, nested_nodes):
+    """Compute the derivatives of every node.
+
+    Parameters
+    ----------
+    nodes : list of (symbol, sympy expression)
+        Summation nodes.
+    indexes : list
+        Index order of the :class:`~thermodiff.diffplz.DiffPlz`.
+    needed : list of str
+        Node derivative attributes.
+    nested_nodes : bool
+        Nest the inner sums of the nodes as nodes of their own.
+
+    Returns
+    -------
+    nodes : list of (symbol, sympy expression)
+        The nodes, with the inner nodes when ``nested_nodes``.
+    node_d : dict
+        Symbol -> ``{"value": ..., attribute: derivative}``.
+    """
+    node_d = {}
+    if nested_nodes:
+        nodes, inner_map = _nest_inner_nodes(nodes)
+        node_d = _nested_node_derivatives(nodes, inner_map, needed, indexes)
+    for symbol, total in nodes:
+        if symbol in node_d:
+            continue
+        diff = (
+            DiffPlz(
+                total,
+                internal_functions=[],
+                indexes=indexes,
+                name="s",
+                derivatives=needed,
+            )
+            if needed
+            else None
+        )
+        entry = {"value": total}
+        for attr in needed:
+            entry[attr] = _node_derivative(diff, attr)
+        node_d[symbol] = entry
+    return nodes, node_d
+
+
+def _node_partial(node_d, symbol, key):
+    """Return one derivative of a node (zero when it was not computed)."""
+    return node_d[symbol].get(key, sp.S.Zero)
+
+
+def _node_first(node_d, symbol, var, index=None):
+    """Return the derivative of a node with respect to ``T``, ``V`` or ``n``.
+
+    Parameters
+    ----------
+    node_d : dict
+        Derivatives of the nodes.
+    symbol : sympy.Symbol
+        The node.
+    var : str
+        ``"T"``, ``"V"`` or ``"n"``.
+    index : sympy.Idx, optional
+        Index that replaces ``i`` in the derivative with respect to ``n``.
+
+    Returns
+    -------
+    sympy expression
+        The derivative.
+    """
+    if var == "n":
+        value = _node_partial(node_d, symbol, "dni")
+        if index is None or index == i:
+            return value
+        return value.xreplace({i: index})
+    return _node_partial(node_d, symbol, _FIRST_ATTR[var])
+
+
+def _node_second(node_d, symbol, var_x, var_y):
+    """Return the second derivative of a node with respect to two variables."""
+    key = tuple(sorted((var_x, var_y)))
+    if key == ("n", "n"):
+        return _node_partial(node_d, symbol, "dnidnj")
+    if "n" in key:
+        other = key[0] if key[1] == "n" else key[1]
+        return _node_partial(node_d, symbol, _MIXED_ATTR[other])
+    return _node_partial(node_d, symbol, _SECOND_ATTR[key])
+
+
+@dataclass(frozen=True)
+class _OuterPartials:
+    """Partial derivatives of the outer function ``F``.
+
+    Attributes
+    ----------
+    outer : sympy expression
+        ``F``.
+    node_first : dict
+        Node symbol -> ``dF/dS``.
+    leaves : tuple
+        Node symbols, ``V`` and ``T``, in propagation order (scalar chain).
+    scalar_first : dict or None
+        Leaf -> propagated first partial; ``None`` for plain ``sp.diff``.
+    scalar_second : dict or None
+        Leaf pair -> propagated second partial; ``None`` for ``sp.diff``.
+    """
+
+    outer: sp.Expr
+    node_first: dict
+    leaves: tuple = ()
+    scalar_first: dict | None = None
+    scalar_second: dict | None = None
+
+    def wrt_variable(self, var):
+        """Return ``dF/dT`` or ``dF/dV`` (zero for ``n``)."""
+        if var == "n":
+            return sp.S.Zero
+        if self.scalar_first is None:
+            return sp.diff(self.outer, _SYM[var])
+        return self.scalar_first.get(_SYM[var], sp.S.Zero)
+
+    def second(self, first, second):
+        """Return the second partial with respect to two leaves."""
+        if self.scalar_second is None:
+            if first in self.node_first:
+                return sp.diff(self.node_first[first], second)
+            return sp.diff(self.outer, first, second)
+        if self.leaves.index(first) > self.leaves.index(second):
+            first, second = second, first
+        return self.scalar_second.get((first, second), sp.S.Zero)
+
+
+def _plain_partials(outer, node_symbols):
+    """Return the partials of ``outer`` by ``sp.diff``."""
+    return _OuterPartials(
+        outer, {symbol: sp.diff(outer, symbol) for symbol in node_symbols}
+    )
+
+
+def _scalar_partials(outer, node_symbols, leaves, propagated):
+    """Return the partials of ``outer`` read from the scalar chain.
+
+    Parameters
+    ----------
+    outer : sympy expression
+        ``F``.
+    node_symbols : list
+        Node symbols.
+    leaves : list
+        Node symbols, ``V`` and ``T``.
+    propagated : tuple
+        Result of :func:`_scalar_chain`.
+
+    Returns
+    -------
+    _OuterPartials
+        Partials backed by the propagated first and second derivatives.
+    """
+    _, _, first, second = propagated
+    return _OuterPartials(
+        outer,
+        {symbol: first.get(symbol, sp.S.Zero) for symbol in node_symbols},
+        tuple(leaves),
+        first,
+        second,
+    )
+
+
+def _total_first(var, partials, node_d, node_symbols):
+    """Return ``d/dvar`` of the function (``n`` with index ``i``)."""
+    expr = partials.wrt_variable(var)
+    for symbol in node_symbols:
+        expr += partials.node_first[symbol] * _node_first(
+            node_d, symbol, var, i
+        )
+    return expr
+
+
+def _total_second(var_x, var_y, partials, node_d, node_symbols):
+    """Return ``d2/dvar_x dvar_y`` (indexes ``i`` and ``j`` for two ``n``)."""
+    index_x = i
+    index_y = j if (var_x == "n" and var_y == "n") else i
+    expr = sp.S.Zero
+    if var_x != "n" and var_y != "n":
+        expr += partials.second(_SYM[var_x], _SYM[var_y])
+    for symbol in node_symbols:
+        grad_x = _node_first(node_d, symbol, var_x, index_x)
+        grad_y = _node_first(node_d, symbol, var_y, index_y)
+        if var_y != "n":
+            expr += partials.second(symbol, _SYM[var_y]) * grad_x
+        if var_x != "n":
+            expr += partials.second(symbol, _SYM[var_x]) * grad_y
+        for other in node_symbols:
+            other_y = _node_first(node_d, other, var_y, index_y)
+            expr += partials.second(symbol, other) * grad_x * other_y
+        expr += partials.node_first[symbol] * _node_second(
+            node_d, symbol, var_x, var_y
+        )
+    return expr
+
+
+def _want(items, item):
+    """Append ``item`` to ``items`` unless it is already there."""
+    if item not in items:
+        items.append(item)
+
+
+def _want_pair(pairs, leaves, first, second):
+    """Add the pair in leaf order to ``pairs``."""
+    if leaves.index(first) <= leaves.index(second):
+        _want(pairs, (first, second))
+    else:
+        _want(pairs, (second, first))
+
+
+def _plan_first_order(var, node_symbols, node_d, first):
+    """Add the first partials that a first-order attribute reads."""
+    if var != "n":
+        _want(first, _SYM[var])
+    for symbol in node_symbols:
+        if _node_first(node_d, symbol, var, i) != 0:
+            _want(first, symbol)
+
+
+def _plan_second_node(symbol, variables, node_symbols, node_d, plan):
+    """Add the partials that a second-order attribute reads for one node.
+
+    Parameters
+    ----------
+    symbol : sympy.Symbol
+        The node.
+    variables : tuple of str
+        The two variables, ``n`` first when present.
+    node_symbols : list
+        All the node symbols.
+    node_d : dict
+        Derivatives of the nodes.
+    plan : tuple
+        ``(leaves, first, pairs)``; the last two are extended in place.
+    """
+    var_x, var_y = variables
+    leaves, first, pairs = plan
+    if _node_second(node_d, symbol, var_x, var_y) != 0:
+        _want(first, symbol)
+    for var_a, var_b in ((var_x, var_y), (var_y, var_x)):
+        if var_b != "n" and _node_first(node_d, symbol, var_a, i) != 0:
+            _want_pair(pairs, leaves, symbol, _SYM[var_b])
+    for other in node_symbols:
+        if (
+            _node_first(node_d, symbol, var_x, i) != 0
+            and _node_first(node_d, other, var_y, j) != 0
+        ):
+            _want_pair(pairs, leaves, symbol, other)
+
+
+def _scalar_plan(attributes, node_symbols, node_d, leaves):
+    """Choose the partials of ``F`` that are multiplied by a node derivative.
+
+    Parameters
+    ----------
+    attributes : list of str
+        Derivative attributes.
+    node_symbols : list
+        Node symbols.
+    node_d : dict
+        Derivatives of the nodes.
+    leaves : list
+        Node symbols, ``V`` and ``T``.
+
+    Returns
+    -------
+    first : list
+        Leaves with a first partial, in leaf order.
+    pairs : list of tuple
+        Leaf pairs with a second partial, in leaf order.
+    """
+    first, pairs = [], []
+    for attr in attributes:
+        variables = _ATTR_VARS[attr]
+        if len(variables) == 1:
+            _plan_first_order(variables[0], node_symbols, node_d, first)
+            continue
+        var_x, var_y = variables
+        if var_y == "n" and var_x != "n":
+            var_x, var_y = "n", var_x
+        if var_x != "n" and var_y != "n":
+            _want_pair(pairs, leaves, _SYM[var_x], _SYM[var_y])
+        for symbol in node_symbols:
+            _plan_second_node(
+                symbol,
+                (var_x, var_y),
+                node_symbols,
+                node_d,
+                (leaves, first, pairs),
+            )
+    first = [leaf for leaf in leaves if leaf in first]
+    pairs = sorted(
+        pairs, key=lambda ab: (leaves.index(ab[0]), leaves.index(ab[1]))
+    )
+    return first, pairs
+
+
+def _scalar_estimate(outer, first, pairs, propagated):
+    """Estimate the operations of the plain and the propagated partials.
+
+    The plain partials of ``outer`` after one CSE, against the propagated
+    definitions (``scalar_chain="estimate"``).
+
+    Parameters
+    ----------
+    outer : sympy expression
+        ``F``.
+    first, pairs : list
+        The partials that were propagated.
+    propagated : tuple
+        Result of :func:`_scalar_chain`.
+
+    Returns
+    -------
+    tuple of int
+        ``(plain operations, propagated operations)``.
+    """
+    plain_exprs = (
+        [outer]
+        + [sp.diff(outer, a) for a in first]
+        + [sp.diff(outer, a, b) for a, b in pairs]
+    )
+    replacements, reduced = sp.cse(
+        plain_exprs,
+        symbols=sp.numbered_symbols("_sce"),
+        optimizations="basic",
+    )
+    est_plain = sum(sp.count_ops(e) for _, e in replacements) + sum(
+        sp.count_ops(e) for e in reduced
+    )
+    est_scalar = sum(sp.count_ops(e) for _, e in propagated[0])
+    return est_plain, est_scalar
+
+
+def _scalar_chain_block(outer, attributes, node_symbols, node_d, leaves):
+    """Propagate the partials of ``outer`` and estimate their cost.
+
+    Parameters
+    ----------
+    outer : sympy expression
+        ``F``.
+    attributes : list of str
+        Derivative attributes.
+    node_symbols : list
+        Node symbols.
+    node_d : dict
+        Derivatives of the nodes.
+    leaves : list
+        Node symbols, ``V`` and ``T``.
+
+    Returns
+    -------
+    propagated : tuple or None
+        Result of :func:`_scalar_chain`; ``None`` when there is nothing to
+        propagate (only the value) or ``F`` is not smooth.
+    estimate : tuple or None
+        Result of :func:`_scalar_estimate`.
+    """
+    first, pairs = _scalar_plan(attributes, node_symbols, node_d, leaves)
+    if not (first or pairs):
+        return None, None
+    propagated = _scalar_chain(outer, leaves, first, pairs)
+    if propagated is None:
+        return None, None
+    return propagated, _scalar_estimate(outer, first, pairs, propagated)
+
+
+@dataclass(frozen=True)
+class _Finisher:
+    """Last rewrites of a derivative before it enters the structure.
+
+    Attributes
+    ----------
+    back : dict
+        Node symbol -> body, to put the nodes back.
+    mapping : callable
+        Replaces the abstract functions by arrays.
+    split_sums : bool
+        Split the sums of terms into sums of sums.
+    scheme : NameScheme
+        Names of the abstracted arrays.
+    """
+
+    back: dict
+    mapping: Callable
+    split_sums: bool
+    scheme: NameScheme
+
+    def resolve(self, expr):
+        """Put the inner node bodies back (they may be nested)."""
+        for _ in range(len(self.back) + 1):
+            new_expr = expr.xreplace(self.back)
+            if new_expr == expr:
+                break
+            expr = new_expr
+        return expr
+
+    def split(self, expr):
+        """Split the sums of terms when ``split_sums`` is on."""
+        if self.split_sums:
+            return split_sum_terms(expr, self.scheme)
+        return expr
+
+    def finish(self, expr):
+        """Resolve, map to arrays and split ``expr``."""
+        return self.split(self.mapping(self.resolve(expr)))
+
+
+def _scalar_outputs(propagated, estimate, node_symbols, finisher):
+    """Return the scalar-chain entries of the structure.
+
+    The scalars keep the node symbols; the nodes they read go apart.
+
+    Parameters
+    ----------
+    propagated : tuple
+        Result of :func:`_scalar_chain`.
+    estimate : tuple
+        Result of :func:`_scalar_estimate`.
+    node_symbols : list
+        Node symbols.
+    finisher : _Finisher
+        Rewrites of the bodies.
+
+    Returns
+    -------
+    dict
+        ``_scalar_defs``, ``_scalar_nodes`` and ``_scalar_estimate``.
+    """
+    scalar_defs, scalar_value = propagated[0], propagated[1]
+    mapped = [(symbol, finisher.mapping(body)) for symbol, body in scalar_defs]
+    read = set().union(*[body.free_symbols for _, body in scalar_defs]) | (
+        scalar_value.free_symbols
+        if isinstance(scalar_value, sp.Expr)
+        else set()
+    )
+    nodes_read = [
+        (symbol, finisher.finish(symbol))
+        for symbol in node_symbols
+        if symbol in read
+    ]
+    return {
+        "_scalar_defs": mapped,
+        "_scalar_nodes": nodes_read,
+        "_scalar_estimate": estimate,
+    }
+
+
+def _assemble_attributes(
+    target, attributes, partials, node_d, node_symbols, finisher
+):
+    """Fill ``target`` with the chain-rule derivative of every attribute.
+
+    Parameters
+    ----------
+    target : dict
+        Receives ``attribute -> expression``.
+    attributes : list of str
+        Derivative attributes.
+    partials : _OuterPartials
+        Partials of the outer function to read.
+    node_d : dict
+        Derivatives of the nodes.
+    node_symbols : list
+        Node symbols.
+    finisher : _Finisher
+        Rewrites of the derivatives.
+    """
+    for attr in attributes:
+        variables = _ATTR_VARS[attr]
+        if len(variables) == 1:
+            value = _total_first(variables[0], partials, node_d, node_symbols)
+        else:
+            var_x, var_y = variables
+            if var_y == "n" and var_x != "n":
+                var_x, var_y = "n", var_x
+            value = _total_second(var_x, var_y, partials, node_d, node_symbols)
+        target[attr] = finisher.finish(value)
+
+
+def _temperature_order(attributes):
+    """Return the highest temperature derivative of ``attributes``."""
+    return max(
+        (sum(1 for var in _ATTR_VARS[a] if var == "T") for a in attributes),
+        default=0,
+    )
+
+
+def _head_structure(outer, defs, scheme, propagated, finisher):
+    """Return the ``value``, component definitions and scheme entries.
+
+    Parameters
+    ----------
+    outer : sympy expression
+        ``F``.
+    defs : list
+        Result of :func:`component_definitions`.
+    scheme : NameScheme
+        Names of the abstracted arrays.
+    propagated : tuple or None
+        Result of :func:`_scalar_chain`, if it is used.
+    finisher : _Finisher
+        Rewrites of the value.
+
+    Returns
+    -------
+    dict
+        The first three entries of the structure.
+    """
+    if propagated is None:
+        value = finisher.finish(outer)
+    else:
+        value = finisher.split(propagated[1])
+    return {
+        "value": value,
+        "_component_defs": defs,
+        NAME_SCHEME_KEY: scheme,
+    }
+
+
+def _plain_structure(outer, attributes, plain, node_d, node_symbols, finisher):
+    """Return the plain outputs that accompany the scalar chain.
+
+    ``to_fortran`` runs its summation passes on them too, so the loops come
+    out as without ``scalar_chain``.
+
+    Parameters
+    ----------
+    outer : sympy expression
+        ``F``.
+    attributes : list of str
+        Derivative attributes.
+    plain : _OuterPartials
+        Partials of ``F`` by ``sp.diff``.
+    node_d : dict
+        Derivatives of the nodes.
+    node_symbols : list
+        Node symbols.
+    finisher : _Finisher
+        Rewrites of the derivatives.
+
+    Returns
+    -------
+    dict
+        ``value`` and the attributes.
+    """
+    plain_out = {"value": finisher.finish(outer)}
+    _assemble_attributes(
+        plain_out, attributes, plain, node_d, node_symbols, finisher
+    )
+    return plain_out
+
+
 def chain_rule_derivatives(
     expression,
     attributes,
@@ -1496,301 +2173,48 @@ def chain_rule_derivatives(
     if expression.has(P):
         return None
     scheme = _name_scheme(expression)
-    factored = factor_sums(expression)
-    outer, nodes = summation_nodes(factored)
-    if not nodes:
+    split = _outer_and_nodes(expression)
+    if split is None:
         return None
-    # the outer function must not depend on the mole numbers any more
-    if any(base == n for base in outer.atoms(sp.IndexedBase)) or outer.has(
-        sp.Sum
-    ):
-        return None
-
-    # node derivatives needed: any attribute that involves n needs the
-    # node gradient/Hessian; T/V attributes need the T/V node derivatives
-    needed = set()
-    for attr in attributes:
-        vars_ = _ATTR_VARS[attr]
-        if vars_ == ("n",):
-            needed.add("dni")
-        elif vars_ == ("n", "n"):
-            needed |= {"dni", "dnidnj"}
-        elif "n" in vars_:
-            x = vars_[0]
-            needed |= {
-                "dni",
-                {"T": "dtdni", "V": "dvdni"}[x],
-                {"T": "dt", "V": "dv"}[x],
-            }
-        else:
-            for x in vars_:
-                needed.add({"T": "dt", "V": "dv"}[x])
-            if len(vars_) == 2:
-                needed.add(
-                    {("T", "T"): "dt2", ("V", "V"): "dv2", ("T", "V"): "dtdv"}[
-                        vars_
-                    ]
-                )
-    needed = sorted(needed)
-
+    outer, nodes = split
+    needed = _needed_node_derivatives(attributes)
     registry = {}
-    nodes = [
-        (
-            symbol,
-            abstract_component_functions(
-                total,
-                registry,
-                symmetric_params,
-                split_sqrt=split_sqrt,
-                table_layout=table_layout,
-                scheme=scheme,
-            ),
-        )
-        for symbol, total in nodes
-    ]
-    node_symbols = [symbol for symbol, _ in nodes]
-    node_d = {}
-    if nested_nodes:
-        nodes, inner_map = _nest_inner_nodes(nodes)
-        node_d = _nested_node_derivatives(nodes, inner_map, needed, indexes)
-    else:
-        inner_map = {}
-    for symbol, total in nodes:
-        if symbol in node_d:
-            continue
-        dz = (
-            DiffPlz(
-                total,
-                internal_functions=[],
-                indexes=indexes,
-                name="s",
-                derivatives=needed,
-            )
-            if needed
-            else None
-        )
-        entry = {"value": total}
-        for attr in needed:
-            entry[attr] = _node_derivative(dz, attr)
-        node_d[symbol] = entry
-
-    def node(symbol, key):
-        return node_d[symbol].get(key, sp.S.Zero)
-
-    # node derivative with respect to one variable ("T", "V", "n")
-    def dS(symbol, x, index=None):
-        if x == "n":
-            value = node(symbol, "dni")
-            return (
-                value
-                if index is None or index == i
-                else value.xreplace({i: index})
-            )
-        return node(symbol, {"T": "dt", "V": "dv"}[x])
-
-    def d2S(symbol, x, y):
-        key = tuple(sorted((x, y)))
-        if key == ("n", "n"):
-            return node(symbol, "dnidnj")
-        if "n" in key:
-            other = key[0] if key[1] == "n" else key[1]
-            return node(symbol, {"T": "dtdni", "V": "dvdni"}[other])
-        return node(
-            symbol,
-            {("T", "T"): "dt2", ("V", "V"): "dv2", ("T", "V"): "dtdv"}[key],
-        )
-
-    # partial derivatives of the outer function (scalar)
-    F = outer
-    Fk = {s: sp.diff(F, s) for s in node_symbols}
-
-    def Fx(x):
-        return sp.S.Zero if x == "n" else sp.diff(F, _SYM[x])
-
-    back = {symbol: total for symbol, total in nodes}
-
-    def resolve(expr):
-        # inner node symbols may appear inside node bodies
-        for _ in range(len(back) + 1):
-            new_expr = expr.xreplace(back)
-            if new_expr == expr:
-                break
-            expr = new_expr
-        return expr
-
-    sc = None
-    scalar_estimate = None
-    if scalar_chain:
-        leaves = list(node_symbols) + [_SYM[x] for x in ("V", "T")]
-        first, pairs = [], []
-
-        def want(lst, item):
-            if item not in lst:
-                lst.append(item)
-
-        def pair(a, b):
-            want(
-                pairs, (a, b) if leaves.index(a) <= leaves.index(b) else (b, a)
-            )
-
-        # only the partials multiplied by a non-zero node derivative
-        for attr in attributes:
-            vars_ = _ATTR_VARS[attr]
-            if len(vars_) == 1:
-                x = vars_[0]
-                if x != "n":
-                    want(first, _SYM[x])
-                for s_ in node_symbols:
-                    if dS(s_, x, i) != 0:
-                        want(first, s_)
-                continue
-            x, y = vars_
-            if y == "n" and x != "n":
-                x, y = "n", x
-            if x != "n" and y != "n":
-                pair(_SYM[x], _SYM[y])
-            for s_ in node_symbols:
-                if d2S(s_, x, y) != 0:
-                    want(first, s_)
-                for a, b in ((x, y), (y, x)):
-                    if b != "n" and dS(s_, a, i) != 0:
-                        pair(s_, _SYM[b])
-                for t_ in node_symbols:
-                    if dS(s_, x, i) != 0 and dS(t_, y, j) != 0:
-                        pair(s_, t_)
-        first = [leaf for leaf in leaves if leaf in first]
-        pairs = sorted(
-            pairs, key=lambda ab: (leaves.index(ab[0]), leaves.index(ab[1]))
-        )
-        # nothing to propagate (only the value): keep the plain path
-        if first or pairs:
-            sc = _scalar_chain(F, leaves, first, pairs)
-            if sc is not None:
-                # operation estimates of the two scalar blocks (scalar_chain=
-                # "estimate"): the plain partials of F after one CSE, against
-                # the propagated definitions and results
-                plain_exprs = (
-                    [F]
-                    + [sp.diff(F, a) for a in first]
-                    + [sp.diff(F, a, b) for a, b in pairs]
-                )
-                rep_, red_ = sp.cse(
-                    plain_exprs,
-                    symbols=sp.numbered_symbols("_sce"),
-                    optimizations="basic",
-                )
-                est_plain = sum(sp.count_ops(e) for _, e in rep_) + sum(
-                    sp.count_ops(e) for e in red_
-                )
-                est_sc = sum(sp.count_ops(e) for _, e in sc[0])
-                scalar_estimate = (est_plain, est_sc)
-
-    def F2_plain(a, b):
-        if a in Fk_plain:
-            return sp.diff(Fk_plain[a], b)
-        return sp.diff(F, a, b)
-
-    Fk_plain, Fx_plain = Fk, Fx
-    if sc is not None:
-        sc_defs, sc_value, sc_d1, sc_d2 = sc
-        Fk = {s: sc_d1.get(s, sp.S.Zero) for s in node_symbols}
-
-        def Fx(x):
-            return sp.S.Zero if x == "n" else sc_d1.get(_SYM[x], sp.S.Zero)
-
-        def F2(a, b):
-            if leaves.index(a) > leaves.index(b):
-                a, b = b, a
-            return sc_d2.get((a, b), sp.S.Zero)
-
-    else:
-        F2 = F2_plain
-
-    def total_first(x):
-        # d/dx (x in T, V, n with index i)
-        expr = Fx(x)
-        for s in node_symbols:
-            expr += Fk[s] * dS(s, x, i)
-        return expr
-
-    def total_second(x, y):
-        # d2/dx dy ; for n the first n uses index i, the second j
-        ix = i
-        iy = j if (x == "n" and y == "n") else i
-        expr = sp.S.Zero
-        if x != "n" and y != "n":
-            expr += F2(_SYM[x], _SYM[y])
-        for s in node_symbols:
-            if y != "n":
-                expr += F2(s, _SYM[y]) * dS(s, x, ix)
-            if x != "n":
-                expr += F2(s, _SYM[x]) * dS(s, y, iy)
-            for t in node_symbols:
-                expr += F2(s, t) * dS(s, x, ix) * dS(t, y, iy)
-            expr += Fk[s] * d2S(s, x, y)
-        return expr
-
-    order = max(
-        (sum(1 for v in _ATTR_VARS[a] if v == "T") for a in attributes),
-        default=0,
+    nodes = _abstract_nodes(
+        nodes, registry, symmetric_params, split_sqrt, table_layout, scheme
     )
+    node_symbols = [symbol for symbol, _ in nodes]
+    nodes, node_d = _node_derivative_table(
+        nodes, indexes, needed, nested_nodes
+    )
+    plain = _plain_partials(outer, node_symbols)
+    leaves = list(node_symbols) + [_SYM[var] for var in ("V", "T")]
+    propagated, estimate = None, None
+    if scalar_chain:
+        propagated, estimate = _scalar_chain_block(
+            outer, attributes, node_symbols, node_d, leaves
+        )
+    partials = plain
+    if propagated is not None:
+        partials = _scalar_partials(outer, node_symbols, leaves, propagated)
     defs, mapping = component_definitions(
         registry,
-        order,
+        _temperature_order(attributes),
         inline_rates=split_sums,
         pair_cse=pair_cse,
         pair_rates=pair_rates,
         scheme=scheme,
     )
-    value0 = mapping(resolve(outer)) if sc is None else sc_value
-    if split_sums:
-        value0 = split_sum_terms(value0, scheme)
-    out = {
-        "value": value0,
-        "_component_defs": defs,
-        NAME_SCHEME_KEY: scheme,
-    }
-    if sc is not None:
-        # the scalars keep the node symbols; the nodes they read go apart
-        out["_scalar_defs"] = [
-            (symbol, mapping(body)) for symbol, body in sc_defs
-        ]
-        read = set().union(*[body.free_symbols for _, body in sc_defs]) | (
-            sc_value.free_symbols if isinstance(sc_value, sp.Expr) else set()
+    finisher = _Finisher(dict(nodes), mapping, split_sums, scheme)
+    out = _head_structure(outer, defs, scheme, propagated, finisher)
+    if propagated is not None:
+        out.update(
+            _scalar_outputs(propagated, estimate, node_symbols, finisher)
         )
-        nodes_read = []
-        for symbol in node_symbols:
-            if symbol in read:
-                body = mapping(resolve(symbol))
-                if split_sums:
-                    body = split_sum_terms(body, scheme)
-                nodes_read.append((symbol, body))
-        out["_scalar_nodes"] = nodes_read
-        out["_scalar_estimate"] = scalar_estimate
-
-    def assemble(target):
-        for attr in attributes:
-            vars_ = _ATTR_VARS[attr]
-            if len(vars_) == 1:
-                value = total_first(vars_[0])
-            else:
-                x, y = vars_
-                if y == "n" and x != "n":
-                    x, y = "n", x
-                value = total_second(x, y)
-            value = mapping(resolve(value))
-            if split_sums:
-                value = split_sum_terms(value, scheme)
-            target[attr] = value
-
-    assemble(out)
-    if sc is not None:
-        # the plain outputs as well: to_fortran runs its summation passes on
-        # them too, so the loops come out as without scalar_chain
-        Fk, Fx, F2 = Fk_plain, Fx_plain, F2_plain
-        plain = {"value": mapping(resolve(outer))}
-        if split_sums:
-            plain["value"] = split_sum_terms(plain["value"], scheme)
-        assemble(plain)
-        out["_plain"] = plain
+    _assemble_attributes(
+        out, attributes, partials, node_d, node_symbols, finisher
+    )
+    if propagated is not None:
+        out["_plain"] = _plain_structure(
+            outer, attributes, plain, node_d, node_symbols, finisher
+        )
     return out
