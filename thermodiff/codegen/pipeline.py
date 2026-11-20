@@ -9,7 +9,12 @@ from typing import Any, NamedTuple
 
 import sympy as sp
 
-from thermodiff.codegen import CodegenOptions, ScalarChainMode, SepSumsMode
+from thermodiff.codegen import (
+    CodegenOptions,
+    CseBackend,
+    ScalarChainMode,
+    SepSumsMode,
+)
 from thermodiff.codegen.common import (
     _DERIV_SUFFIX,
     _INDENT,
@@ -1006,21 +1011,419 @@ def _declare_signature(ctx: _EmitContext, state: _EmitState) -> None:
     ]
 
 
+def _array_cse_enabled(opts: CodegenOptions) -> bool:
+    """Gate of the array CSE."""
+    return opts.array_cse
+
+
+def _param_symmetry_enabled(opts: CodegenOptions) -> bool:
+    """Gate of the passes that use the symmetric parameters."""
+    return opts.param_symmetry
+
+
+def _fuse_temps_enabled(opts: CodegenOptions) -> bool:
+    """Gate of the temporary fusion."""
+    return opts.fuse_temps
+
+
+def _hoist_invariants_enabled(opts: CodegenOptions) -> bool:
+    """Gate of the invariant hoisting."""
+    return opts.hoist_invariants
+
+
+def _array_cse(ctx: _EmitContext, state: _EmitState) -> None:
+    """Share the common subexpressions into arrays (S13).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``all_exprs``; writes ``array_defs`` and adds the
+        temporaries to ``arrays``.  Draws names from the namer.
+    """
+    state.all_exprs, state.array_defs = _indexed_cse(
+        state.all_exprs,
+        state.namer,
+        state.arrays,
+        expensive_twice=state.opts.cse_expensive,
+        # with scalar_chain, only the plain outputs count (as without it)
+        counted=(
+            [entry[0] == _SCALAR_PLAIN for entry in state.prepared]
+            if state.scalar_chain_defs
+            else None
+        ),
+    )
+
+
+def _mirror_array_temps(ctx: _EmitContext, state: _EmitState) -> None:
+    """Flag the symmetric array temporaries as mirrored (S14).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Updates ``array_defs`` in place and, with ``nest_shared``,
+        ``symmetric_params``.
+    """
+    opts = state.opts
+    if not state.symmetric_params:
+        return
+    for definition in state.array_defs:
+        free = definition.free
+        if len(free) != 2 or definition.limits:
+            continue
+        body = _canonical_symmetric(
+            definition.body, state.symmetric_params, opts.sym_rank3
+        )
+        swapped_equal = (
+            _swap(
+                body,
+                free[0],
+                free[1],
+                state.symmetric_params,
+                opts.sym_rank3,
+            )
+            == body
+        )
+        if swapped_equal:
+            definition.mirror = True
+            if opts.nest_shared:
+                # a symmetric temporary behaves as a symmetric parameter
+                # for the later passes (sum sharing modulo renaming)
+                state.symmetric_params = state.symmetric_params + (
+                    _temp_name(definition.target),
+                )
+
+
+def _reserved_names(ctx: _EmitContext, state: _EmitState) -> None:
+    """Collect the names that temporaries must not take (S15).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Reads the POST-CSE ``all_exprs``; writes ``reserved``.
+    """
+    reserved = (
+        set(state.module_symbols)
+        | set(state.integer_args)
+        | {out_name for _, out_name, _, _ in state.prepared}
+    )
+    for expr in state.all_exprs:
+        scan = _scan_atoms(expr)
+        reserved.update(str(sym) for sym in scan.symbols)
+        reserved.update(str(base_) for base_ in scan.bases)
+    state.reserved = reserved
+
+
+def _fuse_temps(ctx: _EmitContext, state: _EmitState) -> None:
+    """Fuse the temporaries that are read once (S16).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``all_exprs``, re-splits the two definition pools and
+        pops the fused names from ``arrays``.
+    """
+    opts = state.opts
+    pool = state.component_array_defs + state.array_defs
+    pool, state.all_exprs, fused = _fuse_temporaries(
+        pool,
+        state.all_exprs,
+        dedup=opts.nest_shared,
+        guard=opts.fuse_guard,
+        keep_libm=opts.keep_libm_tables,
+    )
+    state.component_array_defs = [
+        d for d in pool if d in state.component_array_defs
+    ]
+    state.array_defs = [d for d in pool if d not in state.component_array_defs]
+    for name in fused:
+        state.arrays.pop(name, None)
+
+
+def _hoist_array_temps(ctx: _EmitContext, state: _EmitState) -> None:
+    """Hoist the loop invariants of the array temporaries (S17).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``all_exprs``; appends the hoisted definitions to
+        ``array_defs``.  Draws names from the namer.
+    """
+    state.all_exprs, hoist_defs, _ = _hoist_invariants(
+        state.all_exprs,
+        state.namer,
+        state.arrays,
+        reserved=state.reserved,
+    )
+    state.array_defs = state.array_defs + hoist_defs
+
+
+def _share_sum_temps(ctx: _EmitContext, state: _EmitState) -> None:
+    """Share the summations, or pass the expressions through (S18).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Writes ``residuals`` and ``sum_defs``.  Draws names from the namer.
+    """
+    opts = state.opts
+    if state.share_sums:
+        state.residuals, state.sum_defs = _share_sums(
+            state.all_exprs,
+            state.namer,
+            ctx.diff.indexes,
+            state.arrays,
+            alpha=opts.sum_alpha,
+            free_alpha=opts.sum_free_alpha,
+            symmetric_params=(
+                state.symmetric_params if opts.param_symmetry else ()
+            ),
+            transpose=opts.sum_transpose,
+            sym_rank3=opts.sym_rank3,
+        )
+    else:
+        state.residuals = list(state.all_exprs)
+        state.sum_defs = []
+
+
+def _hoist_sum_temps(ctx: _EmitContext, state: _EmitState) -> None:
+    """Hoist the loop invariants of the shared sums (S18b).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``sum_defs``.  Draws names from the namer.
+    """
+    if not state.sum_defs:
+        return
+    _, _, state.sum_defs = _hoist_invariants(
+        [], state.namer, state.arrays, state.sum_defs, reserved=state.reserved
+    )
+
+
+def _scalar_cse_enabled(opts: CodegenOptions) -> bool:
+    """Gate of the scalar CSE: ``scalar_cse``, or ``share`` when unset."""
+    return _option_or(opts.scalar_cse, opts.share)
+
+
+def _scalar_cse_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Share the common scalar subexpressions of the residuals (S19).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Rewrites ``residuals``; writes ``cse_defs``.  Draws names from the
+        namer.
+    """
+    if state.opts.cse_backend is CseBackend.SYMPY:
+        cse = _sympy_scalar_cse
+    else:
+        cse = _common_scalar_cse
+    state.residuals, state.cse_defs = cse(
+        state.residuals, state.namer, state.arrays
+    )
+
+
+def _scalar_chain_scalars(state: _EmitState) -> dict:
+    """Make the scalar definitions of the chain; return the alias map."""
+    alias = {}
+    for (attr, out_name, _, _), residual in zip(
+        state.prepared, state.residuals
+    ):
+        if attr != _SCALAR_CHAIN:
+            continue
+        if isinstance(residual, sp.Symbol):
+            alias[sp.Symbol(out_name)] = residual
+            state.namer.created[:] = [
+                x for x in state.namer.created if str(x) != out_name
+            ]
+        else:
+            state.scalar_chain_definitions.append(
+                TempDef(
+                    target=sp.Symbol(out_name),
+                    free=[],
+                    limits=[],
+                    body=residual,
+                )
+            )
+    for target, body in state.scalar_chain_defs:
+        body = (
+            _kron_to_piecewise(body)
+            .xreplace({nc: sp.Symbol("nc")})
+            .xreplace(alias)
+        )
+        if state.opts.float_canon:
+            body = _canonical_floats(body)
+        state.scalar_chain_definitions.append(
+            TempDef(target=target, free=[], limits=[], body=body)
+        )
+    return alias
+
+
+def _drop_plain_only(state: _EmitState) -> None:
+    """Drop the temporaries that only the plain outputs read."""
+    namer = state.namer
+    pools = [
+        state.component_array_defs,
+        state.array_defs,
+        state.sum_defs,
+        state.cse_defs,
+    ]
+    while True:
+        read = set()
+        for expr in (
+            state.residuals
+            + [d.body for pool in pools for d in pool]
+            + [d.body for d in state.scalar_chain_definitions]
+        ):
+            read |= {str(x) for x in expr.free_symbols} | {
+                str(x.base) for x in expr.atoms(sp.Indexed)
+            }
+        gone = {_temp_name(d.target) for pool in pools for d in pool} - read
+        if not gone:
+            break
+        pools = [
+            [d for d in pool if _temp_name(d.target) not in gone]
+            for pool in pools
+        ]
+        namer.created[:] = [x for x in namer.created if str(x) not in gone]
+        for name in gone:
+            state.arrays.pop(name, None)
+    (
+        state.component_array_defs,
+        state.array_defs,
+        state.sum_defs,
+        state.cse_defs,
+    ) = pools
+
+
+def _alias_scalar_chain(ctx: _EmitContext, state: _EmitState) -> None:
+    """Turn the scalar-chain outputs into definitions and prune (S20a).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Writes ``scalar_chain_definitions``; prunes ``prepared``,
+        ``residuals``, the pools, ``arrays`` and ``namer.created``.
+    """
+    if not state.scalar_chain_defs:
+        return
+    keep = [
+        k
+        for k, entry in enumerate(state.prepared)
+        if entry[0] not in (_SCALAR_CHAIN, _SCALAR_PLAIN)
+    ]
+    alias = _scalar_chain_scalars(state)
+    state.prepared = [state.prepared[k] for k in keep]
+    state.residuals = [state.residuals[k] for k in keep]
+    state.residuals = [
+        residual.xreplace(alias) for residual in state.residuals
+    ]
+    # drop what only the plain outputs read
+    _drop_plain_only(state)
+
+
+def _rendered_outputs(ctx: _EmitContext, state: _EmitState) -> None:
+    """Pair every residual with its output name and free indices (S20b).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Writes ``rendered``.
+    """
+    state.rendered = [
+        (
+            attr,
+            out_name,
+            residual,
+            _order_free(_free_indices(residual), ctx.diff.indexes),
+        )
+        for (attr, out_name, _, _), residual in zip(
+            state.prepared, state.residuals
+        )
+    ]
+
+
+def _drop_unread_scalars(state: _EmitState) -> None:
+    """Drop the scalars that nothing reads, then order the definitions."""
+    definitions = state.definitions
+    while True:
+        read = set()
+        for expr in state.residuals + [
+            d.body for d in definitions + state.scalar_chain_definitions
+        ]:
+            read |= {str(x) for x in expr.free_symbols}
+        unread = [
+            d
+            for d in state.scalar_chain_definitions
+            if str(d.target) not in read
+        ]
+        if not unread:
+            break
+        gone = {str(d.target) for d in unread}
+        state.scalar_chain_definitions = [
+            d
+            for d in state.scalar_chain_definitions
+            if str(d.target) not in gone
+        ]
+        state.namer.created[:] = [
+            x for x in state.namer.created if str(x) not in gone
+        ]
+    state.definitions = _dependency_order(
+        definitions + state.scalar_chain_definitions
+    )
+
+
+def _definitions_list(ctx: _EmitContext, state: _EmitState) -> None:
+    """Join the pools into the ordered list of definitions (S21).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Writes ``definitions``; with scalar-chain definitions, drops the
+        unread ones and orders by dependency.
+    """
+    state.definitions = (
+        state.component_array_defs
+        + state.array_defs
+        + state.sum_defs
+        + state.cse_defs
+    )
+    if state.scalar_chain_definitions:
+        # drop the scalars nothing reads
+        _drop_unread_scalars(state)
+
+
 def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
     """Run the stages not yet extracted (S13-S41); temporary."""
-    diff = ctx.diff
     structured = state.structured
     stats = state.stats
     count_scalar = state.count_scalar
     namer = state.namer
     integer_args = state.integer_args
-    module_symbols = state.module_symbols
     symmetric_params = state.symmetric_params
-    scalar_chain_defs = state.scalar_chain_defs
-    share_sums = state.share_sums
-    scalar_cse = state.scalar_cse
     prepared = state.prepared
-    all_exprs = state.all_exprs
     scans = state.scans
     params = state.params
     param_arrays = state.param_arrays
@@ -1029,23 +1432,14 @@ def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
     inputs = state.inputs
     output_decls = state.output_decls
     arrays = state.arrays
-    component_array_defs = state.component_array_defs
+    reserved = state.reserved
+    residuals = state.residuals
+    rendered = state.rendered
+    definitions = state.definitions
     sub_name = ctx.sub_name
     legacy = state.opts.to_legacy()
-    array_cse = legacy["array_cse"]
-    cse_expensive = legacy["cse_expensive"]
     param_symmetry = legacy["param_symmetry"]
     sym_rank3 = legacy["sym_rank3"]
-    nest_shared = legacy["nest_shared"]
-    fuse_temps = legacy["fuse_temps"]
-    fuse_guard = legacy["fuse_guard"]
-    keep_libm_tables = legacy["keep_libm_tables"]
-    hoist_invariants = legacy["hoist_invariants"]
-    sum_alpha = legacy["sum_alpha"]
-    sum_free_alpha = legacy["sum_free_alpha"]
-    sum_transpose = legacy["sum_transpose"]
-    cse_backend = legacy["cse_backend"]
-    float_canon = legacy["float_canon"]
     optional_derivatives = legacy["optional_derivatives"]
     lowrank_hess = legacy["lowrank_hess"]
     hoist_loops = legacy["hoist_loops"]
@@ -1068,192 +1462,6 @@ def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
     array_pad = legacy["array_pad"]
     scalar_chain = legacy["scalar_chain"]
 
-    if array_cse:
-        all_exprs, array_defs = _indexed_cse(
-            all_exprs,
-            namer,
-            arrays,
-            expensive_twice=cse_expensive,
-            # with scalar_chain, only the plain outputs count (as without it)
-            counted=(
-                [entry[0] == _SCALAR_PLAIN for entry in prepared]
-                if scalar_chain_defs
-                else None
-            ),
-        )
-    else:
-        array_defs = []
-    if param_symmetry and symmetric_params:
-        for definition in array_defs:
-            free = definition.free
-            if len(free) != 2 or definition.limits:
-                continue
-            body = _canonical_symmetric(
-                definition.body, symmetric_params, sym_rank3
-            )
-            swapped_equal = (
-                _swap(body, free[0], free[1], symmetric_params, sym_rank3)
-                == body
-            )
-            if swapped_equal:
-                definition.mirror = True
-                if nest_shared:
-                    # a symmetric temporary behaves as a symmetric parameter
-                    # for the later passes (sum sharing modulo renaming)
-                    symmetric_params = symmetric_params + (
-                        _temp_name(definition.target),
-                    )
-    reserved = (
-        set(module_symbols)
-        | set(integer_args)
-        | {out_name for _, out_name, _, _ in prepared}
-    )
-    for expr in all_exprs:
-        scan = _scan_atoms(expr)
-        reserved.update(str(sym) for sym in scan.symbols)
-        reserved.update(str(base_) for base_ in scan.bases)
-    if fuse_temps:
-        pool = component_array_defs + array_defs
-        pool, all_exprs, fused = _fuse_temporaries(
-            pool,
-            all_exprs,
-            dedup=nest_shared,
-            guard=fuse_guard,
-            keep_libm=keep_libm_tables,
-        )
-        component_array_defs = [d for d in pool if d in component_array_defs]
-        array_defs = [d for d in pool if d not in component_array_defs]
-        for name in fused:
-            arrays.pop(name, None)
-    if hoist_invariants:
-        all_exprs, hoist_defs, _ = _hoist_invariants(
-            all_exprs, namer, arrays, reserved=reserved
-        )
-        array_defs = array_defs + hoist_defs
-    if share_sums:
-        residuals, sum_defs = _share_sums(
-            all_exprs,
-            namer,
-            diff.indexes,
-            arrays,
-            alpha=sum_alpha,
-            free_alpha=sum_free_alpha,
-            symmetric_params=symmetric_params if param_symmetry else (),
-            transpose=sum_transpose,
-            sym_rank3=sym_rank3,
-        )
-    else:
-        residuals = list(all_exprs)
-        sum_defs = []
-    if hoist_invariants and sum_defs:
-        _, _, sum_defs = _hoist_invariants(
-            [], namer, arrays, sum_defs, reserved=reserved
-        )
-    if scalar_cse:
-        if cse_backend == "sympy":
-            residuals, cse_defs = _sympy_scalar_cse(residuals, namer, arrays)
-        else:
-            residuals, cse_defs = _common_scalar_cse(residuals, namer, arrays)
-    else:
-        cse_defs = []
-    scalar_chain_definitions = []
-    if scalar_chain_defs:
-        keep = [
-            k
-            for k, entry in enumerate(prepared)
-            if entry[0] not in (_SCALAR_CHAIN, _SCALAR_PLAIN)
-        ]
-        alias = {}
-        for (attr, out_name, _, _), residual in zip(prepared, residuals):
-            if attr != _SCALAR_CHAIN:
-                continue
-            if isinstance(residual, sp.Symbol):
-                alias[sp.Symbol(out_name)] = residual
-                namer.created[:] = [
-                    x for x in namer.created if str(x) != out_name
-                ]
-            else:
-                scalar_chain_definitions.append(
-                    TempDef(
-                        target=sp.Symbol(out_name),
-                        free=[],
-                        limits=[],
-                        body=residual,
-                    )
-                )
-        for target, body in scalar_chain_defs:
-            body = (
-                _kron_to_piecewise(body)
-                .xreplace({nc: sp.Symbol("nc")})
-                .xreplace(alias)
-            )
-            if float_canon:
-                body = _canonical_floats(body)
-            scalar_chain_definitions.append(
-                TempDef(target=target, free=[], limits=[], body=body)
-            )
-        prepared = [prepared[k] for k in keep]
-        residuals = [residuals[k] for k in keep]
-        residuals = [residual.xreplace(alias) for residual in residuals]
-        # drop what only the plain outputs read
-        pools = [component_array_defs, array_defs, sum_defs, cse_defs]
-        while True:
-            read = set()
-            for e in (
-                residuals
-                + [d.body for pool in pools for d in pool]
-                + [d.body for d in scalar_chain_definitions]
-            ):
-                read |= {str(x) for x in e.free_symbols} | {
-                    str(x.base) for x in e.atoms(sp.Indexed)
-                }
-            gone = {
-                _temp_name(d.target) for pool in pools for d in pool
-            } - read
-            if not gone:
-                break
-            pools = [
-                [d for d in pool if _temp_name(d.target) not in gone]
-                for pool in pools
-            ]
-            namer.created[:] = [x for x in namer.created if str(x) not in gone]
-            for name in gone:
-                arrays.pop(name, None)
-        component_array_defs, array_defs, sum_defs, cse_defs = pools
-    rendered = [
-        (
-            attr,
-            out_name,
-            residual,
-            _order_free(_free_indices(residual), diff.indexes),
-        )
-        for (attr, out_name, _, _), residual in zip(prepared, residuals)
-    ]
-
-    definitions = component_array_defs + array_defs + sum_defs + cse_defs
-    if scalar_chain_definitions:
-        # drop the scalars nothing reads
-        while True:
-            read = set()
-            for e in residuals + [
-                d.body for d in definitions + scalar_chain_definitions
-            ]:
-                read |= {str(x) for x in e.free_symbols}
-            unread = [
-                d
-                for d in scalar_chain_definitions
-                if str(d.target) not in read
-            ]
-            if not unread:
-                break
-            gone = {str(d.target) for d in unread}
-            scalar_chain_definitions = [
-                d
-                for d in scalar_chain_definitions
-                if str(d.target) not in gone
-            ]
-            namer.created[:] = [x for x in namer.created if str(x) not in gone]
-        definitions = _dependency_order(definitions + scalar_chain_definitions)
     lowrank_outs = set()
     if lowrank_hess and not optional_derivatives:
         for position, (attr, out_name, residual, free) in enumerate(rendered):
@@ -1516,6 +1724,17 @@ _PASSES: tuple[Pass, ...] = (
     Pass("pair_components", _always, _pair_components),
     Pass("scan_signature", _always, _scan_signature),
     Pass("declare_signature", _always, _declare_signature),
+    Pass("array_cse", _array_cse_enabled, _array_cse),
+    Pass("mirror_array_temps", _param_symmetry_enabled, _mirror_array_temps),
+    Pass("reserved_names", _always, _reserved_names),
+    Pass("fuse_temps", _fuse_temps_enabled, _fuse_temps),
+    Pass("hoist_array_temps", _hoist_invariants_enabled, _hoist_array_temps),
+    Pass("share_sum_temps", _always, _share_sum_temps),
+    Pass("hoist_sum_temps", _hoist_invariants_enabled, _hoist_sum_temps),
+    Pass("scalar_cse", _scalar_cse_enabled, _scalar_cse_pass),
+    Pass("alias_scalar_chain", _always, _alias_scalar_chain),
+    Pass("rendered_outputs", _always, _rendered_outputs),
+    Pass("definitions_list", _always, _definitions_list),
     Pass("legacy_tail", _always, _legacy_tail),
 )
 
