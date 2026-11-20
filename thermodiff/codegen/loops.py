@@ -734,6 +734,145 @@ def _permute_symmetric_subscripts(definitions, symmetric_params):
     return definitions
 
 
+def _is_fusable_map(definition) -> bool:
+    """Whether ``definition`` is a plain per-component map over ``1..nc``."""
+    if len(definition.free) != 1 or definition.limits:
+        return False
+    if (
+        definition.mirror
+        or definition.mirror_sum
+        or definition.symv
+        or isinstance(definition, FusedNest)
+        or definition.colmajor
+    ):
+        return False
+    body = definition.body
+    return (
+        not body.has(sp.Sum)
+        and not body.has(sp.Piecewise)
+        and not any(isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol))
+    )
+
+
+def _reads_group(definition, group) -> bool:
+    """Whether the body of ``definition`` reads an array defined in group."""
+    names = {_temp_name(member.target) for member in group}
+    return any(str(x.base) in names for x in definition.body.atoms(sp.Indexed))
+
+
+def _is_independent_scalar(definition, group) -> bool:
+    """Whether a non-map definition may move ahead of the open group."""
+    scalar = (
+        not definition.free
+        and not definition.limits
+        and not (
+            definition.mirror
+            or definition.mirror_sum
+            or definition.symv
+            or isinstance(definition, FusedNest)
+        )
+    )
+    return bool(group) and scalar and not _reads_group(definition, group)
+
+
+def _rename_map(definition, index):
+    """Return a copy of a map with its free index renamed to ``index``."""
+    renamed = definition.copy()
+    mapping = {definition.free[0]: index}
+    renamed.target = definition.target.xreplace(mapping)
+    renamed.free = [index]
+    renamed.body = definition.body.xreplace(mapping)
+    return renamed
+
+
+def _reads_group_at_element(renamed, group, index) -> bool:
+    """Whether every read of a group member in ``renamed`` is at ``index``."""
+    names = {_temp_name(member.target) for member in group}
+    return all(
+        x.indices == (index,)
+        for x in renamed.body.atoms(sp.Indexed)
+        if str(x.base) in names
+    )
+
+
+def _cse_symbols(namer):
+    """Yield the names of the loop-local scalars, drawn lazily."""
+    while True:
+        yield sp.Symbol(str(namer("t")))
+
+
+def _order_steps(pending, needed):
+    """Order the ``(kind, symbol, value)`` items by their dependencies."""
+    known = set()
+    steps = []
+    while pending:
+        for item in pending:
+            deps = item[2].free_symbols & needed
+            if deps <= known:
+                steps.append(item)
+                known.add(item[1])
+                pending.remove(item)
+                break
+        else:  # pragma: no cover - cse output is acyclic
+            raise RuntimeError("component fusion: cyclic dependencies")
+    return steps
+
+
+def _fuse_map_group(group, namer):
+    """Fuse a group of two or more maps into a :class:`ComponentFusedMap`.
+
+    Member values read by later members become placeholders, so the
+    elimination never moves a read of ``cmp0(i)`` before its assignment.
+    Names for the loop-local scalars are drawn from ``namer`` lazily.
+    """
+    idx = group[0].free[0]
+    holder_of = {
+        _temp_name(d.target): sp.Dummy(f"m{k}") for k, d in enumerate(group)
+    }
+    holders = {d.target: holder_of[_temp_name(d.target)] for d in group}
+    bodies = [_to_holders(d.body, holder_of, idx) for d in group]
+    replacements, reduced = sp.cse(
+        bodies, symbols=_cse_symbols(namer), optimizations=None
+    )
+    back = {h: t for t, h in holders.items()}
+    pending = [("local", sym, value) for sym, value in replacements] + [
+        ("member", holders[d.target], b) for d, b in zip(group, reduced)
+    ]
+    needed = {sym for sym, _ in replacements} | set(back)
+    ordered = [
+        (kind, back.get(sym, sym), value.xreplace(back))
+        for kind, sym, value in _order_steps(pending, needed)
+    ]
+    return ComponentFusedMap(
+        target=group[0].target,
+        free=[idx],
+        limits=[],
+        body=group[0].body,
+        steps=ordered,
+        members=[(d.target, d.body) for d in group],
+    )
+
+
+def _to_holders(expr, holder_of, index):
+    """Replace the reads of group members at ``index`` by placeholders."""
+    return expr.xreplace(
+        {
+            x: holder_of[str(x.base)]
+            for x in expr.atoms(sp.Indexed)
+            if str(x.base) in holder_of and x.indices == (index,)
+        }
+    )
+
+
+def _flush_map_group(out, group, namer) -> None:
+    """Append the open group to ``out`` (fused if it has several maps)."""
+    if len(group) <= 1:
+        out.extend(group)
+    else:
+        out.append(_fuse_map_group(group, namer))
+    group.clear()
+
+
 def _fuse_component_maps(definitions, namer):
     """Fuse consecutive per-component maps into one loop with per-element CSE.
 
@@ -746,139 +885,27 @@ def _fuse_component_maps(definitions, namer):
     bodies of one element computes every shared sub-expression once, into
     loop-local scalars.
     """
-
-    def is_map(d):
-        if len(d.free) != 1 or d.limits:
-            return False
-        if (
-            d.mirror
-            or d.mirror_sum
-            or d.symv
-            or isinstance(d, FusedNest)
-            or d.colmajor
-        ):
-            return False
-        body = d.body
-        return (
-            not body.has(sp.Sum)
-            and not body.has(sp.Piecewise)
-            and not any(
-                isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)
-            )
-        )
-
     out = []
     group = []
-
-    def flush():
-        if len(group) <= 1:
-            out.extend(group)
-        else:
-            idx = group[0].free[0]
-            # member values read by later members become placeholders, so the
-            # elimination never moves a read of cmp0(i) before its assignment
-            holder_of = {
-                _temp_name(d.target): sp.Dummy(f"m{k}")
-                for k, d in enumerate(group)
-            }
-            holders = {
-                d.target: holder_of[_temp_name(d.target)] for d in group
-            }
-
-            def to_holders(expr):
-                return expr.xreplace(
-                    {
-                        x: holder_of[str(x.base)]
-                        for x in expr.atoms(sp.Indexed)
-                        if str(x.base) in holder_of and x.indices == (idx,)
-                    }
-                )
-
-            bodies = [to_holders(d.body) for d in group]
-            replacements, reduced = sp.cse(
-                bodies,
-                symbols=iter(lambda: sp.Symbol(str(namer("t"))), None),
-                optimizations=None,
-            )
-            back = {h: t for t, h in holders.items()}
-            pending = [
-                ("local", sym, value) for sym, value in replacements
-            ] + [
-                ("member", holders[d.target], b)
-                for d, b in zip(group, reduced)
-            ]
-            known = set()
-            local_syms = {sym for sym, _ in replacements}
-            needed = local_syms | set(back)
-            steps = []
-            while pending:
-                for item in pending:
-                    deps = item[2].free_symbols & needed
-                    if deps <= known:
-                        steps.append(item)
-                        known.add(item[1])
-                        pending.remove(item)
-                        break
-                else:  # pragma: no cover - cse output is acyclic
-                    raise RuntimeError("component fusion: cyclic dependencies")
-            ordered = [
-                (kind, back.get(sym, sym), value.xreplace(back))
-                for kind, sym, value in steps
-            ]
-            out.append(
-                ComponentFusedMap(
-                    target=group[0].target,
-                    free=[idx],
-                    limits=[],
-                    body=group[0].body,
-                    steps=ordered,
-                    members=[(d.target, d.body) for d in group],
-                )
-            )
-        group.clear()
-
-    for d in definitions:
-        if not is_map(d):
-            names = {_temp_name(g.target) for g in group}
-            scalar = (
-                not d.free
-                and not d.limits
-                and not (
-                    d.mirror
-                    or d.mirror_sum
-                    or d.symv
-                    or isinstance(d, FusedNest)
-                )
-            )
-            reads_group = any(
-                str(x.base) in names for x in d.body.atoms(sp.Indexed)
-            )
-            if group and scalar and not reads_group:
-                # an independent scalar between two maps moves ahead of the group
-                out.append(d)
+    for definition in definitions:
+        if not _is_fusable_map(definition):
+            if _is_independent_scalar(definition, group):
+                # an independent scalar between two maps moves ahead of
+                # the group
+                out.append(definition)
                 continue
-            flush()
-            out.append(d)
+            _flush_map_group(out, group, namer)
+            out.append(definition)
             continue
         if group:
-            idx = group[0].free[0]
-            renamed = d.copy()
-            mapping = {d.free[0]: idx}
-            renamed.target = d.target.xreplace(mapping)
-            renamed.free = [idx]
-            renamed.body = d.body.xreplace(mapping)
-            names = {_temp_name(g.target) for g in group}
-            ok = all(
-                x.indices == (idx,)
-                for x in renamed.body.atoms(sp.Indexed)
-                if str(x.base) in names
-            )
-            if ok:
+            index = group[0].free[0]
+            renamed = _rename_map(definition, index)
+            if _reads_group_at_element(renamed, group, index):
                 group.append(renamed)
                 continue
-            flush()
-        group.append(d)
-    flush()
+            _flush_map_group(out, group, namer)
+        group.append(definition)
+    _flush_map_group(out, group, namer)
     return out
 
 
