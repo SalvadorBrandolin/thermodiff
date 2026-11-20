@@ -2,6 +2,7 @@
 
 import functools
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import sympy as sp
 
@@ -71,6 +72,193 @@ def _sorted_sums(expr: sp.Basic, memo: dict, sorted_memo: dict) -> tuple:
     return ordered
 
 
+@dataclass(frozen=True)
+class _SumKeySettings:
+    """Options of :func:`_share_sums` that decide when two sums are equal.
+
+    Attributes
+    ----------
+    indexes : list
+        User index order, used to sort the free indices of a temporary.
+    alpha : bool
+        Share sums equal up to the names of their bound indices.
+    free_alpha : bool
+        Share sums equal up to the names of all their indices.
+    symmetric_params : tuple of str
+        Symmetric parameters, canonicalised in the keys.
+    transpose : bool
+        Reuse the transpose of a rank-2 sum already computed.
+    sym_rank3 : bool
+        Also canonicalise symmetric parameters of rank three.
+    """
+
+    indexes: list
+    alpha: bool
+    free_alpha: bool
+    symmetric_params: tuple
+    transpose: bool
+    sym_rank3: bool
+
+
+def _innermost_sums(exprs: list, sums_memo: dict, sorted_memo: dict) -> list:
+    """Return the distinct sums without inner sums, in encounter order.
+
+    Parameters
+    ----------
+    exprs : list of sympy expressions
+        Expressions that may contain summations.
+    sums_memo, sorted_memo : dict
+        Per-call caches of :func:`_sum_atoms` and :func:`_sorted_sums`.
+
+    Returns
+    -------
+    list
+        The ``Sum`` nodes whose body holds no ``Sum``, each once.
+    """
+    innermost = []
+    seen = set()
+    for expr in exprs:
+        for total in _sorted_sums(expr, sums_memo, sorted_memo):
+            if _sum_atoms(total.function, sums_memo) or total in seen:
+                continue
+            seen.add(total)
+            innermost.append(total)
+    return innermost
+
+
+def _transpose_replacement(
+    total: sp.Sum, free_here: list, by_key: dict, settings: _SumKeySettings
+):
+    """Return the transpose of a rank-2 sum already hoisted, or ``None``.
+
+    Parameters
+    ----------
+    total : sympy.Sum
+        The sum to replace.
+    free_here : list
+        Its two free indices, in user order.
+    by_key : dict
+        Hoisted temporaries as ``key -> (target, free)``.
+    settings : _SumKeySettings
+        Options that decide when two sums are equal.
+
+    Returns
+    -------
+    sympy.Indexed or None
+        The earlier temporary indexed by the swapped free indices.
+    """
+    swapped = list(reversed(free_here))
+    mapping = {
+        index: sp.Idx(f"_free{pos}") for pos, index in enumerate(swapped)
+    }
+    transposed_key = _alpha_key(total.xreplace(mapping))
+    if settings.symmetric_params:
+        transposed_key = _canonical_symmetric(
+            transposed_key, settings.symmetric_params, settings.sym_rank3
+        )
+    if transposed_key not in by_key:
+        return None
+    target, _ = by_key[transposed_key]
+    return sp.Indexed(target.base, *swapped)
+
+
+def _free_alpha_replacement(
+    total: sp.Sum, by_key: dict, settings: _SumKeySettings
+) -> tuple:
+    """Find an earlier temporary equal to ``total`` up to index names.
+
+    Parameters
+    ----------
+    total : sympy.Sum
+        The sum to replace.
+    by_key : dict
+        Hoisted temporaries as ``key -> (target, free)``.
+    settings : _SumKeySettings
+        Options that decide when two sums are equal.
+
+    Returns
+    -------
+    replacement : sympy expression or None
+        The earlier temporary, indexed by the free indices of ``total``.
+    key : sympy expression
+        The canonical key of ``total``.
+    """
+    key, free_here = _free_alpha_key(
+        total,
+        settings.indexes,
+        settings.symmetric_params,
+        sym_rank3=settings.sym_rank3,
+    )
+    if settings.transpose and key not in by_key and len(free_here) == 2:
+        # the transpose of a rank-2 sum already computed
+        found = _transpose_replacement(total, free_here, by_key, settings)
+        if found is not None:
+            return found, key
+    if key in by_key:
+        # equal up to the names of its bound and free indices: reuse the
+        # temporary, indexed by this sum's free indices
+        target, _ = by_key[key]
+        found = sp.Indexed(target.base, *free_here) if free_here else target
+        return found, key
+    return None, key
+
+
+def _share_one_sum(
+    total: sp.Sum,
+    by_key: dict,
+    replacements: dict,
+    definitions: list,
+    namer,
+    arrays: dict,
+    settings: _SumKeySettings,
+) -> None:
+    """Replace ``total`` by an earlier temporary or hoist a new one.
+
+    Parameters
+    ----------
+    total : sympy.Sum
+        The innermost sum to process.
+    by_key : dict
+        Hoisted temporaries of this round, updated in place.
+    replacements : dict
+        ``Sum -> temporary`` of this round, updated in place.
+    definitions : list
+        Temporaries defined so far, appended to in place.
+    namer : _Namer
+        Generator of temporary variable names.
+    arrays : dict
+        Records the rank of every array temporary created.
+    settings : _SumKeySettings
+        Options that decide when two sums are equal.
+    """
+    key = None
+    found = None
+    if settings.free_alpha:
+        found, key = _free_alpha_replacement(total, by_key, settings)
+    elif settings.alpha:
+        key = _alpha_key(total)
+        # alpha-equivalent to a summation already hoisted
+        found = by_key[key] if key in by_key else None
+    if found is not None:
+        replacements[total] = found
+        return
+    free = _order_free(_free_indices(total), settings.indexes)
+    target = _new_shared_temp(namer, free, arrays)
+    definitions.append(
+        TempDef(
+            target=target,
+            free=free,
+            limits=list(total.limits),
+            body=total.function,
+        )
+    )
+    replacements[total] = target
+    if settings.free_alpha:
+        by_key[key] = (target, free)
+    elif settings.alpha:
+        by_key[key] = target
+
+
 def _share_sums(
     expressions,
     namer,
@@ -108,84 +296,34 @@ def _share_sums(
     definitions : list of dict
         How to compute each temporary, in dependency order.
     """
+    settings = _SumKeySettings(
+        indexes=indexes,
+        alpha=alpha,
+        free_alpha=free_alpha,
+        symmetric_params=symmetric_params,
+        transpose=transpose,
+        sym_rank3=sym_rank3,
+    )
     exprs = list(expressions)
     definitions = []
     sums_memo: dict = {}
     sorted_memo: dict = {}
     while True:
-        innermost = []
-        seen = set()
-        for expr in exprs:
-            for total in _sorted_sums(expr, sums_memo, sorted_memo):
-                if _sum_atoms(total.function, sums_memo) or total in seen:
-                    continue
-                seen.add(total)
-                innermost.append(total)
+        innermost = _innermost_sums(exprs, sums_memo, sorted_memo)
         if not innermost:
             break
         replacements = {}
         by_key = {}
         for total in innermost:
-            if free_alpha:
-                key, free_here = _free_alpha_key(
-                    total, indexes, symmetric_params, sym_rank3=sym_rank3
-                )
-                if transpose and key not in by_key and len(free_here) == 2:
-                    # the transpose of a rank-2 sum already computed
-                    swapped = list(reversed(free_here))
-                    mapping = {
-                        index: sp.Idx(f"_free{pos}")
-                        for pos, index in enumerate(swapped)
-                    }
-                    tkey = _alpha_key(total.xreplace(mapping))
-                    if symmetric_params:
-                        tkey = _canonical_symmetric(
-                            tkey, symmetric_params, sym_rank3
-                        )
-                    if tkey in by_key:
-                        target_, _ = by_key[tkey]
-                        replacements[total] = sp.Indexed(
-                            target_.base, *swapped
-                        )
-                        continue
-                if key in by_key:
-                    # equal up to the names of its bound and free indices:
-                    # reuse the temporary, indexed by this sum's free indices
-                    target_, _ = by_key[key]
-                    replacements[total] = (
-                        sp.Indexed(target_.base, *free_here)
-                        if free_here
-                        else target_
-                    )
-                    continue
-            elif alpha:
-                key = _alpha_key(total)
-                if key in by_key:
-                    # alpha-equivalent to a summation already hoisted
-                    replacements[total] = by_key[key]
-                    continue
-            free = _order_free(_free_indices(total), indexes)
-            target = _new_shared_temp(namer, free, arrays)
-            definitions.append(
-                TempDef(
-                    target=target,
-                    free=free,
-                    limits=list(total.limits),
-                    body=total.function,
-                )
+            _share_one_sum(
+                total,
+                by_key,
+                replacements,
+                definitions,
+                namer,
+                arrays,
+                settings,
             )
-            replacements[total] = target
-            if free_alpha:
-                by_key[
-                    _free_alpha_key(
-                        total, indexes, symmetric_params, sym_rank3=sym_rank3
-                    )[0]
-                ] = (
-                    target,
-                    free,
-                )
-            elif alpha:
-                by_key[_alpha_key(total)] = target
         exprs = [expr.xreplace(replacements) for expr in exprs]
     return exprs, definitions
 
