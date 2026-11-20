@@ -4,10 +4,12 @@ import dataclasses
 import inspect
 import os
 import sys
+from collections.abc import Callable, Mapping
+from typing import Any, NamedTuple
 
 import sympy as sp
 
-from thermodiff.codegen import CodegenOptions, ScalarChainMode
+from thermodiff.codegen import CodegenOptions, ScalarChainMode, SepSumsMode
 from thermodiff.codegen.common import (
     _DERIV_SUFFIX,
     _INDENT,
@@ -384,247 +386,479 @@ def _to_fortran_impl(
     )
 
 
-def _emit_code(
-    ctx,
-    structured,
-    stats,
-    count_scalar,
-    *,
-    strict=False,
-    optional_derivatives=False,
-    array_cse=True,
-    share=True,
-    share_sums=None,
-    scalar_cse=None,
-    param_symmetry=False,
-    hessian_symmetry=False,
-    cse_backend="thermodiff",
-    sum_alpha=False,
-    array_pad=0,
-    hoist_invariants=False,
-    chain_rule=False,
-    hoist_loops=False,
-    sum_free_alpha=False,
-    fuse_temps=False,
-    nest_sums=False,
-    split_sqrt=False,
-    split_sums=False,
-    nest_shared=False,
-    sym_matvec=False,
-    col_major=False,
-    pair_cse=False,
-    pair_rates=False,
-    sum_transpose=False,
-    sep_sums=False,
-    sym_rank3=False,
-    nest_general=False,
-    sym_sum2=False,
-    cse_expensive=False,
-    fuse_loops=False,
-    nested_nodes=False,
-    sym_perm=False,
-    fuse_guard=False,
-    nest_cost=False,
-    comp_fuse=False,
-    fuse_outer=False,
-    fuse_libm_guard=False,
-    keep_libm_tables=False,
-    diag_table=False,
-    sib_fuse=False,
-    dummy_canon=False,
-    float_canon=False,
-    contiguous_args=False,
-    table_layout=False,
-    lowrank_hess=False,
-    drop_pair_tables=False,
-    share_elementwise=False,
-    scalar_chain=False,
-    split_affine=False,
-    split_acc=False,
-):
-    """Emit the subroutine from a precomputed chain-rule structure.
+@dataclasses.dataclass(eq=False)
+class _EmitState:
+    """Mutable state shared by the passes of one emission.
+
+    The passes mutate it in place.  ``eq=False`` keeps the identity
+    semantics: ``namer``, ``arrays`` and the lists of definitions are
+    shared mutable objects that the helpers update and compare by
+    identity.
+
+    Attributes
+    ----------
+    opts : CodegenOptions
+        Behaviour options of this emission.
+    structured : dict or None
+        Result of the chain-rule step.
+    stats : dict or None
+        Receives the statistics.
+    count_scalar : bool
+        Whether to report ``scalar_operation_count``.
+    resolver : _PlaceholderResolver
+        Placeholder resolver, one per emission.
+    namer : _Namer
+        Temporary-name generator, one per emission.
+    selected : list of str
+        Derivative attributes to emit.
+    integer_args : list of str
+        Integer dummy arguments.
+    module_symbols : set of str
+        Names provided by the enclosing module.
+    symmetric_params : tuple
+        Symmetric parameters (grows with the pair functions).
+    scalar_chain_defs : sequence
+        Scalar-chain definitions (empty without ``scalar_chain``).
+    sc_temp_names : set of str
+        Names of the scalar-chain temporaries.
+    outputs : list of tuple
+        ``(attr, out_name, expr)`` of every output.
+    share_sums, scalar_cse : bool
+        Resolved ``share_sums`` and ``scalar_cse``.
+    staged : list of tuple
+        Outputs while they are canonicalised.
+    prepared : list of tuple
+        ``(attr, out_name, expr, free_order)`` of every output.
+    all_exprs : list
+        The output expressions (rewritten by the sharing passes).
+    component_defs : list of tuple
+        ``(name, body, rank, sym)`` of the component arrays.
+    scans, params, placeholder_args : list
+        Atom scans and sorted argument names of the signature.
+    param_arrays : dict
+        Rank of every array argument.
+    needs_nc : bool
+        Whether ``nc`` is an argument.
+    inputs, output_decls : list of str
+        Declarations of the dummy arguments.
+    arrays : dict
+        Rank of every temporary array.
+    component_array_defs, array_defs, sum_defs, cse_defs : list
+        Definition pools.
+    reserved : set of str
+        Names that temporaries must not take.
+    residuals : list
+        Output expressions after sharing.
+    scalar_chain_definitions : list
+        Definitions of the scalar-chain scalars.
+    rendered : list of tuple
+        ``(attr, out_name, residual, free_order)`` of every output.
+    definitions : list
+        Ordered definitions to render.
+    lowrank_outs : set of str
+        Outputs made with the low-rank form.
+    out_names : dict
+        Output name of every attribute.
+    consumers : dict
+        Outputs that read each temporary.
+    body : list of str
+        Rendered body lines.
+    temps, loop_indices : list of str
+        Names declared as scalars and loop indices.
+    text : str
+        The Fortran source.
+    """
+
+    opts: CodegenOptions
+    structured: dict | None
+    stats: dict | None
+    count_scalar: bool
+    resolver: _PlaceholderResolver
+    namer: _Namer
+    selected: list
+    integer_args: list
+    module_symbols: set
+    symmetric_params: tuple
+    scalar_chain_defs: Any = ()
+    sc_temp_names: set = dataclasses.field(default_factory=set)
+    outputs: list = dataclasses.field(default_factory=list)
+    share_sums: bool = False
+    scalar_cse: bool = False
+    staged: list = dataclasses.field(default_factory=list)
+    prepared: list = dataclasses.field(default_factory=list)
+    all_exprs: list = dataclasses.field(default_factory=list)
+    component_defs: list = dataclasses.field(default_factory=list)
+    scans: list = dataclasses.field(default_factory=list)
+    param_arrays: dict = dataclasses.field(default_factory=dict)
+    params: list = dataclasses.field(default_factory=list)
+    placeholder_args: list = dataclasses.field(default_factory=list)
+    needs_nc: bool = False
+    inputs: list = dataclasses.field(default_factory=list)
+    output_decls: list = dataclasses.field(default_factory=list)
+    arrays: dict = dataclasses.field(default_factory=dict)
+    component_array_defs: list = dataclasses.field(default_factory=list)
+    array_defs: list = dataclasses.field(default_factory=list)
+    sum_defs: list = dataclasses.field(default_factory=list)
+    cse_defs: list = dataclasses.field(default_factory=list)
+    reserved: set = dataclasses.field(default_factory=set)
+    residuals: list = dataclasses.field(default_factory=list)
+    scalar_chain_definitions: list = dataclasses.field(default_factory=list)
+    rendered: list = dataclasses.field(default_factory=list)
+    definitions: list = dataclasses.field(default_factory=list)
+    lowrank_outs: set = dataclasses.field(default_factory=set)
+    out_names: dict = dataclasses.field(default_factory=dict)
+    consumers: dict = dataclasses.field(default_factory=dict)
+    body: list = dataclasses.field(default_factory=list)
+    temps: list = dataclasses.field(default_factory=list)
+    loop_indices: list = dataclasses.field(default_factory=list)
+    text: str = ""
+
+
+class Pass(NamedTuple):
+    """One stage of the emission.
+
+    Attributes
+    ----------
+    name : str
+        Stage name.
+    enabled : callable
+        Option-level gate: ``enabled(opts)`` tells whether the stage runs.
+        Gates that also depend on data stay inside ``run``.
+    run : callable
+        ``run(ctx, state)`` mutates ``state`` in place.
+    """
+
+    name: str
+    enabled: Callable[[CodegenOptions], bool]
+    run: Callable[[_EmitContext, _EmitState], None]
+
+
+def _always(opts: CodegenOptions) -> bool:
+    """Gate of the stages without an option condition."""
+    return True
+
+
+def _option_or(value: bool | None, fallback: bool) -> bool:
+    """Return ``fallback`` when ``value`` is ``None``, else ``value``."""
+    return fallback if value is None else value
+
+
+def _legacy_options(arguments: Mapping[str, Any]) -> CodegenOptions:
+    """Build the options from the keyword arguments of ``_emit_code``.
+
+    Parameters
+    ----------
+    arguments : mapping
+        Local variables of ``_emit_code``; only the option names are used.
+
+    Returns
+    -------
+    CodegenOptions
+        The coerced options.
+    """
+    names = {field.name for field in dataclasses.fields(CodegenOptions)}
+    return CodegenOptions.from_legacy(
+        **{name: arguments[name] for name in names}
+    )
+
+
+def _new_state(
+    ctx: _EmitContext,
+    structured: dict | None,
+    stats: dict | None,
+    count_scalar: bool,
+    opts: CodegenOptions,
+) -> _EmitState:
+    """Create the state of one emission from its inputs.
 
     Parameters
     ----------
     ctx : _EmitContext
         Resolved inputs.
     structured : dict or None
-        Result of the chain-rule step (``None`` without ``chain_rule``).
+        Result of the chain-rule step.
     stats : dict or None
         Receives the statistics.
     count_scalar : bool
         Whether to report ``scalar_operation_count``.
-    **options
-        The behaviour options with the legacy ``to_fortran`` meaning
-        (``CodegenOptions.to_legacy``); ``scalar_chain`` is ``True`` or
-        ``False`` here.
+    opts : CodegenOptions
+        Behaviour options.
 
     Returns
     -------
-    str
-        The Fortran source.
+    _EmitState
+        A state with fresh resolver and namer.
     """
-    diff = ctx.diff
-    selected = list(ctx.selected)
-    base = ctx.base
-    sub_name = ctx.sub_name
-    integer_args = list(ctx.integer_args)
-    module_symbols = set(ctx.module_symbols)
-    symmetric_params = ctx.symmetric_params
-    resolver = _PlaceholderResolver(strict=strict)
-
-    def _derivative(attr):
-        if structured is not None:
-            return structured[attr]
-        return getattr(diff, attr)
-
-    value_expr = (
-        structured["value"] if structured is not None else diff.expression
+    return _EmitState(
+        opts=opts,
+        structured=structured,
+        stats=stats,
+        count_scalar=count_scalar,
+        resolver=_PlaceholderResolver(strict=opts.strict),
+        namer=_Namer(),
+        selected=list(ctx.selected),
+        integer_args=list(ctx.integer_args),
+        module_symbols=set(ctx.module_symbols),
+        symmetric_params=ctx.symmetric_params,
+        scalar_chain_defs=(structured or {}).get("_scalar_defs", ()),
     )
-    outputs = [("value", base, resolver.resolve(value_expr))]
-    for attr in selected:
+
+
+def _derivative(ctx: _EmitContext, structured: dict | None, attr: str):
+    """Return the derivative ``attr`` from the structure or the instance."""
+    if structured is not None:
+        return structured[attr]
+    return getattr(ctx.diff, attr)
+
+
+def _scalar_chain_outputs(state: _EmitState) -> None:
+    """Add the scalar-chain pseudo-outputs and resolve its definitions.
+
+    Parameters
+    ----------
+    state : _EmitState
+        Updates ``outputs``, ``scalar_chain_defs`` and ``sc_temp_names``;
+        draws one name per node and scalar from the namer.
+    """
+    structured = state.structured
+    resolver = state.resolver
+    namer = state.namer
+    outputs = state.outputs
+    scalar_chain_defs = state.scalar_chain_defs
+    # the summation nodes read by the scalars of the outer function travel
+    # with the outputs (one pseudo-output each, so the summation passes see
+    # them as before); the scalars become definitions after the scalar CSE
+    sc_nodes = structured.get("_scalar_nodes", ())
+    sc_names = {
+        symbol: namer("t")
+        for symbol, _ in list(sc_nodes) + list(scalar_chain_defs)
+    }
+    outputs = [
+        (attr, out_name, expr.xreplace(sc_names))
+        for attr, out_name, expr in outputs
+    ]
+    state.sc_temp_names = {str(name) for name in sc_names.values()}
+    for symbol, body in sc_nodes:
+        outputs.append(
+            (_SCALAR_CHAIN, str(sc_names[symbol]), resolver.resolve(body))
+        )
+    # the outputs without scalar_chain ride along (then dropped), so that
+    # the summation passes see the same expressions as without the option
+    # (first, so the shared summations come in the same order)
+    plain = structured.get("_plain", {})
+    outputs = [
+        (_SCALAR_PLAIN, "_plain_" + attr, resolver.resolve(plain[attr]))
+        for attr in ["value"] + list(state.selected)
+        if attr in plain
+    ] + outputs
+    state.outputs = outputs
+    state.scalar_chain_defs = [
+        (sc_names[symbol], resolver.resolve(body.xreplace(sc_names)))
+        for symbol, body in scalar_chain_defs
+    ]
+
+
+def _resolve_outputs(ctx: _EmitContext, state: _EmitState) -> None:
+    """Resolve the value and the derivatives into ``outputs`` (S1-S2).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Receives ``outputs`` and, with ``scalar_chain``, the scalar-chain
+        pseudo-outputs and names.
+    """
+    structured = state.structured
+    resolver = state.resolver
+    value_expr = (
+        structured["value"] if structured is not None else ctx.diff.expression
+    )
+    outputs = [("value", ctx.base, resolver.resolve(value_expr))]
+    for attr in state.selected:
         outputs.append(
             (
                 attr,
-                "d" + base + _DERIV_SUFFIX[attr],
-                resolver.resolve(_derivative(attr)),
+                "d" + ctx.base + _DERIV_SUFFIX[attr],
+                resolver.resolve(_derivative(ctx, structured, attr)),
             )
         )
-    namer = _Namer()
-    scalar_chain_defs = (structured or {}).get("_scalar_defs", ())
-    sc_temp_names = set()
-    if scalar_chain_defs:
-        # the summation nodes read by the scalars of the outer function travel
-        # with the outputs (one pseudo-output each, so the summation passes see
-        # them as before); the scalars become definitions after the scalar CSE
-        sc_nodes = structured.get("_scalar_nodes", ())
-        sc_names = {
-            symbol: namer("t")
-            for symbol, _ in list(sc_nodes) + list(scalar_chain_defs)
-        }
-        outputs = [
-            (attr, out_name, expr.xreplace(sc_names))
-            for attr, out_name, expr in outputs
-        ]
-        sc_temp_names = {str(name) for name in sc_names.values()}
-        for symbol, body in sc_nodes:
-            outputs.append(
-                (_SCALAR_CHAIN, str(sc_names[symbol]), resolver.resolve(body))
-            )
-        # the outputs without scalar_chain ride along (then dropped), so that
-        # the summation passes see the same expressions as without the option
-        # (first, so the shared summations come in the same order)
-        plain = structured.get("_plain", {})
-        outputs = [
-            (_SCALAR_PLAIN, "_plain_" + attr, resolver.resolve(plain[attr]))
-            for attr in ["value"] + list(selected)
-            if attr in plain
-        ] + outputs
-        scalar_chain_defs = [
-            (sc_names[symbol], resolver.resolve(body.xreplace(sc_names)))
-            for symbol, body in scalar_chain_defs
-        ]
+    state.outputs = outputs
+    if state.scalar_chain_defs:
+        _scalar_chain_outputs(state)
 
-    if cse_backend not in ("thermodiff", "sympy"):
-        raise ValueError(f"unknown cse_backend {cse_backend!r}")
-    if share_sums is None:
-        share_sums = share
-    if scalar_cse is None:
-        scalar_cse = share
-    if structured is not None:
-        # symmetric pair functions behave as symmetric parameters
-        symmetric_params = symmetric_params + tuple(
-            name
-            for name, _, rank, sym in structured.get("_component_defs", ())
-            if rank == 2 and sym
-        )
 
+def _stage_outputs(state: _EmitState) -> None:
+    """Canonicalise every output expression into ``staged`` (S4)."""
+    opts = state.opts
+    symmetric_params = state.symmetric_params
     staged = []
-    for attr, out_name, expr in outputs:
+    for attr, out_name, expr in state.outputs:
         expr = _kron_to_piecewise(expr)
         expr = expr.xreplace({nc: sp.Symbol("nc")})
-        if float_canon:
+        if opts.float_canon:
             expr = _canonical_floats(expr)
-        if param_symmetry and symmetric_params:
-            expr = _canonical_symmetric(expr, symmetric_params, sym_rank3)
-        if sep_sums:
-            expr = _separate_sums(expr, selective=(sep_sums == "cost"))
+        if opts.param_symmetry and symmetric_params:
+            expr = _canonical_symmetric(expr, symmetric_params, opts.sym_rank3)
+        if opts.sep_sums is not SepSumsMode.OFF:
+            expr = _separate_sums(
+                expr, selective=opts.sep_sums is SepSumsMode.COST
+            )
         staged.append((attr, out_name, expr))
-    if dummy_canon:
-        # arrays of rank >= 2 read inside sums with free indices by some output
-        shared_bases = set()
-        for _attr, _out, expr in staged:
-            for total in expr.atoms(sp.Sum):
-                if _free_indices(total):
-                    shared_bases |= {
-                        str(x.base)
-                        for x in total.function.atoms(sp.Indexed)
-                        if len(x.indices) >= 2
-                    }
-        staged = [
-            (
-                attr,
-                out_name,
-                _merge_dummy_images(
-                    expr,
-                    symmetric_params,
-                    frozenset(shared_bases),
-                    sym_rank3=sym_rank3,
-                ),
-            )
-            for attr, out_name, expr in staged
-        ]
-    if nest_sums:
-        staged = _nest_double_sums(
-            staged,
-            diff.indexes,
-            symmetric_params,
-            shared_inner=nest_shared,
-            general=nest_general,
-            cost=nest_cost,
-            sym_rank3=sym_rank3,
-        )
-    prepared = []
-    for attr, out_name, expr in staged:
-        if param_symmetry and symmetric_params:
-            expr = _fold_symmetric_sums(
-                expr, symmetric_params, sym_rank3=sym_rank3
-            )
-        free_order = _order_free(_free_indices(expr), diff.indexes)
-        prepared.append((attr, out_name, expr, free_order))
+    state.staged = staged
 
-    all_exprs = [expr for _, _, expr, _ in prepared]
+
+def _merge_dummies(state: _EmitState) -> None:
+    """Merge the dummy images of symmetric parameters (S5)."""
+    # arrays of rank >= 2 read inside sums with free indices by some output
+    staged = state.staged
+    shared_bases = set()
+    for _attr, _out, expr in staged:
+        for total in expr.atoms(sp.Sum):
+            if _free_indices(total):
+                shared_bases |= {
+                    str(x.base)
+                    for x in total.function.atoms(sp.Indexed)
+                    if len(x.indices) >= 2
+                }
+    state.staged = [
+        (
+            attr,
+            out_name,
+            _merge_dummy_images(
+                expr,
+                state.symmetric_params,
+                frozenset(shared_bases),
+                sym_rank3=state.opts.sym_rank3,
+            ),
+        )
+        for attr, out_name, expr in staged
+    ]
+
+
+def _prepare_outputs(ctx: _EmitContext, state: _EmitState) -> None:
+    """Fold symmetric sums and order the free indices (S7)."""
+    opts = state.opts
+    prepared = []
+    for attr, out_name, expr in state.staged:
+        if opts.param_symmetry and state.symmetric_params:
+            expr = _fold_symmetric_sums(
+                expr, state.symmetric_params, sym_rank3=opts.sym_rank3
+            )
+        free_order = _order_free(_free_indices(expr), ctx.diff.indexes)
+        prepared.append((attr, out_name, expr, free_order))
+    state.prepared = prepared
+    state.all_exprs = [expr for _, _, expr, _ in prepared]
+
+
+def _canonicalise_outputs(ctx: _EmitContext, state: _EmitState) -> None:
+    """Canonicalise, merge, nest and prepare the outputs (S3-S7).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Reads ``outputs``; writes ``share_sums``, ``scalar_cse``,
+        ``symmetric_params``, ``prepared`` and ``all_exprs``.
+    """
+    opts = state.opts
+    state.share_sums = _option_or(opts.share_sums, opts.share)
+    state.scalar_cse = _option_or(opts.scalar_cse, opts.share)
+    if state.structured is not None:
+        # symmetric pair functions behave as symmetric parameters
+        state.symmetric_params = state.symmetric_params + tuple(
+            name
+            for name, _, rank, sym in state.structured.get(
+                "_component_defs", ()
+            )
+            if rank == 2 and sym
+        )
+    _stage_outputs(state)
+    if opts.dummy_canon:
+        _merge_dummies(state)
+    if opts.nest_sums:
+        state.staged = _nest_double_sums(
+            state.staged,
+            ctx.diff.indexes,
+            state.symmetric_params,
+            shared_inner=opts.nest_shared,
+            general=opts.nest_general,
+            cost=opts.nest_cost,
+            sym_rank3=opts.sym_rank3,
+        )
+    _prepare_outputs(ctx, state)
+
+
+def _component_definitions(state: _EmitState) -> None:
+    """Canonicalise the component bodies into ``component_defs`` (S8)."""
+    opts = state.opts
     component_defs = []
-    if structured is not None:
-        for comp in structured.get("_component_defs", ()):
+    if state.structured is not None:
+        for comp in state.structured.get("_component_defs", ()):
             comp_name, comp_body, comp_rank, comp_sym = comp
             comp_body = comp_body.xreplace({nc: sp.Symbol("nc")})
-            if param_symmetry and symmetric_params:
+            if opts.param_symmetry and state.symmetric_params:
                 comp_body = _canonical_symmetric(
-                    comp_body, symmetric_params, sym_rank3
+                    comp_body, state.symmetric_params, opts.sym_rank3
                 )
             component_defs.append((comp_name, comp_body, comp_rank, comp_sym))
-    component_names = {c[0] for c in component_defs}
-    scan_exprs = (
-        all_exprs
-        + [c[1] for c in component_defs]
-        + [body for _, body in scalar_chain_defs]
-    )
-    placeholder_names = set(resolver.ranks)
+    state.component_defs = component_defs
 
-    # ---- gather parameters --------------------------------------------
+
+def _component_arrays(state: _EmitState) -> None:
+    """Declare the component arrays and build their definitions (S12)."""
+    if not state.component_defs:
+        return
+    from thermodiff.chain import NAME_SCHEME_KEY
+
+    opts = state.opts
+    scheme = state.structured[NAME_SCHEME_KEY]
+    for comp_name, comp_body, comp_rank, comp_sym in state.component_defs:
+        state.arrays[comp_name] = comp_rank
+        free_ = (
+            [scheme.component_slot]
+            if comp_rank == 1
+            else list(scheme.pair_slots)
+        )
+        base_ = sp.IndexedBase(comp_name, shape=(nc,) * comp_rank)
+        state.component_array_defs.append(
+            TempDef(
+                target=sp.Indexed(base_, *free_),
+                free=free_,
+                limits=[],
+                body=(
+                    _canonical_floats(comp_body)
+                    if opts.float_canon
+                    else comp_body
+                ),
+                mirror=bool(comp_sym and opts.param_symmetry),
+            )
+        )
+
+
+def _pair_components(ctx: _EmitContext, state: _EmitState) -> None:
+    """Prepare the component definitions and their arrays (S8, S12).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Writes ``component_defs``, ``arrays`` and ``component_array_defs``.
+    """
+    _component_definitions(state)
+    _component_arrays(state)
+
+
+def _parameter_scalars(state: _EmitState) -> set:
+    """Return the names of the scalar parameters found in ``scans``."""
     # NOTE: ``n`` is compared by name because ``expr`` has been rebuilt by
-    # the ``nc`` replacement above, which also rewrites the shape of the
-    # ``n`` IndexedBase.
-    scans = [_scan_atoms(expr) for expr in scan_exprs]
-    n_name = str(n)
-    uses_n = any(
-        n_name in {str(base_) for base_ in scan.bases} for scan in scans
-    )
-
+    # the ``nc`` replacement, which also rewrites the shape of the ``n``
+    # IndexedBase.
     index_syms = set()
     indexed_bases = set()
-    for scan in scans:
+    for scan in state.scans:
         for indexed in scan.indexed:
             index_syms.update(indexed.indices)
         for total in scan.sums:
@@ -637,7 +871,7 @@ def _emit_code(
     base_names = {str(base_) for base_ in indexed_bases}
 
     param_scalars = set()
-    for scan in scans:
+    for scan in state.scans:
         for sym in scan.symbols:
             name = str(sym)
             if name in index_names or name in base_names:
@@ -646,14 +880,21 @@ def _emit_code(
                 continue
             if isinstance(sym, _LoopStart):
                 continue
-            if name in module_symbols or name in integer_args:
+            if name in state.module_symbols or name in state.integer_args:
                 continue
-            if name in sc_temp_names:
+            if name in state.sc_temp_names:
                 continue
             param_scalars.add(name)
+    return param_scalars
 
+
+def _parameter_arrays(state: _EmitState, uses_n: bool) -> dict:
+    """Return the rank of every array argument found in ``scans``."""
+    n_name = str(n)
+    placeholder_names = set(state.resolver.ranks)
+    component_names = {c[0] for c in state.component_defs}
     array_ranks = {}
-    for scan in scans:
+    for scan in state.scans:
         for indexed in scan.indexed:
             base_name = str(indexed.base)
             rank = len(indexed.indices)
@@ -667,84 +908,166 @@ def _emit_code(
     }
     if uses_n:
         param_arrays[n_name] = 1
+    return param_arrays
 
-    params = sorted(param_scalars - placeholder_names)
-    placeholder_args = sorted(resolver.ranks)
 
-    needs_nc = (
+def _scan_signature(ctx: _EmitContext, state: _EmitState) -> None:
+    """Gather the arguments of the routine from the PRE-CSE expressions (S9).
+
+    Must run before the sharing passes: after CSE the temporaries would
+    appear as parameters.
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Writes ``scans``, ``param_arrays``, ``params``,
+        ``placeholder_args`` and ``needs_nc``.
+    """
+    scan_exprs = (
+        state.all_exprs
+        + [c[1] for c in state.component_defs]
+        + [body for _, body in state.scalar_chain_defs]
+    )
+    placeholder_names = set(state.resolver.ranks)
+    # ---- gather parameters --------------------------------------------
+    scans = [_scan_atoms(expr) for expr in scan_exprs]
+    state.scans = scans
+    n_name = str(n)
+    uses_n = any(
+        n_name in {str(base_) for base_ in scan.bases} for scan in scans
+    )
+    param_scalars = _parameter_scalars(state)
+    state.param_arrays = _parameter_arrays(state, uses_n)
+    state.params = sorted(param_scalars - placeholder_names)
+    state.placeholder_args = sorted(state.resolver.ranks)
+    state.needs_nc = (
         uses_n
-        or bool(param_arrays)
-        or any(free for _, _, _, free in prepared)
+        or bool(state.param_arrays)
+        or any(free for _, _, _, free in state.prepared)
         or any(sp.Symbol("nc") in scan.symbols for scan in scans)
     )
 
-    # ---- input declarations -------------------------------------------
+
+def _input_declarations(state: _EmitState) -> None:
+    """Declare the dummy arguments in ``inputs`` (S10)."""
     inputs = []
-    if needs_nc:
+    if state.needs_nc:
         inputs.append("integer, intent(in) :: nc")
-    if integer_args:
-        inputs.append("integer, intent(in) :: " + ", ".join(integer_args))
+    if state.integer_args:
+        inputs.append(
+            "integer, intent(in) :: " + ", ".join(state.integer_args)
+        )
     for var, label in ((V, "V"), (P, "P"), (T, "T")):
-        if any(var in scan.symbols for scan in scans):
+        if any(var in scan.symbols for scan in state.scans):
             inputs.append(f"real(8), intent(in) :: {label}")
-    for param in params:
+    for param in state.params:
         inputs.append(f"real(8), intent(in) :: {param}")
     in_array = (
         "real(8), contiguous, intent(in)"
-        if contiguous_args
+        if state.opts.contiguous_args
         else "real(8), intent(in)"
     )
-    for arr in sorted(param_arrays):
-        dims = ", ".join([":"] * param_arrays[arr])
+    for arr in sorted(state.param_arrays):
+        dims = ", ".join([":"] * state.param_arrays[arr])
         inputs.append(f"{in_array} :: {arr}({dims})")
-    for arg in placeholder_args:
-        rank = resolver.ranks[arg]
+    for arg in state.placeholder_args:
+        rank = state.resolver.ranks[arg]
         if rank == 0:
             inputs.append(f"real(8), intent(in) :: {arg}")
         else:
             dims = ", ".join([":"] * rank)
             inputs.append(f"{in_array} :: {arg}({dims})")
+    state.inputs = inputs
 
+
+def _declare_signature(ctx: _EmitContext, state: _EmitState) -> None:
+    """Declare the input and output arguments (S10, S11).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Writes ``inputs`` and ``output_decls``.
+    """
+    _input_declarations(state)
     # ---- output declarations ------------------------------------------
-    output_decls = [
+    state.output_decls = [
         _declare_output(
             out_name,
             len(free_order),
-            optional=optional_derivatives,
-            contiguous=contiguous_args,
+            optional=state.opts.optional_derivatives,
+            contiguous=state.opts.contiguous_args,
         )
-        for _attr, out_name, _, free_order in prepared
+        for _attr, out_name, _, free_order in state.prepared
         if _attr not in (_SCALAR_CHAIN, _SCALAR_PLAIN)
     ]
 
-    # ---- body ----------------------------------------------------------
-    arrays = {}
-    component_array_defs = []
-    if component_defs:
-        from thermodiff.chain import NAME_SCHEME_KEY
 
-        scheme = structured[NAME_SCHEME_KEY]
-        for comp_name, comp_body, comp_rank, comp_sym in component_defs:
-            arrays[comp_name] = comp_rank
-            free_ = (
-                [scheme.component_slot]
-                if comp_rank == 1
-                else list(scheme.pair_slots)
-            )
-            base_ = sp.IndexedBase(comp_name, shape=(nc,) * comp_rank)
-            component_array_defs.append(
-                TempDef(
-                    target=sp.Indexed(base_, *free_),
-                    free=free_,
-                    limits=[],
-                    body=(
-                        _canonical_floats(comp_body)
-                        if float_canon
-                        else comp_body
-                    ),
-                    mirror=bool(comp_sym and param_symmetry),
-                )
-            )
+def _legacy_tail(ctx: _EmitContext, state: _EmitState) -> None:
+    """Run the stages not yet extracted (S13-S41); temporary."""
+    diff = ctx.diff
+    structured = state.structured
+    stats = state.stats
+    count_scalar = state.count_scalar
+    namer = state.namer
+    integer_args = state.integer_args
+    module_symbols = state.module_symbols
+    symmetric_params = state.symmetric_params
+    scalar_chain_defs = state.scalar_chain_defs
+    share_sums = state.share_sums
+    scalar_cse = state.scalar_cse
+    prepared = state.prepared
+    all_exprs = state.all_exprs
+    scans = state.scans
+    params = state.params
+    param_arrays = state.param_arrays
+    placeholder_args = state.placeholder_args
+    needs_nc = state.needs_nc
+    inputs = state.inputs
+    output_decls = state.output_decls
+    arrays = state.arrays
+    component_array_defs = state.component_array_defs
+    sub_name = ctx.sub_name
+    legacy = state.opts.to_legacy()
+    array_cse = legacy["array_cse"]
+    cse_expensive = legacy["cse_expensive"]
+    param_symmetry = legacy["param_symmetry"]
+    sym_rank3 = legacy["sym_rank3"]
+    nest_shared = legacy["nest_shared"]
+    fuse_temps = legacy["fuse_temps"]
+    fuse_guard = legacy["fuse_guard"]
+    keep_libm_tables = legacy["keep_libm_tables"]
+    hoist_invariants = legacy["hoist_invariants"]
+    sum_alpha = legacy["sum_alpha"]
+    sum_free_alpha = legacy["sum_free_alpha"]
+    sum_transpose = legacy["sum_transpose"]
+    cse_backend = legacy["cse_backend"]
+    float_canon = legacy["float_canon"]
+    optional_derivatives = legacy["optional_derivatives"]
+    lowrank_hess = legacy["lowrank_hess"]
+    hoist_loops = legacy["hoist_loops"]
+    drop_pair_tables = legacy["drop_pair_tables"]
+    share_elementwise = legacy["share_elementwise"]
+    split_affine = legacy["split_affine"]
+    sym_sum2 = legacy["sym_sum2"]
+    col_major = legacy["col_major"]
+    table_layout = legacy["table_layout"]
+    fuse_loops = legacy["fuse_loops"]
+    sym_matvec = legacy["sym_matvec"]
+    sib_fuse = legacy["sib_fuse"]
+    diag_table = legacy["diag_table"]
+    sym_perm = legacy["sym_perm"]
+    comp_fuse = legacy["comp_fuse"]
+    fuse_outer = legacy["fuse_outer"]
+    fuse_libm_guard = legacy["fuse_libm_guard"]
+    split_acc = legacy["split_acc"]
+    hessian_symmetry = legacy["hessian_symmetry"]
+    array_pad = legacy["array_pad"]
+    scalar_chain = legacy["scalar_chain"]
+
     if array_cse:
         all_exprs, array_defs = _indexed_cse(
             all_exprs,
@@ -1184,8 +1507,105 @@ def _emit_code(
 
     lines.append(f"end subroutine {sub_name}")
     lines.append("")
+    state.text = "\n".join(lines)
 
-    return "\n".join(lines)
+
+_PASSES: tuple[Pass, ...] = (
+    Pass("resolve_outputs", _always, _resolve_outputs),
+    Pass("canonicalise_outputs", _always, _canonicalise_outputs),
+    Pass("pair_components", _always, _pair_components),
+    Pass("scan_signature", _always, _scan_signature),
+    Pass("declare_signature", _always, _declare_signature),
+    Pass("legacy_tail", _always, _legacy_tail),
+)
+
+
+def _emit_code(
+    ctx,
+    structured,
+    stats,
+    count_scalar,
+    *,
+    strict=False,
+    optional_derivatives=False,
+    array_cse=True,
+    share=True,
+    share_sums=None,
+    scalar_cse=None,
+    param_symmetry=False,
+    hessian_symmetry=False,
+    cse_backend="thermodiff",
+    sum_alpha=False,
+    array_pad=0,
+    hoist_invariants=False,
+    chain_rule=False,
+    hoist_loops=False,
+    sum_free_alpha=False,
+    fuse_temps=False,
+    nest_sums=False,
+    split_sqrt=False,
+    split_sums=False,
+    nest_shared=False,
+    sym_matvec=False,
+    col_major=False,
+    pair_cse=False,
+    pair_rates=False,
+    sum_transpose=False,
+    sep_sums=False,
+    sym_rank3=False,
+    nest_general=False,
+    sym_sum2=False,
+    cse_expensive=False,
+    fuse_loops=False,
+    nested_nodes=False,
+    sym_perm=False,
+    fuse_guard=False,
+    nest_cost=False,
+    comp_fuse=False,
+    fuse_outer=False,
+    fuse_libm_guard=False,
+    keep_libm_tables=False,
+    diag_table=False,
+    sib_fuse=False,
+    dummy_canon=False,
+    float_canon=False,
+    contiguous_args=False,
+    table_layout=False,
+    lowrank_hess=False,
+    drop_pair_tables=False,
+    share_elementwise=False,
+    scalar_chain=False,
+    split_affine=False,
+    split_acc=False,
+):
+    """Emit the subroutine from a precomputed chain-rule structure.
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    structured : dict or None
+        Result of the chain-rule step (``None`` without ``chain_rule``).
+    stats : dict or None
+        Receives the statistics.
+    count_scalar : bool
+        Whether to report ``scalar_operation_count``.
+    **options
+        The behaviour options with the legacy ``to_fortran`` meaning
+        (``CodegenOptions.to_legacy``); ``scalar_chain`` is ``True`` or
+        ``False`` here.
+
+    Returns
+    -------
+    str
+        The Fortran source.
+    """
+    opts = _legacy_options(locals())
+    state = _new_state(ctx, structured, stats, count_scalar, opts)
+    for stage in _PASSES:
+        if stage.enabled(opts):
+            stage.run(ctx, state)
+    return state.text
 
 
 def to_fortran(
