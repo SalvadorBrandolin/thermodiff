@@ -321,74 +321,77 @@ def _distribute(expr, free, limit=2000):
     return [expr]
 
 
-def _lowrank_bilinear(expr, free, namer, arrays):
-    """Rank-k form of a rank-2 output ``H(p, q)``.
+def _split_separable(terms, free):
+    """Split ``terms`` into separable ``(S, F, G)`` triples and the rest.
 
-    Every term of the (distributed) residual is split into its scalar
-    factors, its factors over ``p`` only, over ``q`` only, and its pair
-    factors (both indices, or a ``Piecewise``).  The separable terms
-    ``S F(p) G(q)`` are grouped by the factor over one index (the side with
-    the cheaper result), ``sum_l r_l(p) G_l(q)``, and each coefficient
-    vector ``r_l(p) = sum S F(p)`` becomes a rank-1 definition, O(nc).  The
-    terms over one index only and the pair terms are kept as they are.
-
-    Returns ``(new_expr, definitions)``, or None when there is nothing to
-    group or the grouped form is not cheaper per element (``count_ops`` of the
-    separable terms against the products and sums of the new form).
+    ``S`` is the product of the scalar factors, ``F`` of the factors over
+    ``free[0]`` only and ``G`` of those over ``free[1]`` only.  A pair term,
+    or one lacking ``F`` or ``G``, goes to the rest unchanged.
     """
-    p_, q_ = free
-    terms = _distribute(expr, (p_, q_))
-    if terms is None:
-        return None
-    sep, rest = [], []
+    first, second = free
+    separable, rest = [], []
     for term in terms:
-        S, F, G = [], [], []
+        scalar, over_first, over_second = [], [], []
         pair = _pair_term(term, frozenset(free))
         for factor in sp.Mul.make_args(term):
-            idx = factor.atoms(sp.Idx)
+            indices = factor.atoms(sp.Idx)
             if pair:
                 break
-            if p_ in idx:
-                F.append(factor)
-            elif q_ in idx:
-                G.append(factor)
+            if first in indices:
+                over_first.append(factor)
+            elif second in indices:
+                over_second.append(factor)
             else:
-                S.append(factor)
-        if pair or not F or not G:
+                scalar.append(factor)
+        if pair or not over_first or not over_second:
             rest.append(term)
         else:
-            sep.append((sp.Mul(*S), sp.Mul(*F), sp.Mul(*G)))
-    if not sep:
-        return None
-    # per element, after the scalar coefficients are hoisted: the products
-    # inside F and G, the scalar factor, F*G and the sum
-    old_cost = sum(
-        sp.count_ops(F, visual=False)
-        + sp.count_ops(G, visual=False)
-        + (S != 1)
+            separable.append(
+                (
+                    sp.Mul(*scalar),
+                    sp.Mul(*over_first),
+                    sp.Mul(*over_second),
+                )
+            )
+    return separable, rest
+
+
+def _separable_cost(separable):
+    """Cost per element of the separable terms, after the scalar
+    coefficients are hoisted: the products inside F and G, the scalar
+    factor, F*G and the sum."""
+    return sum(
+        sp.count_ops(over_first, visual=False)
+        + sp.count_ops(over_second, visual=False)
+        + (scalar != 1)
         + 2
-        for S, F, G in sep
+        for scalar, over_first, over_second in separable
     )
 
-    def grouped(side):
-        # cost per element: one product and one sum per group (a compound
-        # key is computed once as a vector)
-        groups = {}
-        for S, F, G in sep:
-            key, coef = (G, S * F) if side == q_ else (F, S * G)
-            groups.setdefault(key, []).append(coef)
-        return 2 * len(groups), groups
 
-    cost_q, groups_q = grouped(q_)
-    cost_p, groups_p = grouped(p_)
-    side, cost, groups = (
-        (q_, cost_q, groups_q) if cost_q <= cost_p else (p_, cost_p, groups_p)
-    )
-    if cost >= old_cost:
-        return None
-    other = p_ if side == q_ else q_
-    definitions = []
-    new_terms = list(rest)
+def _group_by_side(separable, side, second):
+    """Group the separable terms by the factor over the other index.
+
+    Returns ``(cost, groups)``: the cost per element is one product and one
+    sum per group (a compound key is computed once as a vector).
+    """
+    groups = {}
+    for scalar, over_first, over_second in separable:
+        if side == second:
+            key, coef = over_second, scalar * over_first
+        else:
+            key, coef = over_first, scalar * over_second
+        groups.setdefault(key, []).append(coef)
+    return 2 * len(groups), groups
+
+
+def _grouped_definitions(groups, side, other, namer, arrays):
+    """Terms ``coef * key`` of the groups, with the vectors they need.
+
+    Returns ``(terms, definitions)``; a coefficient that is already a
+    vector over ``other`` is used as it is.
+    """
+    terms, definitions = [], []
     for key in sorted(groups, key=sp.default_sort_key):
         body = sp.Add(*groups[key])
         if isinstance(body, sp.Indexed) and body.indices == (other,):
@@ -404,8 +407,46 @@ def _lowrank_bilinear(expr, free, namer, arrays):
                 TempDef(target=vec, free=[side], limits=[], body=key)
             )
             key = vec
-        new_terms.append(coef * key)
-    return sp.Add(*new_terms), definitions
+        terms.append(coef * key)
+    return terms, definitions
+
+
+def _lowrank_bilinear(expr, free, namer, arrays):
+    """Rank-k form of a rank-2 output ``H(p, q)``.
+
+    Every term of the (distributed) residual is split into its scalar
+    factors, its factors over ``p`` only, over ``q`` only, and its pair
+    factors (both indices, or a ``Piecewise``).  The separable terms
+    ``S F(p) G(q)`` are grouped by the factor over one index (the side with
+    the cheaper result), ``sum_l r_l(p) G_l(q)``, and each coefficient
+    vector ``r_l(p) = sum S F(p)`` becomes a rank-1 definition, O(nc).  The
+    terms over one index only and the pair terms are kept as they are.
+
+    Returns ``(new_expr, definitions)``, or None when there is nothing to
+    group or the grouped form is not cheaper per element (``count_ops`` of the
+    separable terms against the products and sums of the new form).
+    """
+    first, second = free
+    terms = _distribute(expr, (first, second))
+    if terms is None:
+        return None
+    separable, rest = _split_separable(terms, free)
+    if not separable:
+        return None
+    cost_second, groups_second = _group_by_side(separable, second, second)
+    cost_first, groups_first = _group_by_side(separable, first, second)
+    side, cost, groups = (
+        (second, cost_second, groups_second)
+        if cost_second <= cost_first
+        else (first, cost_first, groups_first)
+    )
+    if cost >= _separable_cost(separable):
+        return None
+    other = first if side == second else second
+    new_terms, definitions = _grouped_definitions(
+        groups, side, other, namer, arrays
+    )
+    return sp.Add(*rest, *new_terms), definitions
 
 
 def _loop_names_in_use(definitions, outputs, arrays, reserved):
