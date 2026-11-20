@@ -568,7 +568,7 @@ def _alpha_key(total):
     return total.xreplace(mapping)
 
 
-def _free_alpha_key(total, indexes, symmetric_params=(), sym_rank3=False):
+def _free_alpha_key(total, indexes, symmetric_params=(), *, sym_rank3):
     """Canonical form of a summation modulo renaming of all its indices.
 
     Bound indices are renamed by position, free indices by their order, so
@@ -638,7 +638,8 @@ def _share_sums(
     free_alpha=False,
     symmetric_params=(),
     transpose=False,
-    sym_rank3=False,
+    *,
+    sym_rank3,
 ):
     """Replace every ``Sum`` by a temporary that is computed once.
 
@@ -685,7 +686,7 @@ def _share_sums(
         for total in innermost:
             if free_alpha:
                 key, free_here = _free_alpha_key(
-                    total, indexes, symmetric_params, sym_rank3
+                    total, indexes, symmetric_params, sym_rank3=sym_rank3
                 )
                 if transpose and key not in by_key and len(free_here) == 2:
                     # the transpose of a rank-2 sum already computed
@@ -735,7 +736,7 @@ def _share_sums(
             if free_alpha:
                 by_key[
                     _free_alpha_key(
-                        total, indexes, symmetric_params, sym_rank3
+                        total, indexes, symmetric_params, sym_rank3=sym_rank3
                     )[0]
                 ] = (
                     target,
@@ -1413,7 +1414,7 @@ def _canonical_floats(expr):
 
 
 def _merge_dummy_images(
-    expr, symmetric_params=(), shared_bases=frozenset(), sym_rank3=False
+    expr, symmetric_params=(), shared_bases=frozenset(), *, sym_rank3
 ):
     """Merge the terms of a summation that are images under a renaming of
     its bound indices.
@@ -1487,7 +1488,8 @@ def _nest_double_sums(
     shared_inner=False,
     general=False,
     cost=False,
-    sym_rank3=False,
+    *,
+    sym_rank3,
 ):
     """Rewrite double sums as dot products with existing vector sums.
 
@@ -2121,7 +2123,7 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
     return new_definitions, new_outputs
 
 
-def _symv_parts(definition, symmetric_params, sym_rank3=False):
+def _symv_parts(definition, symmetric_params, *, sym_rank3):
     """Split ``v(f) = sum_b P(b,f)*R(b)`` with ``P`` symmetric.
 
     Returns ``(pair, rest)`` when the body is a product of exactly one
@@ -3562,7 +3564,7 @@ def _render_outer_fused(definition) -> list:
     return lines
 
 
-def _diagonal_from_tables(definitions, symmetric_params, sym_rank3=False):
+def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
     """Read the diagonal of an existing rank-2 table instead of recomputing it.
 
     ``d(k) = sum_m B(k, k, m)`` and ``t(a, b) = sum_m B(a, b, m)`` (filled in
@@ -4219,7 +4221,11 @@ def _canonical_symmetric(expr, symmetric_params, sym_rank3=False):
 
 
 def _swap(expr, a, b, symmetric_params, sym_rank3=False):
-    """Swap the indices ``a`` and ``b`` and re-canonicalise."""
+    """Swap the indices ``a`` and ``b`` and re-canonicalise.
+
+    ``sym_rank3`` keeps a default only because the chain-rule stage
+    (``chain.py``) calls this helper before emission, without the option.
+    """
     swapped = expr.xreplace({a: b, b: a})
     return _canonical_symmetric(swapped, symmetric_params, sym_rank3)
 
@@ -4303,7 +4309,7 @@ class _LoopStart(sp.Symbol):
         return obj
 
 
-def _fold_symmetric_sums(expr, symmetric_params, sym_rank3=False):
+def _fold_symmetric_sums(expr, symmetric_params, *, sym_rank3):
     """Fold double summations whose body is symmetric in its two indices.
 
     ``sum_a sum_b F(a,b)`` with ``F(a,b) == F(b,a)`` is rewritten as
@@ -4922,7 +4928,7 @@ def _emit_code(
                     expr,
                     symmetric_params,
                     frozenset(shared_bases),
-                    sym_rank3,
+                    sym_rank3=sym_rank3,
                 ),
             )
             for attr, out_name, expr in staged
@@ -4940,7 +4946,9 @@ def _emit_code(
     prepared = []
     for attr, out_name, expr in staged:
         if param_symmetry and symmetric_params:
-            expr = _fold_symmetric_sums(expr, symmetric_params, sym_rank3)
+            expr = _fold_symmetric_sums(
+                expr, symmetric_params, sym_rank3=sym_rank3
+            )
         free_order = _order_free(_free_indices(expr), diff.indexes)
         prepared.append((attr, out_name, expr, free_order))
 
@@ -5374,7 +5382,9 @@ def _emit_code(
         definitions = _fuse_loop_nests(definitions, namer)
     if sym_matvec and param_symmetry:
         for definition in definitions:
-            parts = _symv_parts(definition, symmetric_params, sym_rank3)
+            parts = _symv_parts(
+                definition, symmetric_params, sym_rank3=sym_rank3
+            )
             if parts is not None:
                 definition["symv"] = parts
                 definition["symv_acc"] = namer("t")
@@ -5382,7 +5392,7 @@ def _emit_code(
         definitions = _fuse_sibling_tables(definitions, namer)
     if diag_table and not optional_derivatives:
         definitions = _diagonal_from_tables(
-            definitions, symmetric_params, sym_rank3
+            definitions, symmetric_params, sym_rank3=sym_rank3
         )
     if sym_perm and param_symmetry:
         definitions = _permute_symmetric_subscripts(

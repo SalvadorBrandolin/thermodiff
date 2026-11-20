@@ -151,12 +151,12 @@ class TestSymmetricAttribute:
         canon = _canonical_symmetric(body, ["k"])
         assert canon == x[p] * x[q] * (1 - k[p, q])
         folded = _fold_symmetric_sums(
-            sp.Sum(body, (q, 1, nc), (p, 1, nc)), ["k"]
+            sp.Sum(body, (q, 1, nc), (p, 1, nc)), ["k"], sym_rank3=False
         )
         assert folded != sp.Sum(body, (q, 1, nc), (p, 1, nc))
         # a non-symmetric body is left untouched
         plain = sp.Sum(x[p] * k[p, q], (q, 1, nc), (p, 1, nc))
-        assert _fold_symmetric_sums(plain, ["k"]) == plain
+        assert _fold_symmetric_sums(plain, ["k"], sym_rank3=False) == plain
 
 
 def test_default_output_unchanged_by_symmetric_attribute():
