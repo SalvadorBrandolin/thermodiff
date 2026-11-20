@@ -27,6 +27,7 @@ are exposed as extra input arguments by default; pass ``strict=True`` to
 raise an error instead.
 """
 
+import dataclasses
 import functools
 import inspect
 import os
@@ -39,7 +40,7 @@ import sympy as sp
 from sympy.core.function import DefinedFunction
 from sympy.printing.fortran import fcode
 
-from thermodiff.codegen import CodegenOptions
+from thermodiff.codegen import CodegenOptions, ScalarChainMode
 from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES, resolve_derivatives
 from thermodiff.thermovars import P, T, V, i, j, n, nc
 
@@ -4368,21 +4369,366 @@ def _sympy_scalar_cse(expressions, namer, arrays):
     return reduced, definitions
 
 
+# ``estimate`` keeps propagation unless it is estimated to cost more than
+# this factor over the plain path
+_PROPAGATION_SLACK = 1.1
+_ESTIMATE_OR_COST = (ScalarChainMode.COST, ScalarChainMode.ESTIMATE)
+# ``stats`` entry through which the structure leaks (``scalar_chain`` on)
+_STRUCTURE_STATS_KEY = "_structured"
+
+
+@dataclasses.dataclass(frozen=True)
+class _EmitContext:
+    """Inputs resolved once and shared by the stages of the generator.
+
+    Attributes
+    ----------
+    diff : object
+        The ``DiffPlz`` instance.
+    selected : tuple of str
+        Derivative attributes to emit, in canonical order.
+    base : str
+        Sanitised name of the value output.
+    sub_name : str
+        Sanitised subroutine name.
+    integer_args : tuple of str
+        Integer dummy arguments.
+    module_symbols : frozenset of str
+        Names provided by the enclosing module.
+    symmetric_params : tuple
+        Parameters declared symmetric.
+    """
+
+    diff: object
+    selected: tuple
+    base: str
+    sub_name: str
+    integer_args: tuple
+    module_symbols: frozenset
+    symmetric_params: tuple
+
+
+def _select_derivatives(diff, derivatives) -> list:
+    """Return the derivative attributes to emit, in canonical order.
+
+    Parameters
+    ----------
+    diff : DiffPlz
+        Instance holding the derivatives.
+    derivatives : iterable of str or None
+        Requested derivatives; ``None`` takes every non-zero one.
+
+    Returns
+    -------
+    list of str
+        Selected attributes.
+
+    Raises
+    ------
+    ValueError
+        If a requested derivative was not computed by ``diff``.
+    """
+    if derivatives is None:
+        candidates = getattr(diff, "derivatives", None)
+        if candidates is None:
+            candidates = _DERIV_ORDER
+        selected = []
+        for attr in _DERIV_ORDER:
+            if attr not in candidates:
+                continue
+            value = getattr(diff, attr, None)
+            if value is None or value == 0:
+                continue
+            selected.append(attr)
+        return selected
+    resolved = resolve_derivatives(derivatives)
+    selected = [attr for attr in _DERIV_ORDER if attr in resolved]
+    missing = [attr for attr in selected if getattr(diff, attr, None) is None]
+    if missing:
+        raise ValueError(
+            "Derivatives not computed by the DiffPlz instance: "
+            + ", ".join(missing)
+            + ". Rebuild it with derivatives="
+            + repr(list(resolved))
+            + "."
+        )
+    return selected
+
+
+def _resolve_context(
+    diff,
+    derivatives,
+    name,
+    subroutine_name,
+    integer_args,
+    module_symbols,
+    symmetric_params,
+) -> _EmitContext:
+    """Resolve names and the derivative selection into an immutable context.
+
+    Parameters
+    ----------
+    diff : DiffPlz
+        Instance holding the expression and derivatives.
+    derivatives, name, subroutine_name, integer_args, module_symbols
+        As in :func:`to_fortran`.
+    symmetric_params : iterable
+        Parameters declared symmetric.
+
+    Returns
+    -------
+    _EmitContext
+        The resolved context.
+    """
+    base = _sanitize(name if name is not None else diff.name)
+    sub_name = (
+        _sanitize(subroutine_name) if subroutine_name else base + "_derivs"
+    )
+    return _EmitContext(
+        diff=diff,
+        selected=tuple(_select_derivatives(diff, derivatives)),
+        base=base,
+        sub_name=sub_name,
+        integer_args=tuple(integer_args or ()),
+        module_symbols=frozenset(module_symbols or ()),
+        symmetric_params=tuple(symmetric_params or ()),
+    )
+
+
+def _chain_structure(ctx: _EmitContext, opts: CodegenOptions):
+    """Run the chain-rule step, or return ``None`` without ``chain_rule``.
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    opts : CodegenOptions
+        Options; ``scalar_chain`` is read as on or off.
+
+    Returns
+    -------
+    dict or None
+        The structured derivatives of the chain-rule step.
+    """
+    if not opts.chain_rule:
+        return None
+    from thermodiff.chain import chain_rule_derivatives
+
+    scalar_chain = (
+        opts.scalar_chain is ScalarChainMode.ON
+        and not opts.optional_derivatives
+    )
+    return chain_rule_derivatives(
+        ctx.diff.expression,
+        list(ctx.selected),
+        ctx.diff.indexes,
+        symmetric_params=ctx.symmetric_params,
+        split_sqrt=opts.split_sqrt,
+        split_sums=opts.split_sums,
+        pair_cse=opts.pair_cse,
+        pair_rates=opts.pair_rates,
+        nested_nodes=opts.nested_nodes,
+        table_layout=opts.table_layout,
+        scalar_chain=scalar_chain,
+    )
+
+
+def _plain_structure(
+    ctx: _EmitContext, opts: CodegenOptions, structured
+) -> tuple:
+    """Return the structure of the path without scalar-chain propagation.
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    opts : CodegenOptions
+        Options of the plain path (``scalar_chain`` off).
+    structured : dict or None
+        Structure made with ``scalar_chain`` on.
+
+    Returns
+    -------
+    plain : dict or None
+        The ``_plain`` outputs of ``structured`` with its component
+        definitions; ``structured`` itself when it carries none; a new
+        chain-rule run when ``structured`` is ``None``.
+    propagated : bool
+        Whether ``structured`` carried a ``_plain`` set.
+    """
+    if structured is None:
+        return _chain_structure(ctx, opts), False
+    if "_plain" not in structured:
+        return structured, False
+    plain = dict(structured["_plain"])
+    plain["_component_defs"] = structured["_component_defs"]
+    return plain, True
+
+
+def _generate_estimate(ctx: _EmitContext, opts: CodegenOptions, stats):
+    """Emit with ``scalar_chain="estimate"``: one structure, one emission.
+
+    The path is chosen from the operation estimates of the two scalar
+    blocks made by the chain-rule step.  Ties and near ties go to
+    propagation: after the scalar CSE of the pipeline it is the cheaper
+    path in every case checked (7 models).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    opts : CodegenOptions
+        Options with ``scalar_chain`` set to ``ESTIMATE``.
+    stats : dict or None
+        Receives the statistics, ``scalar_chain_used`` and
+        ``scalar_chain_estimate``.
+
+    Returns
+    -------
+    str
+        The Fortran source.
+    """
+    chain_opts = opts.replace(scalar_chain=ScalarChainMode.ON)
+    structured = _chain_structure(ctx, chain_opts)
+    estimate = (structured or {}).get("_scalar_estimate")
+    use = (
+        estimate is not None
+        and estimate[1] <= _PROPAGATION_SLACK * estimate[0]
+    )
+    if use:
+        used_opts, emitted = chain_opts, structured
+    else:
+        used_opts = opts.replace(scalar_chain=ScalarChainMode.OFF)
+        emitted, _ = _plain_structure(ctx, used_opts, structured)
+    code = _emit_code(ctx, emitted, stats, True, **used_opts.to_legacy())
+    if stats is not None:
+        stats["scalar_chain_used"] = use
+        stats["scalar_chain_estimate"] = estimate
+    return code
+
+
+def _generate_cost(ctx: _EmitContext, opts: CodegenOptions, stats):
+    """Emit with ``scalar_chain="cost"``: both paths, keep the cheaper.
+
+    Keeps the path whose scalar block (definitions and outputs without
+    loops) has fewer operations; the loops are the same by construction.
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    opts : CodegenOptions
+        Options with ``scalar_chain`` set to ``COST``.
+    stats : dict or None
+        Receives the statistics of the chosen path and
+        ``scalar_chain_used``.
+
+    Returns
+    -------
+    str
+        The Fortran source of the chosen path.
+    """
+    chain_opts = opts.replace(scalar_chain=ScalarChainMode.ON)
+    structured = _chain_structure(ctx, chain_opts)
+    stats_sc = {}
+    code_sc = _emit_code(
+        ctx, structured, stats_sc, True, **chain_opts.to_legacy()
+    )
+    stats_sc.pop(_STRUCTURE_STATS_KEY, None)
+    plain_opts = opts.replace(scalar_chain=ScalarChainMode.OFF)
+    plain, propagated = _plain_structure(ctx, plain_opts, structured)
+    stats_plain = {}
+    code_plain = _emit_code(
+        ctx, plain, stats_plain, True, **plain_opts.to_legacy()
+    )
+    use = (
+        propagated
+        and stats_sc["scalar_operation_count"]
+        < stats_plain["scalar_operation_count"]
+    )
+    chosen_code, chosen_stats = (
+        (code_sc, stats_sc) if use else (code_plain, stats_plain)
+    )
+    if stats is not None:
+        stats.update(chosen_stats)
+        stats["scalar_chain_used"] = use
+    return chosen_code
+
+
 def _to_fortran_impl(
     diff,
     derivatives=None,
     name=None,
     subroutine_name=None,
-    strict=False,
     integer_args=None,
     module_symbols=None,
+    symmetric_params=(),
+    stats=None,
+    *,
+    opts,
+):
+    """Generate the subroutine from resolved options (see ``to_fortran``).
+
+    Dispatches on ``opts.scalar_chain``: off and on make one structure and
+    one emission, ``estimate`` and ``cost`` go through their own stage.
+
+    Parameters
+    ----------
+    diff : DiffPlz
+        Instance holding the expression and derivatives.
+    derivatives, name, subroutine_name, integer_args, module_symbols
+        As in :func:`to_fortran`.
+    symmetric_params : iterable, optional
+        Parameters declared symmetric.
+    stats : dict, optional
+        Receives generation statistics.
+    opts : CodegenOptions
+        Validated behaviour options.
+
+    Returns
+    -------
+    str
+        The Fortran source.
+    """
+    ctx = _resolve_context(
+        diff,
+        derivatives,
+        name,
+        subroutine_name,
+        integer_args,
+        module_symbols,
+        symmetric_params,
+    )
+    if opts.scalar_chain in _ESTIMATE_OR_COST and not (
+        opts.chain_rule and not opts.optional_derivatives
+    ):
+        opts = opts.replace(scalar_chain=ScalarChainMode.OFF)
+    if opts.scalar_chain is ScalarChainMode.ESTIMATE:
+        return _generate_estimate(ctx, opts, stats)
+    if opts.scalar_chain is ScalarChainMode.COST:
+        return _generate_cost(ctx, opts, stats)
+    structured = _chain_structure(ctx, opts)
+    return _emit_code(
+        ctx,
+        structured,
+        stats,
+        opts.scalar_chain is ScalarChainMode.ON,
+        **opts.to_legacy(),
+    )
+
+
+def _emit_code(
+    ctx,
+    structured,
+    stats,
+    count_scalar,
+    *,
+    strict=False,
     optional_derivatives=False,
     array_cse=True,
     share=True,
-    stats=None,
     share_sums=None,
     scalar_cse=None,
-    symmetric_params=(),
     param_symmetry=False,
     hessian_symmetry=False,
     cse_backend="thermodiff",
@@ -4428,136 +4774,37 @@ def _to_fortran_impl(
     scalar_chain=False,
     split_affine=False,
     split_acc=False,
-    _structured=None,
-    _structure_only=False,
 ):
-    """Generate the subroutine from legacy keywords (see ``to_fortran``)."""
-    if scalar_chain in ("cost", "estimate") and not (
-        chain_rule and not optional_derivatives
-    ):
-        scalar_chain = False
-    if scalar_chain == "estimate":
-        # one pass of the array pipeline: the path is chosen from the operation
-        # estimates of the two scalar blocks made by the chain-rule step
-        settings = dict(locals())
-        structured_ = _to_fortran_impl(
-            **dict(settings, scalar_chain=True, _structure_only=True)
-        )
-        estimate = (structured_ or {}).get("_scalar_estimate")
-        # ties and near ties go to propagation: after the scalar CSE of the
-        # pipeline it is the cheaper path in every case checked (7 models)
-        use = estimate is not None and estimate[1] <= 1.1 * estimate[0]
-        if use:
-            code = _to_fortran_impl(
-                **dict(settings, scalar_chain=True, _structured=structured_)
-            )
-        else:
-            plain_ = structured_
-            if structured_ is not None and "_plain" in structured_:
-                plain_ = dict(structured_["_plain"])
-                plain_["_component_defs"] = structured_["_component_defs"]
-            code = _to_fortran_impl(
-                **dict(settings, scalar_chain=False, _structured=plain_)
-            )
-        if stats is not None:
-            stats["scalar_chain_used"] = use
-            stats["scalar_chain_estimate"] = estimate
-        return code
-    if scalar_chain == "cost":
-        # keep the path whose scalar block (definitions and outputs without
-        # loops) has fewer operations; the loops are the same by construction
-        settings = dict(locals())
-        stats_sc = {}
-        code_sc = _to_fortran_impl(
-            **dict(settings, scalar_chain=True, stats=stats_sc)
-        )
-        structured_ = stats_sc.pop("_structured", None)
-        plain_, propagated = structured_, False
-        if structured_ is not None and "_plain" in structured_:
-            plain_ = dict(structured_["_plain"])
-            plain_["_component_defs"] = structured_["_component_defs"]
-            propagated = True
-        stats_plain = {}
-        code_plain = _to_fortran_impl(
-            **dict(
-                settings,
-                scalar_chain=False,
-                stats=stats_plain,
-                _structured=plain_,
-            )
-        )
-        stats_plain.pop("_structured", None)
-        use = (
-            propagated
-            and stats_sc["scalar_operation_count"]
-            < stats_plain["scalar_operation_count"]
-        )
-        chosen_code, chosen_stats = (
-            (code_sc, stats_sc) if use else (code_plain, stats_plain)
-        )
-        if stats is not None:
-            stats.update(chosen_stats)
-            stats["scalar_chain_used"] = use
-        return chosen_code
-    module_symbols = set(module_symbols or ())
-    integer_args = list(integer_args or [])
+    """Emit the subroutine from a precomputed chain-rule structure.
 
-    base = _sanitize(name if name is not None else diff.name)
-    sub_name = (
-        _sanitize(subroutine_name) if subroutine_name else base + "_derivs"
-    )
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    structured : dict or None
+        Result of the chain-rule step (``None`` without ``chain_rule``).
+    stats : dict or None
+        Receives the statistics.
+    count_scalar : bool
+        Whether to report ``scalar_operation_count``.
+    **options
+        The behaviour options with the legacy ``to_fortran`` meaning
+        (``CodegenOptions.to_legacy``); ``scalar_chain`` is ``True`` or
+        ``False`` here.
 
-    if derivatives is None:
-        candidates = getattr(diff, "derivatives", None)
-        if candidates is None:
-            candidates = _DERIV_ORDER
-        selected = []
-        for attr in _DERIV_ORDER:
-            if attr not in candidates:
-                continue
-            value = getattr(diff, attr, None)
-            if value is None or value == 0:
-                continue
-            selected.append(attr)
-    else:
-        resolved = resolve_derivatives(derivatives)
-        selected = [attr for attr in _DERIV_ORDER if attr in resolved]
-        missing = [
-            attr for attr in selected if getattr(diff, attr, None) is None
-        ]
-        if missing:
-            raise ValueError(
-                "Derivatives not computed by the DiffPlz instance: "
-                + ", ".join(missing)
-                + ". Rebuild it with derivatives="
-                + repr(list(resolved))
-                + "."
-            )
-
+    Returns
+    -------
+    str
+        The Fortran source.
+    """
+    diff = ctx.diff
+    selected = list(ctx.selected)
+    base = ctx.base
+    sub_name = ctx.sub_name
+    integer_args = list(ctx.integer_args)
+    module_symbols = set(ctx.module_symbols)
+    symmetric_params = ctx.symmetric_params
     resolver = _PlaceholderResolver(strict=strict)
-
-    structured = None
-    if chain_rule and _structured is not None:
-        structured = _structured
-    elif chain_rule:
-        from thermodiff.chain import chain_rule_derivatives
-
-        structured = chain_rule_derivatives(
-            diff.expression,
-            selected,
-            diff.indexes,
-            symmetric_params=tuple(symmetric_params or ()),
-            split_sqrt=split_sqrt,
-            split_sums=split_sums,
-            pair_cse=pair_cse,
-            pair_rates=pair_rates,
-            nested_nodes=nested_nodes,
-            table_layout=table_layout,
-            scalar_chain=scalar_chain and not optional_derivatives,
-        )
-
-    if _structure_only:
-        return structured
 
     def _derivative(attr):
         if structured is not None:
@@ -4617,7 +4864,6 @@ def _to_fortran_impl(
         share_sums = share
     if scalar_cse is None:
         scalar_cse = share
-    symmetric_params = tuple(symmetric_params or ())
     if structured is not None:
         # symmetric pair functions behave as symmetric parameters
         symmetric_params = symmetric_params + tuple(
@@ -4859,7 +5105,6 @@ def _to_fortran_impl(
         reserved.update(str(sym) for sym in scan.symbols)
         reserved.update(str(base_) for base_ in scan.bases)
     if fuse_temps:
-        n_comp = len(component_array_defs)
         pool = component_array_defs + array_defs
         pool, all_exprs, fused = _fuse_temporaries(
             pool,
@@ -5119,7 +5364,7 @@ def _to_fortran_impl(
         )
         stats["operation_count_tool"] = "sympy.count_ops(visual=False)"
         stats["n_temporaries"] = len(definitions)
-    if stats is not None and (scalar_chain or _structured is not None):
+    if stats is not None and count_scalar:
         stats["scalar_operation_count"] = sum(
             sp.count_ops(residual, visual=False)
             for (_a, _o, _r, free_), residual in zip(rendered, residuals)
@@ -5130,7 +5375,7 @@ def _to_fortran_impl(
             if not definition["free"] and not definition["limits"]
         )
         if scalar_chain is True:
-            stats["_structured"] = structured
+            stats[_STRUCTURE_STATS_KEY] = structured
     out_names = {attr: out_name for attr, out_name, _, _ in rendered}
 
     temp_names = {
@@ -5598,7 +5843,7 @@ def to_fortran(
         module_symbols=module_symbols,
         symmetric_params=symmetric_params,
         stats=stats,
-        **normalised.to_legacy(),
+        opts=normalised,
     )
 
 
@@ -5648,6 +5893,7 @@ def _public_signature() -> inspect.Signature:
         Signature without the private re-entry parameters.
     """
     parameters = inspect.signature(_to_fortran_impl).parameters
+    option_parameters = inspect.signature(_emit_code).parameters
     keyword_only = inspect.Parameter.KEYWORD_ONLY
     leading = [
         parameters[name].replace(kind=inspect.Parameter.POSITIONAL_OR_KEYWORD)
@@ -5661,9 +5907,9 @@ def _public_signature() -> inspect.Signature:
     context.append(inspect.Parameter("options", keyword_only, default=None))
     taken = {p.name for p in leading + context} | _PRIVATE_PARAMETERS
     behaviour = [
-        parameter.replace(kind=keyword_only)
-        for name, parameter in parameters.items()
-        if name not in taken
+        parameter
+        for name, parameter in option_parameters.items()
+        if parameter.kind is keyword_only and name not in taken
     ]
     return inspect.Signature(leading + context + behaviour)
 
