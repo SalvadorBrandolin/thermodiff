@@ -2015,6 +2015,73 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
     return out
 
 
+def _is_sibling_table(definition) -> bool:
+    """Whether ``definition`` is a mirrored rank-2 table with one sum."""
+    return bool(
+        definition.mirror_sum
+        and len(definition.free) == 2
+        and len(definition.limits) == 1
+        and not definition.body.has(sp.Piecewise)
+        and not definition.colsum
+    )
+
+
+def _reads_names(definition, names) -> bool:
+    """Whether the body of ``definition`` reads any of the ``names``."""
+    return any(
+        str(x.base) in names for x in definition.body.atoms(sp.Indexed)
+    ) or any(str(sy) in names for sy in definition.body.free_symbols)
+
+
+def _target_names(definitions) -> set:
+    """Return the names of the temporaries the definitions produce."""
+    names = set()
+    for definition in definitions:
+        if definition.target is not None:
+            names.add(_temp_name(definition.target))
+    return names
+
+
+def _rename_sibling(definition, first):
+    """Return a copy of a table over the indices of the group's first one."""
+    (first_a, first_b), (first_m, _, _) = first.free, first.limits[0]
+    mapping = {
+        definition.free[0]: first_a,
+        definition.free[1]: first_b,
+        definition.limits[0][0]: first_m,
+    }
+    renamed = definition.copy()
+    renamed.target = definition.target.xreplace(mapping)
+    renamed.body = definition.body.xreplace(mapping)
+    renamed.free = [first_a, first_b]
+    renamed.limits = [(first_m, first.limits[0][1], first.limits[0][2])]
+    return renamed
+
+
+def _flush_sibling_group(out, group, waiting, namer) -> None:
+    """Append the open group, then the waiting definitions, to ``out``.
+
+    A group of several tables becomes a :class:`SiblingNest` and draws one
+    accumulator name per member from ``namer``.
+    """
+    if len(group) == 1:
+        out.extend(group)
+    elif group:
+        out.append(
+            SiblingNest(
+                target=group[0].target,
+                free=group[0].free,
+                limits=group[0].limits,
+                body=group[0].body,
+                sibling=list(group),
+                accs=[sp.Symbol(str(namer("t"))) for _ in group],
+            )
+        )
+    out.extend(waiting)
+    group.clear()
+    waiting.clear()
+
+
 def _fuse_sibling_tables(definitions, namer):
     """One nest for symmetric rank-2 tables with the same loops.
 
@@ -2024,69 +2091,27 @@ def _fuse_sibling_tables(definitions, namer):
     between two such tables that do not read the first one are emitted
     after the fused nest, unless the second table reads them.
     """
-
-    def table(d):
-        return (
-            d.mirror_sum
-            and len(d.free) == 2
-            and len(d.limits) == 1
-            and not d.body.has(sp.Piecewise)
-            and not d.colsum
-        )
-
-    def reads(d, names):
-        return any(
-            str(x.base) in names for x in d.body.atoms(sp.Indexed)
-        ) or any(str(sy) in names for sy in d.body.free_symbols)
-
-    def produced(d):
-        return {_temp_name(d.target)} if d.target is not None else set()
-
     out, group, waiting = [], [], []
-
-    def flush():
-        if len(group) == 1:
-            out.extend(group)
-        elif group:
-            out.append(
-                SiblingNest(
-                    target=group[0].target,
-                    free=group[0].free,
-                    limits=group[0].limits,
-                    body=group[0].body,
-                    sibling=list(group),
-                    accs=[sp.Symbol(str(namer("t"))) for _ in group],
-                )
-            )
-        out.extend(waiting)
-        group.clear()
-        waiting.clear()
-
-    for d in definitions:
-        if table(d) and group:
-            (a0, b0), (m0, lo0, hi0) = group[0].free, group[0].limits[0]
-            (a, b), (m, lo, hi) = d.free, d.limits[0]
-            renamed = d.copy()
-            mp = {a: a0, b: b0, m: m0}
-            renamed.target = d.target.xreplace(mp)
-            renamed.body = d.body.xreplace(mp)
-            renamed.free, renamed.limits = [a0, b0], [(m0, lo0, hi0)]
-            blocked = set().union(*[produced(g) for g in group + waiting])
-            if (lo, hi) == (lo0, hi0) and not reads(renamed, blocked):
+    for definition in definitions:
+        if _is_sibling_table(definition) and group:
+            renamed = _rename_sibling(definition, group[0])
+            blocked = _target_names(group + waiting)
+            same_range = definition.limits[0][1:] == group[0].limits[0][1:]
+            if same_range and not _reads_names(renamed, blocked):
                 group.append(renamed)
                 continue
-            flush()
-            group.append(d)
+            _flush_sibling_group(out, group, waiting, namer)
+            group.append(definition)
             continue
-        if table(d):
-            group.append(d)
+        if _is_sibling_table(definition):
+            group.append(definition)
             continue
-        if group and not reads(d, set().union(*[produced(g) for g in group])):
-            waiting.append(d)
+        if group and not _reads_names(definition, _target_names(group)):
+            waiting.append(definition)
             continue
-        flush()
-        out.append(d)
-    flush()
+        _flush_sibling_group(out, group, waiting, namer)
+        out.append(definition)
+    _flush_sibling_group(out, group, waiting, namer)
     return out
 
 
