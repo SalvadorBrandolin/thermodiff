@@ -112,15 +112,15 @@ def _symv_parts(definition, symmetric_params, *, sym_rank3):
     factor that depends on both indices and is symmetric under their swap,
     and factors that depend only on the bound index (or on none); else None.
     """
-    free = definition["free"]
-    limits = definition["limits"]
+    free = definition.free
+    limits = definition.limits
     if len(free) != 1 or len(limits) != 1:
         return None
     b, low, high = limits[0]
     if low != 1 or str(high) != "nc":
         return None
     f = free[0]
-    body = definition["body"]
+    body = definition.body
     factors = body.args if isinstance(body, sp.Mul) else (body,)
     pair = [x for x in factors if {f, b} <= x.atoms(sp.Idx)]
     rest = [x for x in factors if x not in pair]
@@ -142,11 +142,11 @@ def _render_symv(definition) -> list:
     For every column ``f``: an axpy into ``v(1:f-1)`` and a dot product for
     ``v(f)``, both vectorisable.
     """
-    target = definition["target"]
-    f = definition["free"][0]
-    b = definition["limits"][0][0]
-    pair, rest = definition["symv"]
-    acc = definition["symv_acc"]
+    target = definition.target
+    f = definition.free[0]
+    b = definition.limits[0][0]
+    pair, rest = definition.symv
+    acc = definition.symv_acc
     base = target.base
     rest_f_expr = rest.xreplace({b: f})
     up_to_f = _print_expr(pair * rest_f_expr)  # P(b,f) R(f), b < f

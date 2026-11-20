@@ -14,6 +14,12 @@ from thermodiff.codegen.common import (
     _temp_name,
 )
 from thermodiff.codegen.hoisting import _split_factored
+from thermodiff.codegen.ir import (
+    ComponentFusedMap,
+    FusedNest,
+    OuterFusedNest,
+    SiblingNest,
+)
 from thermodiff.codegen.symmetry import _render_symv
 
 
@@ -204,11 +210,11 @@ def _render_output(
 
 def _render_column_order(definition) -> list:
     """Loop nest with the first subscript innermost (column-major)."""
-    target = definition["target"]
-    free = definition["free"]
-    limits = definition["limits"]
+    target = definition.target
+    free = definition.free
+    limits = definition.limits
     target_s = _print_expr(target)
-    body_s = _print_expr(definition["body"])
+    body_s = _print_expr(definition.body)
     if limits:
         (f,) = free
         b, low, high = limits[0]
@@ -236,11 +242,11 @@ def _render_column_sum(definition) -> list:
     """Rank-2 sum in ``jki`` order: for every column ``q``, axpy updates over
     the bound index; a symmetric (``mirror_sum``) sum fills ``p <= q`` and
     mirrors the row."""
-    target = definition["target"]
-    p_, q_ = definition["free"]
-    b, low, high = definition["limits"][0]
+    target = definition.target
+    p_, q_ = definition.free
+    b, low, high = definition.limits[0]
     target_s = _print_expr(target)
-    upper = q_ if definition.get("mirror_sum") else "nc"
+    upper = q_ if definition.mirror_sum else "nc"
     lines = [
         f"do {q_} = 1, nc",
         f"{_INDENT}do {p_} = 1, {upper}",
@@ -248,11 +254,11 @@ def _render_column_sum(definition) -> list:
         f"{_INDENT}end do",
         f"{_INDENT}do {b} = {_print_expr(low)}, {_print_expr(high)}",
         f"{_INDENT * 2}do {p_} = 1, {upper}",
-        f"{_INDENT * 3}{target_s} = {target_s} + {_print_expr(definition['body'])}",
+        f"{_INDENT * 3}{target_s} = {target_s} + {_print_expr(definition.body)}",
         f"{_INDENT * 2}end do",
         f"{_INDENT}end do",
     ]
-    if definition.get("mirror_sum"):
+    if definition.mirror_sum:
         transposed = _print_expr(sp.Indexed(target.base, q_, p_))
         lines += [
             f"{_INDENT}do {p_} = 1, {q_} - 1",
@@ -264,13 +270,13 @@ def _render_column_sum(definition) -> list:
 
 
 def _render_fused(definition) -> list:
-    group = definition["fused"]
-    f = group[0]["free"][0]
-    b, low, high = group[0]["limits"][0]
-    colmajor = bool(group[0].get("colmajor"))
+    group = definition.fused
+    f = group[0].free[0]
+    b, low, high = group[0].limits[0]
+    colmajor = bool(group[0].colmajor)
     lines = [f"do {f} = 1, nc"]
     for d in group:
-        lines.append(f"{_INDENT}{_print_expr(d['target'])} = 0.0d0")
+        lines.append(f"{_INDENT}{_print_expr(d.target)} = 0.0d0")
     lines.append("end do")
     outer, inner = (b, f) if colmajor else (f, b)
     lo_o, hi_o = (low, high) if colmajor else (1, sp.Symbol("nc"))
@@ -282,40 +288,40 @@ def _render_fused(definition) -> list:
         f"{_INDENT}do {inner} = {_print_expr(sp.sympify(lo_i))}, {_print_expr(sp.sympify(hi_i))}"
     )
     for d in group:
-        t = _print_expr(d["target"])
-        lines.append(f"{_INDENT * 2}{t} = {t} + {_print_expr(d['body'])}")
+        t = _print_expr(d.target)
+        lines.append(f"{_INDENT * 2}{t} = {t} + {_print_expr(d.body)}")
     lines.append(f"{_INDENT}end do")
     lines.append("end do")
     return lines
 
 
 def _render_component_fused(definition) -> list:
-    idx = definition["free"][0]
+    idx = definition.free[0]
     lines = [f"do {idx} = 1, nc"]
-    for _kind, target, value in definition["steps"]:
+    for _kind, target, value in definition.steps:
         lines.append(f"{_INDENT}{_print_expr(target)} = {_print_expr(value)}")
     lines.append("end do")
     return lines
 
 
 def _render_outer_fused(definition) -> list:
-    x = definition["outer"]
+    x = definition.outer
     lines = []
-    for g in definition["outerfused"]:
-        if not g.get("compfused") and not g["free"]:
-            lines.append(f"{_print_expr(g['target'])} = 0.0d0")
+    for g in definition.members:
+        if not isinstance(g, ComponentFusedMap) and not g.free:
+            lines.append(f"{_print_expr(g.target)} = 0.0d0")
     lines.append(f"do {x} = 1, nc")
-    members = definition["outerfused"]
+    members = definition.members
     k = 0
     while k < len(members):
         g = members[k]
-        if g.get("compfused"):
-            for _k, t, v in g["steps"]:
+        if isinstance(g, ComponentFusedMap):
+            for _k, t, v in g.steps:
                 lines.append(f"{_INDENT}{_print_expr(t)} = {_print_expr(v)}")
             k += 1
-        elif g["free"]:
+        elif g.free:
             lines.append(
-                f"{_INDENT}{_print_expr(g['target'])} = {_print_expr(g['body'])}"
+                f"{_INDENT}{_print_expr(g.target)} = {_print_expr(g.body)}"
             )
             k += 1
         else:
@@ -323,43 +329,42 @@ def _render_outer_fused(definition) -> list:
             run = [g]
             while (
                 k + len(run) < len(members)
-                and not members[k + len(run)].get("compfused")
-                and not members[k + len(run)]["free"]
-                and members[k + len(run)]["limits"][1:] == g["limits"][1:]
+                and not isinstance(members[k + len(run)], ComponentFusedMap)
+                and not members[k + len(run)].free
+                and members[k + len(run)].limits[1:] == g.limits[1:]
             ):
                 run.append(members[k + len(run)])
             depth = 1
             for r in run:
-                if r.get("factored"):
-                    lines.append(_INDENT + f"{r['acc']} = 0.0d0")
-            for idx, low, high in g["limits"][1:]:
+                if r.factored:
+                    lines.append(_INDENT + f"{r.acc} = 0.0d0")
+            for idx, low, high in g.limits[1:]:
                 lines.append(
                     _INDENT * depth
                     + f"do {idx} = {_print_expr(low)}, {_print_expr(high)}"
                 )
                 depth += 1
             for r in run:
-                if r.get("factored"):
-                    _o, inner_body = _split_factored(r, r["limits"])
+                if r.factored:
+                    _o, inner_body = _split_factored(r, r.limits)
                     lines.append(
                         _INDENT * depth
-                        + f"{r['acc']} = {r['acc']} + {_print_expr(inner_body)}"
+                        + f"{r.acc} = {r.acc} + {_print_expr(inner_body)}"
                     )
                     continue
-                t = _print_expr(r["target"])
+                t = _print_expr(r.target)
                 lines.append(
-                    _INDENT * depth + f"{t} = {t} + {_print_expr(r['body'])}"
+                    _INDENT * depth + f"{t} = {t} + {_print_expr(r.body)}"
                 )
-            for _ in g["limits"][1:]:
+            for _ in g.limits[1:]:
                 depth -= 1
                 lines.append(_INDENT * depth + "end do")
             for r in run:
-                if r.get("factored"):
-                    t = _print_expr(r["target"])
-                    outer_f, _i = _split_factored(r, r["limits"])
+                if r.factored:
+                    t = _print_expr(r.target)
+                    outer_f, _i = _split_factored(r, r.limits)
                     lines.append(
-                        _INDENT
-                        + f"{t} = {t} + {_print_expr(r['acc'] * outer_f)}"
+                        _INDENT + f"{t} = {t} + {_print_expr(r.acc * outer_f)}"
                     )
             k += len(run)
     lines.append("end do")
@@ -367,16 +372,16 @@ def _render_outer_fused(definition) -> list:
 
 
 def _render_sibling(definition) -> list:
-    a, b = definition["free"]
+    a, b = definition.free
     lines = [f"do {b} = 1, nc", f"{_INDENT}do {a} = 1, {b}"]
-    for acc in definition["accs"]:
+    for acc in definition.accs:
         lines.append(f"{_INDENT * 2}{acc} = 0.0d0")
-    m, lo, hi = definition["limits"][0]
-    if definition.get("split_acc"):
+    m, lo, hi = definition.limits[0]
+    if definition.accumulators:
         # two partial accumulators (even/odd m): a reduction gcc vectorises
         # without reassociation (reportes/brechas/ronda3-cmr-o3.md)
         pairs = list(
-            zip(definition["accs"], definition["accs2"], definition["sibling"])
+            zip(definition.accs, definition.accs2, definition.sibling)
         )
         for _acc, acc2, _g in pairs:
             lines.append(f"{_INDENT * 2}{acc2} = 0.0d0")
@@ -384,19 +389,17 @@ def _render_sibling(definition) -> list:
             f"{_INDENT * 2}do {m} = {_print_expr(lo)}, {_print_expr(hi - 1)}, 2"
         )
         for acc, acc2, g in pairs:
-            lines.append(
-                f"{_INDENT * 3}{acc} = {acc} + {_print_expr(g['body'])}"
-            )
+            lines.append(f"{_INDENT * 3}{acc} = {acc} + {_print_expr(g.body)}")
             lines.append(
                 f"{_INDENT * 3}{acc2} = {acc2} + "
-                f"{_print_expr(g['body'].xreplace({m: m + 1}))}"
+                f"{_print_expr(g.body.xreplace({m: m + 1}))}"
             )
         lines.append(f"{_INDENT * 2}end do")
         # remainder: at most one iteration, from the first m not done
         lines.append(f"{_INDENT * 2}do {m} = {m}, {_print_expr(hi)}")
         for _acc, acc2, g in pairs:
             lines.append(
-                f"{_INDENT * 3}{acc2} = {acc2} + {_print_expr(g['body'])}"
+                f"{_INDENT * 3}{acc2} = {acc2} + {_print_expr(g.body)}"
             )
         lines.append(f"{_INDENT * 2}end do")
         for acc, acc2, _g in pairs:
@@ -405,13 +408,11 @@ def _render_sibling(definition) -> list:
         lines.append(
             f"{_INDENT * 2}do {m} = {_print_expr(lo)}, {_print_expr(hi)}"
         )
-        for acc, g in zip(definition["accs"], definition["sibling"]):
-            lines.append(
-                f"{_INDENT * 3}{acc} = {acc} + {_print_expr(g['body'])}"
-            )
+        for acc, g in zip(definition.accs, definition.sibling):
+            lines.append(f"{_INDENT * 3}{acc} = {acc} + {_print_expr(g.body)}")
         lines.append(f"{_INDENT * 2}end do")
-    for acc, g in zip(definition["accs"], definition["sibling"]):
-        t = g["target"]
+    for acc, g in zip(definition.accs, definition.sibling):
+        t = g.target
         lines.append(f"{_INDENT * 2}{_print_expr(t)} = {acc}")
         lines.append(
             f"{_INDENT * 2}{_print_expr(sp.Indexed(t.base, b, a))} = {acc}"
@@ -422,33 +423,29 @@ def _render_sibling(definition) -> list:
 
 def _render_definition(definition) -> list:
     """Render the statements that fill one shared temporary."""
-    if definition.get("sibling"):
+    if isinstance(definition, SiblingNest):
         return _render_sibling(definition)
-    if definition.get("outerfused"):
+    if isinstance(definition, OuterFusedNest):
         return _render_outer_fused(definition)
-    if definition.get("compfused"):
+    if isinstance(definition, ComponentFusedMap):
         return _render_component_fused(definition)
-    if definition.get("fused"):
+    if isinstance(definition, FusedNest):
         return _render_fused(definition)
-    if definition.get("symv"):
+    if definition.symv:
         return _render_symv(definition)
-    if definition.get("colmajor"):
+    if definition.colmajor:
         return _render_column_order(definition)
-    if definition.get("colsum"):
+    if definition.colsum:
         return _render_column_sum(definition)
-    target = definition["target"]
-    free = definition["free"]
+    target = definition.target
+    free = definition.free
     lines = []
     depth = 0
     for idx in free:
         lines.append(_INDENT * depth + f"do {idx} = 1, nc")
         depth += 1
 
-    if (
-        definition.get("mirror_sum")
-        and len(free) == 2
-        and definition["limits"]
-    ):
+    if definition.mirror_sum and len(free) == 2 and definition.limits:
         # symmetric rank-2 summation: upper triangle, then mirror
         a, b = free
         target_s = _print_expr(target)
@@ -459,7 +456,7 @@ def _render_definition(definition) -> list:
             f"{_INDENT * 2}{target_s} = 0.0d0",
         ]
         depth = 2
-        for idx, low, high in definition["limits"]:
+        for idx, low, high in definition.limits:
             out.append(
                 _INDENT * depth
                 + f"do {idx} = {_print_expr(low)}, {_print_expr(high)}"
@@ -467,26 +464,22 @@ def _render_definition(definition) -> list:
             depth += 1
         out.append(
             _INDENT * depth
-            + f"{target_s} = {target_s} + {_print_expr(definition['body'])}"
+            + f"{target_s} = {target_s} + {_print_expr(definition.body)}"
         )
-        for _ in definition["limits"]:
+        for _ in definition.limits:
             depth -= 1
             out.append(_INDENT * depth + "end do")
         out.append(_INDENT * 2 + f"{transposed} = {target_s}")
         out += [f"{_INDENT}end do", "end do"]
         return out
-    mirror = (
-        definition.get("mirror", False)
-        and len(free) == 2
-        and not (definition["limits"])
-    )
+    mirror = definition.mirror and len(free) == 2 and not (definition.limits)
     if mirror:
         # Symmetric rank-2 temporary: fill the upper triangle and mirror.
         lines = [
             f"do {free[0]} = 1, nc",
             f"{_INDENT}do {free[1]} = {free[0]}, nc",
         ]
-        body_s = _print_expr(definition["body"])
+        body_s = _print_expr(definition.body)
         target_s = _print_expr(target)
         transposed = _print_expr(sp.Indexed(target.base, free[1], free[0]))
         lines.append(_INDENT * 2 + f"{target_s} = {body_s}")
@@ -496,10 +489,10 @@ def _render_definition(definition) -> list:
         return lines
 
     target_s = _print_expr(target)
-    limits = definition["limits"]
-    if definition.get("factored") and not free:
+    limits = definition.limits
+    if definition.factored and not free:
         outer_f, inner_body = _split_factored(definition, limits)
-        acc = definition["acc"]
+        acc = definition.acc
         (o, o_lo, o_hi), (x, x_lo, x_hi) = limits
         return [
             f"{target_s} = 0.0d0",
@@ -518,13 +511,13 @@ def _render_definition(definition) -> list:
             high_s = _print_expr(high)
             lines.append(_INDENT * depth + f"do {idx} = {low_s}, {high_s}")
             depth += 1
-        body_s = _print_expr(definition["body"])
+        body_s = _print_expr(definition.body)
         lines.append(_INDENT * depth + f"{target_s} = {target_s} + {body_s}")
         for _ in limits:
             depth -= 1
             lines.append(_INDENT * depth + "end do")
     else:
-        body_s = _print_expr(definition["body"])
+        body_s = _print_expr(definition.body)
         lines.append(_INDENT * depth + f"{target_s} = {body_s}")
 
     for _ in free:
@@ -538,10 +531,10 @@ def _dependency_order(definitions):
     otherwise in its original position (lowest index first)."""
     import heapq
 
-    index = {_temp_name(d["target"]): k for k, d in enumerate(definitions)}
+    index = {_temp_name(d.target): k for k, d in enumerate(definitions)}
     deps = []
     for k, d in enumerate(definitions):
-        body = d["body"]
+        body = d.body
         names = {str(x) for x in body.free_symbols} | {
             str(x.base) for x in body.atoms(sp.Indexed)
         }

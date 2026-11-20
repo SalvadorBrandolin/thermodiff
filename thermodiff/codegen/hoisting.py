@@ -66,7 +66,7 @@ def _hoist_invariants(
         {str(b).lower() for expr in exprs for b in expr.atoms(sp.IndexedBase)}
     )
     for definition in sum_definitions:
-        body = definition["body"]
+        body = definition.body
         used.update(str(symbol).lower() for symbol in body.atoms(sp.Symbol))
         used.update(str(b).lower() for b in body.atoms(sp.IndexedBase))
     used.update({str(name).lower() for name in arrays})
@@ -149,11 +149,9 @@ def _hoist_invariants(
     definitions = []
     rewritten = []
     for definition in sum_definitions:
-        if definition["limits"]:
-            bound = {limit[0] for limit in definition["limits"]}
-            definition = definition.copy(
-                body=rewrite(definition["body"], bound)
-            )
+        if definition.limits:
+            bound = {limit[0] for limit in definition.limits}
+            definition = definition.copy(body=rewrite(definition.body, bound))
             rewritten.extend(definitions)
             definitions.clear()
         rewritten.append(definition)
@@ -347,11 +345,9 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
     """
     used = {"nc", "res"} | {str(x).lower() for x in reserved}
     for definition in definitions:
-        used |= {str(x).lower() for x in definition["body"].atoms(sp.Symbol)}
-        used |= {
-            str(x).lower() for x in definition["body"].atoms(sp.IndexedBase)
-        }
-        used |= {str(x).lower() for x in definition["free"]}
+        used |= {str(x).lower() for x in definition.body.atoms(sp.Symbol)}
+        used |= {str(x).lower() for x in definition.body.atoms(sp.IndexedBase)}
+        used |= {str(x).lower() for x in definition.free}
     for expr, _ in outputs:
         used |= {str(x).lower() for x in expr.atoms(sp.Symbol)}
     used |= {str(name).lower() for name in arrays}
@@ -425,11 +421,9 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
 
     new_definitions = []
     for definition in definitions:
-        bound = set(definition["free"]) | {
-            lim[0] for lim in definition["limits"]
-        }
-        if bound and not definition.get("mirror_of"):
-            body = _collect_terms(definition["body"])
+        bound = set(definition.free) | {lim[0] for lim in definition.limits}
+        if bound:
+            body = _collect_terms(definition.body)
             definition = definition.copy(body=rewrite(body, bound))
             new_definitions.extend(pending)
             pending.clear()
@@ -478,13 +472,13 @@ def _split_affine(definitions, outputs, namer, arrays):
         key = alpha(product, index)
         for d in defs:
             if (
-                len(d["free"]) == 1
-                and not d["limits"]
-                and set(d) <= flags_ok
-                and isinstance(d["target"], sp.Indexed)
-                and alpha(d["body"], d["free"][0]) == key
+                len(d.free) == 1
+                and not d.limits
+                and d.present_keys() <= flags_ok
+                and isinstance(d.target, sp.Indexed)
+                and alpha(d.body, d.free[0]) == key
             ):
-                return sp.Indexed(d["target"].base, index), position
+                return sp.Indexed(d.target.base, index), position
         target = _new_shared_temp(namer, [index], arrays)
         defs.insert(
             position,
@@ -507,16 +501,16 @@ def _split_affine(definitions, outputs, namer, arrays):
 
     def eligible(d):
         """Whether ``d`` would be split (same tests as below, no side effects)."""
-        free = set(d["free"])
+        free = set(d.free)
         if (
             not free
-            or len(d["limits"]) != 1
-            or not isinstance(d["target"], sp.Indexed)
-            or not set(d) <= flags_ok
+            or len(d.limits) != 1
+            or not isinstance(d.target, sp.Indexed)
+            or not d.present_keys() <= flags_ok
         ):
             return False
-        m, low, high = d["limits"][0]
-        body = d["body"]
+        m, low, high = d.limits[0]
+        body = d.body
         if (
             low != 1
             or str(high) != "nc"
@@ -565,21 +559,21 @@ def _split_affine(definitions, outputs, namer, arrays):
     }
     for d in defs:
         if (
-            d["free"]
-            and d["limits"]
+            d.free
+            and d.limits
             and any(
                 str(x.base) in pair_bases
-                for x in d["body"].atoms(sp.Indexed)
+                for x in d.body.atoms(sp.Indexed)
                 if len(x.indices) >= 2
             )
         ):
-            blocked.add(_temp_name(d["target"]))
+            blocked.add(_temp_name(d.target))
     run = []
 
     def shape(d):
-        if not d["free"] or not d["limits"]:
+        if not d.free or not d.limits:
             return None
-        return (len(d["free"]), tuple((lo, hi) for _b, lo, hi in d["limits"]))
+        return (len(d.free), tuple((lo, hi) for _b, lo, hi in d.limits))
 
     for d in defs + [None]:
         if (
@@ -591,49 +585,49 @@ def _split_affine(definitions, outputs, namer, arrays):
             run.append(d)
             continue
         if len(run) > 1 and not all(eligible(e) for e in run):
-            blocked |= {_temp_name(e["target"]) for e in run}
+            blocked |= {_temp_name(e.target) for e in run}
         run = [d] if d is not None and shape(d) is not None else []
 
     # sums that read the same matrix go together: all split or none
     def matrices(d):
         return {
             str(x.base)
-            for x in d["body"].atoms(sp.Indexed)
+            for x in d.body.atoms(sp.Indexed)
             if len(x.indices) >= 2
         }
 
-    sums = [d for d in defs if d["free"] and d["limits"]]
+    sums = [d for d in defs if d.free and d.limits]
     for d in sums:
-        if _temp_name(d["target"]) not in blocked and not eligible(d):
-            blocked.add(_temp_name(d["target"]))
+        if _temp_name(d.target) not in blocked and not eligible(d):
+            blocked.add(_temp_name(d.target))
     changed = True
     while changed:
         changed = False
         held = set().union(
-            *[matrices(d) for d in sums if _temp_name(d["target"]) in blocked]
+            *[matrices(d) for d in sums if _temp_name(d.target) in blocked]
         )
         for d in sums:
-            if _temp_name(d["target"]) not in blocked and matrices(d) & held:
-                blocked.add(_temp_name(d["target"]))
+            if _temp_name(d.target) not in blocked and matrices(d) & held:
+                blocked.add(_temp_name(d.target))
                 changed = True
 
     k = 0
     while k < len(defs):
         d = defs[k]
-        if _temp_name(d["target"]) in blocked:
+        if _temp_name(d.target) in blocked:
             k += 1
             continue
-        free = set(d["free"])
+        free = set(d.free)
         if (
             not free
-            or len(d["limits"]) != 1
-            or not isinstance(d["target"], sp.Indexed)
-            or not set(d) <= flags_ok
+            or len(d.limits) != 1
+            or not isinstance(d.target, sp.Indexed)
+            or not d.present_keys() <= flags_ok
         ):
             k += 1
             continue
-        m, low, high = d["limits"][0]
-        body = d["body"]
+        m, low, high = d.limits[0]
+        body = d.body
         if (
             low != 1
             or str(high) != "nc"
@@ -678,14 +672,14 @@ def _split_affine(definitions, outputs, namer, arrays):
         scalar = None
         for e in defs[:position]:
             if (
-                not e["free"]
-                and len(e["limits"]) == 1
-                and set(e) <= flags_ok
-                and isinstance(e["target"], sp.Symbol)
-                and tuple(e["limits"][0][1:]) == (low, high)
-                and alpha(e["body"], e["limits"][0][0]) == key
+                not e.free
+                and len(e.limits) == 1
+                and e.present_keys() <= flags_ok
+                and isinstance(e.target, sp.Symbol)
+                and tuple(e.limits[0][1:]) == (low, high)
+                and alpha(e.body, e.limits[0][0]) == key
             ):
-                scalar = e["target"]
+                scalar = e.target
                 break
         if scalar is None:
             scalar = _new_shared_temp(namer, [], arrays)
@@ -701,7 +695,7 @@ def _split_affine(definitions, outputs, namer, arrays):
             position += 1
         table = d.copy(body=new_body)
         defs[position] = table
-        name = _temp_name(d["target"])
+        name = _temp_name(d.target)
 
         def reread(expr):
             base_ = scalar if float(coeff) == 1.0 else coeff * scalar
@@ -714,7 +708,7 @@ def _split_affine(definitions, outputs, namer, arrays):
 
         for q, e in enumerate(defs):
             if e is not table:
-                defs[q] = e.copy(body=reread(e["body"]))
+                defs[q] = e.copy(body=reread(e.body))
         outs = [reread(e) for e in outs]
         k = position + 1
     return defs, outs
@@ -723,7 +717,7 @@ def _split_affine(definitions, outputs, namer, arrays):
 def _split_factored(definition, limits):
     """``(outer factor, inner body)`` of a ``factored`` double reduction."""
     inner = {lim[0] for lim in limits[1:]}
-    factors = sp.Mul.make_args(definition["body"])
+    factors = sp.Mul.make_args(definition.body)
     o_f = [f for f in factors if not (f.atoms(sp.Idx) & inner)]
     i_f = [f for f in factors if f.atoms(sp.Idx) & inner]
     return sp.Mul(*o_f), sp.Mul(*i_f)

@@ -327,11 +327,11 @@ def _fuse_temporaries(
     while changed:
         changed = False
         for definition in list(array_defs):
-            free = definition["free"]
-            if len(free) != 2 or definition["limits"]:
+            free = definition.free
+            if len(free) != 2 or definition.limits:
                 continue
-            body = definition["body"]
-            name = _temp_name(definition["target"])
+            body = definition.body
+            name = _temp_name(definition.target)
             trivial = not _is_expensive(body) and sp.count_ops(body) <= 3
             if not trivial and any(outside_sums(e, name) for e in exprs):
                 continue
@@ -353,12 +353,12 @@ def _fuse_temporaries(
             other = [
                 d
                 for d in array_defs
-                if d is not definition and refs(d["body"], name)
+                if d is not definition and refs(d.body, name)
             ]
             if any(
                 len(set(x.indices)) == len(x.indices)
                 for d in other
-                for x in refs(d["body"], name)
+                for x in refs(d.body, name)
             ):
                 # another temporary reads it off the diagonal: keep it
                 continue
@@ -372,7 +372,7 @@ def _fuse_temporaries(
 
             exprs = [inline(e) for e in exprs]
             for d in other:
-                d["body"] = inline(d["body"])
+                d.body = inline(d.body)
             array_defs.remove(definition)
             removed.add(name)
             changed = True
@@ -388,10 +388,10 @@ def _prefers_column_order(definition):
     of contiguous axpy updates.  Same for a rank-2 table ``t(p, q)`` whose
     body reads ``X(p, q)``: ``q`` should be the outer loop.
     """
-    free = definition["free"]
-    limits = definition["limits"]
-    body = definition["body"]
-    if definition.get("mirror") or body.has(sp.Piecewise):
+    free = definition.free
+    limits = definition.limits
+    body = definition.body
+    if definition.mirror or body.has(sp.Piecewise):
         return False
     if any(isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)):
         return False
@@ -436,14 +436,14 @@ def _prefers_column_sum(definition, symmetric_params=()):
     (``q`` outer, ``b`` middle, ``p`` inner) reads them contiguously.
     Symmetric arrays are not counted: ``sym_perm`` reorders their subscripts.
     """
-    free = definition["free"]
-    limits = definition["limits"]
-    if len(free) != 2 or len(limits) != 1 or definition.get("mirror"):
+    free = definition.free
+    limits = definition.limits
+    if len(free) != 2 or len(limits) != 1 or definition.mirror:
         return False
     b, low, high = limits[0]
     if low != 1 or str(high) != "nc":
         return False
-    body = definition["body"]
+    body = definition.body
     if body.has(sp.Piecewise) or any(
         isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)
     ):
@@ -473,14 +473,14 @@ def _fuse_loop_nests(definitions, namer):
     """
 
     def simple(d):
-        if len(d["free"]) != 1 or len(d["limits"]) != 1:
+        if len(d.free) != 1 or len(d.limits) != 1:
             return False
-        if d.get("mirror") or d.get("mirror_sum") or d.get("symv"):
+        if d.mirror or d.mirror_sum or d.symv:
             return False
-        b, low, high = d["limits"][0]
+        b, low, high = d.limits[0]
         if low != 1 or str(high) != "nc":
             return False
-        body = d["body"]
+        body = d.body
         return not body.has(sp.Piecewise) and not any(
             isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)
         )
@@ -494,10 +494,10 @@ def _fuse_loop_nests(definitions, namer):
         else:
             out.append(
                 FusedNest(
-                    target=group[0]["target"],
-                    free=group[0]["free"],
-                    limits=group[0]["limits"],
-                    body=group[0]["body"],
+                    target=group[0].target,
+                    free=group[0].free,
+                    limits=group[0].limits,
+                    body=group[0].body,
                     fused=list(group),
                 )
             )
@@ -506,18 +506,18 @@ def _fuse_loop_nests(definitions, namer):
     for d in definitions:
         if simple(d) and group:
             first = group[0]
-            f0, b0 = first["free"][0], first["limits"][0][0]
+            f0, b0 = first.free[0], first.limits[0][0]
             renamed = d.copy()
-            mapping = {d["free"][0]: f0, d["limits"][0][0]: b0}
-            renamed["target"] = d["target"].xreplace(mapping)
-            renamed["free"] = [f0]
-            renamed["limits"] = [(b0, 1, first["limits"][0][2])]
-            renamed["body"] = d["body"].xreplace(mapping)
-            names = {_temp_name(g["target"]) for g in group}
+            mapping = {d.free[0]: f0, d.limits[0][0]: b0}
+            renamed.target = d.target.xreplace(mapping)
+            renamed.free = [f0]
+            renamed.limits = [(b0, 1, first.limits[0][2])]
+            renamed.body = d.body.xreplace(mapping)
+            names = {_temp_name(g.target) for g in group}
             depends = any(
-                str(x.base) in names for x in renamed["body"].atoms(sp.Indexed)
+                str(x.base) in names for x in renamed.body.atoms(sp.Indexed)
             )
-            same_order = bool(d.get("colmajor")) == bool(first.get("colmajor"))
+            same_order = bool(d.colmajor) == bool(first.colmajor)
             if not depends and same_order:
                 group.append(renamed)
                 continue
@@ -533,23 +533,23 @@ def _fuse_loop_nests(definitions, namer):
 
 def _loop_order(definition):
     """Loop variables of a rendered definition, outermost first (None if unknown)."""
-    free = list(definition["free"])
-    bound = [lim[0] for lim in definition["limits"]]
+    free = list(definition.free)
+    bound = [lim[0] for lim in definition.limits]
     if (
-        definition.get("symv")
-        or definition.get("colmajor")
-        or definition.get("compfused")
+        definition.symv
+        or definition.colmajor
+        or isinstance(definition, ComponentFusedMap)
     ):
         return None
-    if definition.get("colsum"):
+    if definition.colsum:
         return [free[1], bound[0], free[0]]
-    if definition.get("sibling"):
+    if isinstance(definition, SiblingNest):
         return [free[1], free[0]] + bound
-    if definition.get("fused"):
-        first = definition["fused"][0]
-        f, b = first["free"][0], first["limits"][0][0]
-        return [b, f] if first.get("colmajor") else [f, b]
-    if definition.get("mirror_sum") and len(free) == 2 and bound:
+    if isinstance(definition, FusedNest):
+        first = definition.fused[0]
+        f, b = first.free[0], first.limits[0][0]
+        return [b, f] if first.colmajor else [f, b]
+    if definition.mirror_sum and len(free) == 2 and bound:
         return [free[1], free[0]] + bound
     return free + bound
 
@@ -585,11 +585,15 @@ def _permute_symmetric_subscripts(definitions, symmetric_params):
         order = _loop_order(definition)
         if order is None:
             continue
-        if definition.get("fused") or definition.get("sibling"):
-            for member in definition.get("fused") or definition["sibling"]:
-                member["body"] = permute(member["body"], order)
+        if isinstance(definition, (FusedNest, SiblingNest)):
+            if isinstance(definition, FusedNest):
+                members = definition.fused
+            else:
+                members = definition.sibling
+            for member in members:
+                member.body = permute(member.body, order)
         else:
-            definition["body"] = permute(definition["body"], order)
+            definition.body = permute(definition.body, order)
     return definitions
 
 
@@ -607,17 +611,17 @@ def _fuse_component_maps(definitions, namer):
     """
 
     def is_map(d):
-        if len(d["free"]) != 1 or d["limits"]:
+        if len(d.free) != 1 or d.limits:
             return False
         if (
-            d.get("mirror")
-            or d.get("mirror_sum")
-            or d.get("symv")
-            or d.get("fused")
-            or d.get("colmajor")
+            d.mirror
+            or d.mirror_sum
+            or d.symv
+            or isinstance(d, FusedNest)
+            or d.colmajor
         ):
             return False
-        body = d["body"]
+        body = d.body
         return (
             not body.has(sp.Sum)
             and not body.has(sp.Piecewise)
@@ -633,15 +637,15 @@ def _fuse_component_maps(definitions, namer):
         if len(group) <= 1:
             out.extend(group)
         else:
-            idx = group[0]["free"][0]
+            idx = group[0].free[0]
             # member values read by later members become placeholders, so the
             # elimination never moves a read of cmp0(i) before its assignment
             holder_of = {
-                _temp_name(d["target"]): sp.Dummy(f"m{k}")
+                _temp_name(d.target): sp.Dummy(f"m{k}")
                 for k, d in enumerate(group)
             }
             holders = {
-                d["target"]: holder_of[_temp_name(d["target"])] for d in group
+                d.target: holder_of[_temp_name(d.target)] for d in group
             }
 
             def to_holders(expr):
@@ -653,7 +657,7 @@ def _fuse_component_maps(definitions, namer):
                     }
                 )
 
-            bodies = [to_holders(d["body"]) for d in group]
+            bodies = [to_holders(d.body) for d in group]
             replacements, reduced = sp.cse(
                 bodies,
                 symbols=iter(lambda: sp.Symbol(str(namer("t"))), None),
@@ -663,7 +667,7 @@ def _fuse_component_maps(definitions, namer):
             pending = [
                 ("local", sym, value) for sym, value in replacements
             ] + [
-                ("member", holders[d["target"]], b)
+                ("member", holders[d.target], b)
                 for d, b in zip(group, reduced)
             ]
             known = set()
@@ -686,28 +690,28 @@ def _fuse_component_maps(definitions, namer):
             ]
             out.append(
                 ComponentFusedMap(
-                    target=group[0]["target"],
+                    target=group[0].target,
                     free=[idx],
                     limits=[],
-                    body=group[0]["body"],
+                    body=group[0].body,
                     steps=ordered,
-                    members=[(d["target"], d["body"]) for d in group],
+                    members=[(d.target, d.body) for d in group],
                 )
             )
         group.clear()
 
     for d in definitions:
         if not is_map(d):
-            names = {_temp_name(g["target"]) for g in group}
+            names = {_temp_name(g.target) for g in group}
             scalar = (
-                not d["free"]
-                and not d["limits"]
+                not d.free
+                and not d.limits
                 and not any(
                     d.get(k) for k in ("mirror", "mirror_sum", "symv", "fused")
                 )
             )
             reads_group = any(
-                str(x.base) in names for x in d["body"].atoms(sp.Indexed)
+                str(x.base) in names for x in d.body.atoms(sp.Indexed)
             )
             if group and scalar and not reads_group:
                 # an independent scalar between two maps moves ahead of the group
@@ -717,16 +721,16 @@ def _fuse_component_maps(definitions, namer):
             out.append(d)
             continue
         if group:
-            idx = group[0]["free"][0]
+            idx = group[0].free[0]
             renamed = d.copy()
-            mapping = {d["free"][0]: idx}
-            renamed["target"] = d["target"].xreplace(mapping)
-            renamed["free"] = [idx]
-            renamed["body"] = d["body"].xreplace(mapping)
-            names = {_temp_name(g["target"]) for g in group}
+            mapping = {d.free[0]: idx}
+            renamed.target = d.target.xreplace(mapping)
+            renamed.free = [idx]
+            renamed.body = d.body.xreplace(mapping)
+            names = {_temp_name(g.target) for g in group}
             ok = all(
                 x.indices == (idx,)
-                for x in renamed["body"].atoms(sp.Indexed)
+                for x in renamed.body.atoms(sp.Indexed)
                 if str(x.base) in names
             )
             if ok:
@@ -758,7 +762,7 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
     """
 
     def plain(d):
-        body = d["body"]
+        body = d.body
         return (
             not body.has(sp.Piecewise)
             and not any(
@@ -771,41 +775,37 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
         )
 
     def kind(d):
-        if d.get("compfused"):
+        if isinstance(d, ComponentFusedMap):
             return "map"
         if not plain(d):
             return None
-        if (
-            len(d["free"]) == 1
-            and not d["limits"]
-            and not d["body"].has(sp.Sum)
-        ):
+        if len(d.free) == 1 and not d.limits and not d.body.has(sp.Sum):
             return "map"
-        if not d["free"] and d["limits"]:
-            b, low, high = d["limits"][0]
+        if not d.free and d.limits:
+            b, low, high = d.limits[0]
             if low == 1 and str(high) == "nc":
                 return "red"
         return None
 
     def outer_of(d):
-        return d["free"][0] if kind(d) == "map" else d["limits"][0][0]
+        return d.free[0] if kind(d) == "map" else d.limits[0][0]
 
     def libm_map(d):
         if kind(d) != "map":
             return False
-        if d.get("compfused"):
-            return any(_calls_libm(v) for _k, _t, v in d["steps"])
-        return _calls_libm(d["body"])
+        if isinstance(d, ComponentFusedMap):
+            return any(_calls_libm(v) for _k, _t, v in d.steps)
+        return _calls_libm(d.body)
 
     def double_red(d):
-        return kind(d) == "red" and len(d["limits"]) > 1
+        return kind(d) == "red" and len(d.limits) > 1
 
     def libm_red(d):
         return (
             libm_reductions
             and kind(d) == "red"
-            and len(d["limits"]) == 1
-            and _calls_libm(d["body"])
+            and len(d.limits) == 1
+            and _calls_libm(d.body)
         )
 
     def clash(d):
@@ -819,46 +819,46 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
         )
 
     def produced(d):
-        if d.get("compfused"):
-            return {_temp_name(t) for t, _ in d["members"]}
-        return {_temp_name(d["target"])}
+        if isinstance(d, ComponentFusedMap):
+            return {_temp_name(t) for t, _ in d.members}
+        return {_temp_name(d.target)}
 
     def reads(d):
-        if d.get("compfused"):
+        if isinstance(d, ComponentFusedMap):
             return [
-                x for _k, _t, v in d["steps"] for x in v.atoms(sp.Indexed)
-            ], set().union(*[v.free_symbols for _k, _t, v in d["steps"]])
-        return list(d["body"].atoms(sp.Indexed)), d["body"].free_symbols
+                x for _k, _t, v in d.steps for x in v.atoms(sp.Indexed)
+            ], set().union(*[v.free_symbols for _k, _t, v in d.steps])
+        return list(d.body.atoms(sp.Indexed)), d.body.free_symbols
 
     def rename(d, old, new):
         if old == new:
             return d
         m = {old: new}
         # the opaque lower bound ``old + 1`` of a triangular loop follows too
-        for lim in d["limits"]:
+        for lim in d.limits:
             for bound in (lim[1], lim[2]):
                 for sym in sp.sympify(bound).atoms(sp.Symbol):
                     if isinstance(sym, _LoopStart) and sym.outer == old:
                         m[sym] = _LoopStart(new)
         d = d.copy()
-        if d.get("compfused"):
-            d["steps"] = [
-                (k, t.xreplace(m), v.xreplace(m)) for k, t, v in d["steps"]
+        if isinstance(d, ComponentFusedMap):
+            d.steps = [
+                (k, t.xreplace(m), v.xreplace(m)) for k, t, v in d.steps
             ]
-            d["free"] = [new]
+            d.free = [new]
         elif kind(d) == "map":
-            d["target"] = d["target"].xreplace(m)
-            d["body"] = d["body"].xreplace(m)
-            d["free"] = [new]
+            d.target = d.target.xreplace(m)
+            d.body = d.body.xreplace(m)
+            d.free = [new]
         else:
-            d["body"] = d["body"].xreplace(m)
-            d["limits"] = [
+            d.body = d.body.xreplace(m)
+            d.limits = [
                 (
                     b.xreplace(m) if hasattr(b, "xreplace") else b,
                     sp.sympify(lo).xreplace(m),
                     sp.sympify(hi).xreplace(m),
                 )
-                for b, lo, hi in d["limits"]
+                for b, lo, hi in d.limits
             ]
         return d
 
@@ -870,10 +870,10 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
         else:
             limits = []
             for g in group:
-                limits += [lim for lim in g["limits"] if lim not in limits]
+                limits += [lim for lim in g.limits if lim not in limits]
             out.append(
                 OuterFusedNest(
-                    target=group[0].get("target"),
+                    target=group[0].target,
                     free=[],
                     limits=limits,
                     body=sp.S.Zero,
@@ -887,14 +887,14 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
         k = kind(d)
         if k is not None and group:
             x = outer_of(group[0])
-            inner = [lim[0] for lim in d["limits"][1:]] if k == "red" else []
+            inner = [lim[0] for lim in d.limits[1:]] if k == "red" else []
             if x in inner or clash(d):
                 flush()
                 group.append(d)
                 continue
             cand = rename(d, outer_of(d), x)
             arrays_ = set().union(*[produced(g) for g in group])
-            accs = {_temp_name(g["target"]) for g in group if kind(g) == "red"}
+            accs = {_temp_name(g.target) for g in group if kind(g) == "red"}
             idx_reads, syms = reads(cand)
             ok = all(
                 x_.indices == (x,)
@@ -912,12 +912,12 @@ def _fuse_outer_loops(definitions, libm_guard=False, libm_reductions=False):
             group.append(d)
             continue
         # not fusable: independent scalars move ahead, anything else ends the group
-        if group and not d["free"] and not d["limits"] and plain(d):
+        if group and not d.free and not d.limits and plain(d):
             names = set().union(*[produced(g) for g in group])
             if not any(
-                str(sy) in names for sy in d["body"].free_symbols
+                str(sy) in names for sy in d.body.free_symbols
             ) and not any(
-                str(x_.base) in names for x_ in d["body"].atoms(sp.Indexed)
+                str(x_.base) in names for x_ in d.body.atoms(sp.Indexed)
             ):
                 out.append(d)
                 continue
@@ -951,7 +951,7 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
         defs = [
             d
             for d in definitions
-            if any(str(x.base) == name for x in d["body"].atoms(sp.Indexed))
+            if any(str(x.base) == name for x in d.body.atoms(sp.Indexed))
         ]
         outs = [
             e
@@ -963,7 +963,7 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
     def triangular(d):
         return any(
             isinstance(x, _LoopStart)
-            for lim in d["limits"][1:]
+            for lim in d.limits[1:]
             for x in sp.sympify(lim[1]).atoms(sp.Symbol)
         )
 
@@ -971,11 +971,11 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
     while changed:
         changed = False
         for table in reversed(definitions):
-            free = table["free"]
+            free = table.free
             if (
                 len(free) != 2
-                or table["limits"]
-                or not isinstance(table["target"], sp.Indexed)
+                or table.limits
+                or not isinstance(table.target, sp.Indexed)
             ):
                 continue
             if any(
@@ -983,21 +983,18 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
                 for k in ("mirror_sum", "symv", "fused", "colmajor", "colsum")
             ):
                 continue
-            body = table["body"]
+            body = table.body
             if body.has(sp.Sum) or body.has(sp.Piecewise) or _calls_libm(body):
                 continue
-            name = _temp_name(table["target"])
+            name = _temp_name(table.target)
             defs, outs = readers(name)
             if outs or not defs:
                 continue
-            if any(
-                d["free"] or not d["limits"] or len(d["limits"]) > 2
-                for d in defs
-            ):
+            if any(d.free or not d.limits or len(d.limits) > 2 for d in defs):
                 continue
-            double = [d for d in defs if len(d["limits"]) == 2]
+            double = [d for d in defs if len(d.limits) == 2]
             if len(double) > 1 or (
-                double and table.get("mirror") and not triangular(double[0])
+                double and table.mirror and not triangular(double[0])
             ):
                 continue
             for d in defs:
@@ -1005,10 +1002,10 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
                     x: body.xreplace(
                         {free[0]: x.indices[0], free[1]: x.indices[1]}
                     )
-                    for x in d["body"].atoms(sp.Indexed)
+                    for x in d.body.atoms(sp.Indexed)
                     if str(x.base) == name
                 }
-                d["body"] = d["body"].xreplace(rep)
+                d.body = d.body.xreplace(rep)
             definitions = [d for d in definitions if d is not table]
             arrays.pop(name, None)
             changed = True
@@ -1018,18 +1015,14 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
     canon_slot = sp.Symbol("__slot")
     out = []
     for d in definitions:
-        if (
-            d["free"]
-            or len(d["limits"]) != 2
-            or not isinstance(d["body"], sp.Mul)
-        ):
+        if d.free or len(d.limits) != 2 or not isinstance(d.body, sp.Mul):
             out.append(d)
             continue
-        if d["body"].has(sp.Piecewise):
+        if d.body.has(sp.Piecewise):
             out.append(d)
             continue
-        outer, inner = d["limits"][0][0], d["limits"][1][0]
-        factors = sp.Mul.make_args(d["body"])
+        outer, inner = d.limits[0][0], d.limits[1][0]
+        factors = sp.Mul.make_args(d.body)
         o_f = [f for f in factors if inner not in f.atoms(sp.Idx)]
         i_f = [f for f in factors if inner in f.atoms(sp.Idx)]
         if not o_f or not i_f:
@@ -1071,17 +1064,14 @@ def _drop_pair_tables(definitions, outputs, namer, arrays):
     # each new vector goes right after the definitions it reads, so that the
     # double reductions stay consecutive (and share their inner loops)
     new_vectors = {str(b) for b in vectors.values()}
-    for vec in [d for d in out if _temp_name(d["target"]) in new_vectors]:
+    for vec in [d for d in out if _temp_name(d.target) in new_vectors]:
         out.remove(vec)
-        names = {str(x.base) for x in vec["body"].atoms(sp.Indexed)} | {
-            str(x) for x in vec["body"].free_symbols
+        names = {str(x.base) for x in vec.body.atoms(sp.Indexed)} | {
+            str(x) for x in vec.body.free_symbols
         }
         position = 0
         for k, d in enumerate(out):
-            if (
-                d.get("target") is not None
-                and _temp_name(d["target"]) in names
-            ):
+            if d.target is not None and _temp_name(d.target) in names:
                 position = k + 1
         out.insert(position, vec)
     return out
@@ -1120,16 +1110,16 @@ def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
 
     def plain_scalar(d):
         return (
-            isinstance(d.get("target"), sp.Symbol)
-            and not d["free"]
-            and not d["limits"]
-            and set(d) <= flags_ok
-            and not d["body"].has(sp.Sum)
+            isinstance(d.target, sp.Symbol)
+            and not d.free
+            and not d.limits
+            and d.present_keys() <= flags_ok
+            and not d.body.has(sp.Sum)
         )
 
-    scalar_def = {d["target"]: d for d in definitions if plain_scalar(d)}
+    scalar_def = {d.target: d for d in definitions if plain_scalar(d)}
     position = {
-        d["target"]: k for k, d in enumerate(definitions) if plain_scalar(d)
+        d.target: k for k, d in enumerate(definitions) if plain_scalar(d)
     }
     canon_memo = {}
 
@@ -1137,7 +1127,7 @@ def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
         if s in canon_memo:
             return canon_memo[s]
         canon_memo[s] = s  # cycle guard
-        body = scalar_def[s]["body"]
+        body = scalar_def[s].body
         rep = {
             x: canon_scalar(x) for x in body.free_symbols if x in scalar_def
         }
@@ -1166,15 +1156,15 @@ def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
         return sub.xreplace({idx: slot}).xreplace(rep), idx
 
     def editable(d):
-        return set(d) <= flags_ok
+        return d.present_keys() <= flags_ok
 
     def is_map(pos):
         if pos >= n_defs:
             return False
         d = defs[pos]
-        return len(d["free"]) == 1 and not d["limits"]
+        return len(d.free) == 1 and not d.limits
 
-    sites = [d["body"] for d in definitions] + list(outputs)
+    sites = [d.body for d in definitions] + list(outputs)
     n_defs = len(definitions)
     defs = list(definitions)
     outs = list(outputs)
@@ -1238,7 +1228,7 @@ def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
 
             merge = {s: final(s) for s in merge}
             sites = [e.xreplace(merge) for e in sites]
-            vector["body"] = vector["body"].xreplace(merge)
+            vector.body = vector.body.xreplace(merge)
             merged_all |= set(merge)
         # insert the vector right before its first reader
         new_sites = list(sites)
@@ -1249,37 +1239,33 @@ def _share_elementwise(definitions, outputs, namer, arrays, max_ops=40):
         defs = defs[:insert_at] + [vector] + defs[insert_at:]
         kept = []
         for d in defs:
-            if d.get("target") in drop and plain_scalar(d):
+            if d.target in drop and plain_scalar(d):
                 continue
             kept.append(d)
         defs = kept
         outs = new_sites[n_defs:]
-        sites = [d["body"] for d in defs] + outs
+        sites = [d.body for d in defs] + outs
         n_defs = len(defs)
-        position = {
-            d["target"]: k for k, d in enumerate(defs) if plain_scalar(d)
-        }
-        scalar_def = {d["target"]: d for d in defs if plain_scalar(d)}
+        position = {d.target: k for k, d in enumerate(defs) if plain_scalar(d)}
+        scalar_def = {d.target: d for d in defs if plain_scalar(d)}
     # drop the plain scalars of replaced occurrences that nothing reads any more
     while True:
         read = set()
-        for e in [d["body"] for d in defs] + outs:
+        for e in [d.body for d in defs] + outs:
             read |= e.free_symbols
         for d in defs:
-            if d.get("acc") is not None:
-                read.add(d["acc"])
+            if d.acc is not None:
+                read.add(d.acc)
         dead = [
             d
             for d in defs
-            if plain_scalar(d)
-            and d["target"] in touched
-            and d["target"] not in read
+            if plain_scalar(d) and d.target in touched and d.target not in read
         ]
         if not dead:
             break
         defs = [d for d in defs if not any(d is x for x in dead)]
     # undeclare the dropped scalars
-    alive = {d.get("target") for d in defs} | {d.get("acc") for d in defs}
+    alive = {d.target for d in defs} | {d.acc for d in defs}
     for e in outs:
         alive |= e.free_symbols
     dropped = {s for s in touched | set(merged_all) if s not in alive}
@@ -1297,9 +1283,9 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
     maps = {}
     for d in definitions:
         if (
-            len(d["free"]) == 1
-            and not d["limits"]
-            and not d["body"].has(sp.Sum)
+            len(d.free) == 1
+            and not d.limits
+            and not d.body.has(sp.Sum)
             and not any(
                 d.get(k)
                 for k in (
@@ -1313,7 +1299,7 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
                 )
             )
         ):
-            maps[_temp_name(d["target"])] = (d["free"][0], d["body"])
+            maps[_temp_name(d.target)] = (d.free[0], d.body)
 
     def inline_maps(e):
         rep = {}
@@ -1333,40 +1319,43 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
 
     tables, owner = [], {}
     for d in definitions:
-        members = d.get("sibling") or ([d] if d.get("mirror_sum") else [])
+        if isinstance(d, SiblingNest):
+            members = d.sibling
+        else:
+            members = [d] if d.mirror_sum else []
         for t in members:
-            if len(t["free"]) == 2 and len(t["limits"]) == 1:
+            if len(t.free) == 2 and len(t.limits) == 1:
                 tables.append(t)
                 owner[id(t)] = d
     out = list(definitions)
     for d in definitions:
         if (
-            len(d["free"]) != 1
-            or len(d["limits"]) != 1
+            len(d.free) != 1
+            or len(d.limits) != 1
             or any(
                 d.get(k)
                 for k in ("mirror", "mirror_sum", "symv", "fused", "colmajor")
             )
         ):
             continue
-        (k,), (m, lo, hi) = d["free"], d["limits"][0]
+        (k,), (m, lo, hi) = d.free, d.limits[0]
         for t in tables:
-            (a, b), (m2, lo2, hi2) = t["free"], t["limits"][0]
+            (a, b), (m2, lo2, hi2) = t.free, t.limits[0]
             if (lo2, hi2) != (lo, hi):
                 continue
-            diag = canon(t["body"].xreplace({a: k, b: k, m2: m}))
-            if sp.expand(diag - canon(d["body"])) != 0:
+            diag = canon(t.body.xreplace({a: k, b: k, m2: m}))
+            if sp.expand(diag - canon(d.body)) != 0:
                 continue
-            name = _temp_name(d["target"])
-            if any(str(x.base) == name for x in t["body"].atoms(sp.Indexed)):
+            name = _temp_name(d.target)
+            if any(str(x.base) == name for x in t.body.atoms(sp.Indexed)):
                 continue
             host = owner[id(t)]
             pos_t = out.index(host)
             new = TempDef(
-                target=d["target"],
+                target=d.target,
                 free=[k],
                 limits=[],
-                body=sp.Indexed(t["target"].base, k, k),
+                body=sp.Indexed(t.target.base, k, k),
             )
             pos_d = out.index(d)
             if pos_d < pos_t:
@@ -1375,8 +1364,7 @@ def _diagonal_from_tables(definitions, symmetric_params, *, sym_rank3):
                     e
                     for e in out[pos_d + 1 : pos_t + 1]
                     if any(
-                        str(x.base) == name
-                        for x in e["body"].atoms(sp.Indexed)
+                        str(x.base) == name for x in e.body.atoms(sp.Indexed)
                     )
                 ]
                 if users:
@@ -1399,22 +1387,20 @@ def _fuse_sibling_tables(definitions, namer):
 
     def table(d):
         return (
-            d.get("mirror_sum")
-            and len(d["free"]) == 2
-            and len(d["limits"]) == 1
-            and not d["body"].has(sp.Piecewise)
-            and not d.get("colsum")
+            d.mirror_sum
+            and len(d.free) == 2
+            and len(d.limits) == 1
+            and not d.body.has(sp.Piecewise)
+            and not d.colsum
         )
 
     def reads(d, names):
         return any(
-            str(x.base) in names for x in d["body"].atoms(sp.Indexed)
-        ) or any(str(sy) in names for sy in d["body"].free_symbols)
+            str(x.base) in names for x in d.body.atoms(sp.Indexed)
+        ) or any(str(sy) in names for sy in d.body.free_symbols)
 
     def produced(d):
-        return (
-            {_temp_name(d["target"])} if d.get("target") is not None else set()
-        )
+        return {_temp_name(d.target)} if d.target is not None else set()
 
     out, group, waiting = [], [], []
 
@@ -1424,10 +1410,10 @@ def _fuse_sibling_tables(definitions, namer):
         elif group:
             out.append(
                 SiblingNest(
-                    target=group[0]["target"],
-                    free=group[0]["free"],
-                    limits=group[0]["limits"],
-                    body=group[0]["body"],
+                    target=group[0].target,
+                    free=group[0].free,
+                    limits=group[0].limits,
+                    body=group[0].body,
                     sibling=list(group),
                     accs=[sp.Symbol(str(namer("t"))) for _ in group],
                 )
@@ -1438,13 +1424,13 @@ def _fuse_sibling_tables(definitions, namer):
 
     for d in definitions:
         if table(d) and group:
-            (a0, b0), (m0, lo0, hi0) = group[0]["free"], group[0]["limits"][0]
-            (a, b), (m, lo, hi) = d["free"], d["limits"][0]
+            (a0, b0), (m0, lo0, hi0) = group[0].free, group[0].limits[0]
+            (a, b), (m, lo, hi) = d.free, d.limits[0]
             renamed = d.copy()
             mp = {a: a0, b: b0, m: m0}
-            renamed["target"] = d["target"].xreplace(mp)
-            renamed["body"] = d["body"].xreplace(mp)
-            renamed["free"], renamed["limits"] = [a0, b0], [(m0, lo0, hi0)]
+            renamed.target = d.target.xreplace(mp)
+            renamed.body = d.body.xreplace(mp)
+            renamed.free, renamed.limits = [a0, b0], [(m0, lo0, hi0)]
             blocked = set().union(*[produced(g) for g in group + waiting])
             if (lo, hi) == (lo0, hi0) and not reads(renamed, blocked):
                 group.append(renamed)
@@ -1479,30 +1465,33 @@ def _split_accumulators(definitions, namer):
 
     def lone(d):
         return (
-            d.get("mirror_sum")
-            and len(d["free"]) == 2
-            and len(d["limits"]) == 1
-            and not d["body"].has(sp.Piecewise)
-            and set(d) <= {"target", "free", "limits", "body", "mirror_sum"}
+            d.mirror_sum
+            and len(d.free) == 2
+            and len(d.limits) == 1
+            and not d.body.has(sp.Piecewise)
+            and d.present_keys()
+            <= {"target", "free", "limits", "body", "mirror_sum"}
         )
 
     out = []
     for d in definitions:
-        if d.get("sibling") and any(rank3(g["body"]) for g in d["sibling"]):
+        if isinstance(d, SiblingNest) and any(
+            rank3(g.body) for g in d.sibling
+        ):
             d = d.copy(
                 split_acc=2,
-                accs2=[sp.Symbol(str(namer("t"))) for _ in d["accs"]],
+                accs2=[sp.Symbol(str(namer("t"))) for _ in d.accs],
             )
-        elif lone(d) and rank3(d["body"]):
+        elif lone(d) and rank3(d.body):
             d = SiblingNest(
-                target=d["target"],
-                free=d["free"],
-                limits=d["limits"],
-                body=d["body"],
+                target=d.target,
+                free=d.free,
+                limits=d.limits,
+                body=d.body,
                 sibling=[d],
                 accs=[sp.Symbol(str(namer("t")))],
                 accumulators=2,
             )
-            d["accs2"] = [sp.Symbol(str(namer("t")))]
+            d.accs2 = [sp.Symbol(str(namer("t")))]
         out.append(d)
     return out

@@ -762,23 +762,23 @@ def _emit_code(
         array_defs = []
     if param_symmetry and symmetric_params:
         for definition in array_defs:
-            free = definition["free"]
-            if len(free) != 2 or definition["limits"]:
+            free = definition.free
+            if len(free) != 2 or definition.limits:
                 continue
             body = _canonical_symmetric(
-                definition["body"], symmetric_params, sym_rank3
+                definition.body, symmetric_params, sym_rank3
             )
             swapped_equal = (
                 _swap(body, free[0], free[1], symmetric_params, sym_rank3)
                 == body
             )
             if swapped_equal:
-                definition["mirror"] = True
+                definition.mirror = True
                 if nest_shared:
                     # a symmetric temporary behaves as a symmetric parameter
                     # for the later passes (sum sharing modulo renaming)
                     symmetric_params = symmetric_params + (
-                        _temp_name(definition["target"]),
+                        _temp_name(definition.target),
                     )
     reserved = (
         set(module_symbols)
@@ -878,19 +878,19 @@ def _emit_code(
             read = set()
             for e in (
                 residuals
-                + [d["body"] for pool in pools for d in pool]
-                + [d["body"] for d in scalar_chain_definitions]
+                + [d.body for pool in pools for d in pool]
+                + [d.body for d in scalar_chain_definitions]
             ):
                 read |= {str(x) for x in e.free_symbols} | {
                     str(x.base) for x in e.atoms(sp.Indexed)
                 }
             gone = {
-                _temp_name(d["target"]) for pool in pools for d in pool
+                _temp_name(d.target) for pool in pools for d in pool
             } - read
             if not gone:
                 break
             pools = [
-                [d for d in pool if _temp_name(d["target"]) not in gone]
+                [d for d in pool if _temp_name(d.target) not in gone]
                 for pool in pools
             ]
             namer.created[:] = [x for x in namer.created if str(x) not in gone]
@@ -913,21 +913,21 @@ def _emit_code(
         while True:
             read = set()
             for e in residuals + [
-                d["body"] for d in definitions + scalar_chain_definitions
+                d.body for d in definitions + scalar_chain_definitions
             ]:
                 read |= {str(x) for x in e.free_symbols}
             unread = [
                 d
                 for d in scalar_chain_definitions
-                if str(d["target"]) not in read
+                if str(d.target) not in read
             ]
             if not unread:
                 break
-            gone = {str(d["target"]) for d in unread}
+            gone = {str(d.target) for d in unread}
             scalar_chain_definitions = [
                 d
                 for d in scalar_chain_definitions
-                if str(d["target"]) not in gone
+                if str(d.target) not in gone
             ]
             namer.created[:] = [x for x in namer.created if str(x) not in gone]
         definitions = _dependency_order(definitions + scalar_chain_definitions)
@@ -990,11 +990,11 @@ def _emit_code(
         ]
     if sym_sum2 and param_symmetry:
         for definition in definitions:
-            free_ = definition["free"]
-            if len(free_) != 2 or not definition["limits"]:
+            free_ = definition.free
+            if len(free_) != 2 or not definition.limits:
                 continue
             body_ = _canonical_symmetric(
-                definition["body"], symmetric_params, sym_rank3
+                definition.body, symmetric_params, sym_rank3
             )
             if body_.has(sp.Piecewise) or any(
                 isinstance(x, _LoopStart) for x in body_.atoms(sp.Symbol)
@@ -1005,20 +1005,18 @@ def _emit_code(
                 == body_
             )
             if swapped_equal:
-                definition["mirror_sum"] = True
+                definition.mirror_sum = True
     if col_major:
         for definition in definitions:
             if table_layout and _prefers_column_sum(
                 definition, symmetric_params
             ):
-                definition["colsum"] = True
+                definition.colsum = True
                 continue
-            if definition.get("mirror_sum"):
+            if definition.mirror_sum:
                 continue
-            if not definition.get("symv") and _prefers_column_order(
-                definition
-            ):
-                definition["colmajor"] = True
+            if not definition.symv and _prefers_column_order(definition):
+                definition.colmajor = True
     if fuse_loops and not optional_derivatives:
         definitions = _fuse_loop_nests(definitions, namer)
     if sym_matvec and param_symmetry:
@@ -1027,8 +1025,8 @@ def _emit_code(
                 definition, symmetric_params, sym_rank3=sym_rank3
             )
             if parts is not None:
-                definition["symv"] = parts
-                definition["symv_acc"] = namer("t")
+                definition.symv = parts
+                definition.symv_acc = namer("t")
     if sib_fuse and not optional_derivatives:
         definitions = _fuse_sibling_tables(definitions, namer)
     if diag_table and not optional_derivatives:
@@ -1055,7 +1053,7 @@ def _emit_code(
         stats["operation_count"] = sum(
             sp.count_ops(residual, visual=False) for residual in residuals
         ) + sum(
-            sp.count_ops(definition["body"], visual=False)
+            sp.count_ops(definition.body, visual=False)
             for definition in definitions
         )
         stats["operation_count_tool"] = "sympy.count_ops(visual=False)"
@@ -1066,33 +1064,29 @@ def _emit_code(
             for (_a, _o, _r, free_), residual in zip(rendered, residuals)
             if not free_
         ) + sum(
-            sp.count_ops(definition["body"], visual=False)
+            sp.count_ops(definition.body, visual=False)
             for definition in definitions
-            if not definition["free"] and not definition["limits"]
+            if not definition.free and not definition.limits
         )
         if scalar_chain is True:
             stats[_STRUCTURE_STATS_KEY] = structured
     out_names = {attr: out_name for attr, out_name, _, _ in rendered}
 
-    temp_names = {
-        _temp_name(definition["target"]) for definition in definitions
-    }
+    temp_names = {_temp_name(definition.target) for definition in definitions}
     consumers = {name: set() for name in temp_names}
     for attr, _out_name, residual, _free in rendered:
         for name in _referenced_temp_names(residual, temp_names):
             consumers[name].add(attr)
     for definition in reversed(definitions):
-        name = _temp_name(definition["target"])
-        for dependency in _referenced_temp_names(
-            definition["body"], temp_names
-        ):
+        name = _temp_name(definition.target)
+        for dependency in _referenced_temp_names(definition.body, temp_names):
             consumers[dependency] |= consumers[name]
 
     body = []
     for definition in definitions:
         if optional_derivatives:
             condition = _guard(
-                consumers[_temp_name(definition["target"])], out_names
+                consumers[_temp_name(definition.target)], out_names
             )
         else:
             condition = ""
@@ -1129,15 +1123,11 @@ def _emit_code(
     )
     loop_indices = sorted(
         {str(idx) for _, _, _, free in rendered for idx in free}
-        | {
-            str(idx)
-            for definition in definitions
-            for idx in definition["free"]
-        }
+        | {str(idx) for definition in definitions for idx in definition.free}
         | {
             str(limit[0])
             for definition in definitions
-            for limit in definition["limits"]
+            for limit in definition.limits
         }
         | {
             str(limit[0])
