@@ -307,69 +307,131 @@ def _render_component_fused(definition) -> list:
     return lines
 
 
-def _render_outer_fused(definition) -> list:
-    x = definition.outer
+def _is_reduction_member(member) -> bool:
+    """Whether an outer-fused member is a reduction without free indices."""
+    return not isinstance(member, ComponentFusedMap) and not member.free
+
+
+def _reduction_run_length(members: list, start: int) -> int:
+    """Count the consecutive reductions that share the inner loops.
+
+    Parameters
+    ----------
+    members : list
+        Members of the outer-fused nest.
+    start : int
+        Position of the first reduction of the run.
+
+    Returns
+    -------
+    int
+        Length of the run, at least one.
+    """
+    first = members[start]
+    length = 1
+    while (
+        start + length < len(members)
+        and _is_reduction_member(members[start + length])
+        and members[start + length].limits[1:] == first.limits[1:]
+    ):
+        length += 1
+    return length
+
+
+def _render_reduction_run(run: list) -> list:
+    """Render consecutive reductions that share their inner loops.
+
+    Parameters
+    ----------
+    run : list
+        Reduction definitions with the same inner limits (``limits[1:]``).
+
+    Returns
+    -------
+    list of str
+        The lines, indented one level inside the outer loop.
+    """
+    first = run[0]
     lines = []
-    for g in definition.members:
-        if not isinstance(g, ComponentFusedMap) and not g.free:
-            lines.append(f"{_print_expr(g.target)} = 0.0d0")
-    lines.append(f"do {x} = 1, nc")
-    members = definition.members
-    k = 0
-    while k < len(members):
-        g = members[k]
-        if isinstance(g, ComponentFusedMap):
-            for _k, t, v in g.steps:
-                lines.append(f"{_INDENT}{_print_expr(t)} = {_print_expr(v)}")
-            k += 1
-        elif g.free:
+    depth = 1
+    for member in run:
+        if member.factored:
+            lines.append(_INDENT + f"{member.acc} = 0.0d0")
+    for idx, low, high in first.limits[1:]:
+        lines.append(
+            _INDENT * depth
+            + f"do {idx} = {_print_expr(low)}, {_print_expr(high)}"
+        )
+        depth += 1
+    for member in run:
+        if member.factored:
+            _outer_factor, inner_body = _split_factored(member, member.limits)
             lines.append(
-                f"{_INDENT}{_print_expr(g.target)} = {_print_expr(g.body)}"
+                _INDENT * depth
+                + f"{member.acc} = {member.acc} + {_print_expr(inner_body)}"
             )
-            k += 1
+            continue
+        target = _print_expr(member.target)
+        lines.append(
+            _INDENT * depth
+            + f"{target} = {target} + {_print_expr(member.body)}"
+        )
+    for _ in first.limits[1:]:
+        depth -= 1
+        lines.append(_INDENT * depth + "end do")
+    for member in run:
+        if member.factored:
+            target = _print_expr(member.target)
+            outer_factor, _inner_body = _split_factored(member, member.limits)
+            lines.append(
+                _INDENT
+                + f"{target} = {target} + "
+                + f"{_print_expr(member.acc * outer_factor)}"
+            )
+    return lines
+
+
+def _render_outer_fused(definition) -> list:
+    """Render the members of an outer-fused nest in one loop over ``outer``.
+
+    Parameters
+    ----------
+    definition : OuterFusedNest
+        The nest; its members are component maps, free maps and reductions.
+
+    Returns
+    -------
+    list of str
+        The Fortran lines: the zeroing of the plain reductions, then the
+        outer loop with every member in order.
+    """
+    outer = definition.outer
+    lines = []
+    for member in definition.members:
+        if _is_reduction_member(member):
+            lines.append(f"{_print_expr(member.target)} = 0.0d0")
+    lines.append(f"do {outer} = 1, nc")
+    members = definition.members
+    position = 0
+    while position < len(members):
+        member = members[position]
+        if isinstance(member, ComponentFusedMap):
+            for _kind, target, value in member.steps:
+                lines.append(
+                    f"{_INDENT}{_print_expr(target)} = {_print_expr(value)}"
+                )
+            position += 1
+        elif member.free:
+            lines.append(
+                f"{_INDENT}{_print_expr(member.target)} = "
+                f"{_print_expr(member.body)}"
+            )
+            position += 1
         else:
             # consecutive reductions with the same inner loops share them
-            run = [g]
-            while (
-                k + len(run) < len(members)
-                and not isinstance(members[k + len(run)], ComponentFusedMap)
-                and not members[k + len(run)].free
-                and members[k + len(run)].limits[1:] == g.limits[1:]
-            ):
-                run.append(members[k + len(run)])
-            depth = 1
-            for r in run:
-                if r.factored:
-                    lines.append(_INDENT + f"{r.acc} = 0.0d0")
-            for idx, low, high in g.limits[1:]:
-                lines.append(
-                    _INDENT * depth
-                    + f"do {idx} = {_print_expr(low)}, {_print_expr(high)}"
-                )
-                depth += 1
-            for r in run:
-                if r.factored:
-                    _o, inner_body = _split_factored(r, r.limits)
-                    lines.append(
-                        _INDENT * depth
-                        + f"{r.acc} = {r.acc} + {_print_expr(inner_body)}"
-                    )
-                    continue
-                t = _print_expr(r.target)
-                lines.append(
-                    _INDENT * depth + f"{t} = {t} + {_print_expr(r.body)}"
-                )
-            for _ in g.limits[1:]:
-                depth -= 1
-                lines.append(_INDENT * depth + "end do")
-            for r in run:
-                if r.factored:
-                    t = _print_expr(r.target)
-                    outer_f, _i = _split_factored(r, r.limits)
-                    lines.append(
-                        _INDENT + f"{t} = {t} + {_print_expr(r.acc * outer_f)}"
-                    )
-            k += len(run)
+            stop = position + _reduction_run_length(members, position)
+            lines.extend(_render_reduction_run(members[position:stop]))
+            position = stop
     lines.append("end do")
     return lines
 
