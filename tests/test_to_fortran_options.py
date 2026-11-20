@@ -1,5 +1,6 @@
 """Tests of the ``options`` parameter of :func:`to_fortran`."""
 
+import inspect
 import warnings
 from pathlib import Path
 
@@ -20,7 +21,6 @@ MODELS = {
 CHEAP_VARIANTS = ("e0", "e8")
 HEAVY_VARIANTS = ("p22", "p33")
 WORKLOADS = ("w0", "w3")
-CODEGEN_KEYS = ("array_cse", "share")
 NON_OPTION_KEYS = ("key", "id", "token", "label", "legacy")
 P33_IGNORED_COUNT = 12
 
@@ -133,3 +133,41 @@ def test_unknown_keyword_raises_type_error():
     diff, context, _ = build_case("pr", "w0", "e0")
     with pytest.raises(TypeError):
         to_fortran(diff, **context, no_such_option=True)
+
+
+def test_signature_exposes_options_and_hides_private_parameters():
+    parameters = inspect.signature(to_fortran).parameters
+    assert "options" in parameters
+    assert "_structured" not in parameters
+    assert "_structure_only" not in parameters
+
+
+def test_parameters_after_subroutine_name_are_keyword_only():
+    parameters = list(inspect.signature(to_fortran).parameters.values())
+    names = [parameter.name for parameter in parameters]
+    first_keyword = names.index("subroutine_name") + 1
+    tail = parameters[first_keyword:]
+    assert tail
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in tail)
+
+
+def test_positional_option_raises_type_error():
+    diff, _, _ = build_case("pr", "w0", "e0")
+    with pytest.raises(TypeError):
+        to_fortran(diff, None, None, None, True)
+
+
+def test_warning_is_attributed_to_the_caller():
+    diff, context, legacy = build_case(
+        "pr", "w0", "e8", optional_derivatives=True
+    )
+    legacy.update(lowrank_hess=True)
+    with warnings.catch_warnings(record=True) as direct:
+        warnings.simplefilter("always")
+        to_fortran(diff, **context, **legacy)
+    with warnings.catch_warnings(record=True) as method:
+        warnings.simplefilter("always")
+        diff.to_fortran(**context, **legacy)
+    for caught in (direct, method):
+        assert len(caught) == 1
+        assert caught[0].filename == __file__
