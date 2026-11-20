@@ -1,5 +1,7 @@
 """Definition rendering for the Fortran code generator."""
 
+import functools
+
 import sympy as sp
 from sympy.printing.fortran import fcode
 
@@ -19,6 +21,7 @@ from thermodiff.codegen.ir import (
     FusedNest,
     OuterFusedNest,
     SiblingNest,
+    TempDef,
 )
 from thermodiff.codegen.symmetry import _render_symv
 
@@ -421,89 +424,81 @@ def _render_sibling(definition) -> list:
     return lines
 
 
-def _render_definition(definition) -> list:
-    """Render the statements that fill one shared temporary."""
-    if isinstance(definition, SiblingNest):
-        return _render_sibling(definition)
-    if isinstance(definition, OuterFusedNest):
-        return _render_outer_fused(definition)
-    if isinstance(definition, ComponentFusedMap):
-        return _render_component_fused(definition)
-    if isinstance(definition, FusedNest):
-        return _render_fused(definition)
-    if definition.symv:
-        return _render_symv(definition)
-    if definition.colmajor:
-        return _render_column_order(definition)
-    if definition.colsum:
-        return _render_column_sum(definition)
+def _render_mirror_sum_table(definition: TempDef) -> list:
+    """Upper triangle of a symmetric rank-2 summation, then its mirror."""
+    a, b = definition.free
     target = definition.target
-    free = definition.free
-    lines = []
-    depth = 0
-    for idx in free:
-        lines.append(_INDENT * depth + f"do {idx} = 1, nc")
-        depth += 1
-
-    if definition.mirror_sum and len(free) == 2 and definition.limits:
-        # symmetric rank-2 summation: upper triangle, then mirror
-        a, b = free
-        target_s = _print_expr(target)
-        transposed = _print_expr(sp.Indexed(target.base, b, a))
-        out = [
-            f"do {b} = 1, nc",
-            f"{_INDENT}do {a} = 1, {b}",
-            f"{_INDENT * 2}{target_s} = 0.0d0",
-        ]
-        depth = 2
-        for idx, low, high in definition.limits:
-            out.append(
-                _INDENT * depth
-                + f"do {idx} = {_print_expr(low)}, {_print_expr(high)}"
-            )
-            depth += 1
+    target_s = _print_expr(target)
+    transposed = _print_expr(sp.Indexed(target.base, b, a))
+    out = [
+        f"do {b} = 1, nc",
+        f"{_INDENT}do {a} = 1, {b}",
+        f"{_INDENT * 2}{target_s} = 0.0d0",
+    ]
+    depth = 2
+    for idx, low, high in definition.limits:
         out.append(
             _INDENT * depth
-            + f"{target_s} = {target_s} + {_print_expr(definition.body)}"
+            + f"do {idx} = {_print_expr(low)}, {_print_expr(high)}"
         )
-        for _ in definition.limits:
-            depth -= 1
-            out.append(_INDENT * depth + "end do")
-        out.append(_INDENT * 2 + f"{transposed} = {target_s}")
-        out += [f"{_INDENT}end do", "end do"]
-        return out
-    mirror = definition.mirror and len(free) == 2 and not (definition.limits)
-    if mirror:
-        # Symmetric rank-2 temporary: fill the upper triangle and mirror.
-        lines = [
-            f"do {free[0]} = 1, nc",
-            f"{_INDENT}do {free[1]} = {free[0]}, nc",
-        ]
-        body_s = _print_expr(definition.body)
-        target_s = _print_expr(target)
-        transposed = _print_expr(sp.Indexed(target.base, free[1], free[0]))
-        lines.append(_INDENT * 2 + f"{target_s} = {body_s}")
-        lines.append(_INDENT * 2 + f"{transposed} = {target_s}")
-        lines.append(_INDENT + "end do")
-        lines.append("end do")
-        return lines
+        depth += 1
+    out.append(
+        _INDENT * depth
+        + f"{target_s} = {target_s} + {_print_expr(definition.body)}"
+    )
+    for _ in definition.limits:
+        depth -= 1
+        out.append(_INDENT * depth + "end do")
+    out.append(_INDENT * 2 + f"{transposed} = {target_s}")
+    out += [f"{_INDENT}end do", "end do"]
+    return out
 
+
+def _render_mirror_triangle(definition: TempDef) -> list:
+    """Symmetric rank-2 temporary: fill the upper triangle and mirror."""
+    free = definition.free
+    target = definition.target
+    body_s = _print_expr(definition.body)
     target_s = _print_expr(target)
+    transposed = _print_expr(sp.Indexed(target.base, free[1], free[0]))
+    return [
+        f"do {free[0]} = 1, nc",
+        f"{_INDENT}do {free[1]} = {free[0]}, nc",
+        _INDENT * 2 + f"{target_s} = {body_s}",
+        _INDENT * 2 + f"{transposed} = {target_s}",
+        _INDENT + "end do",
+        "end do",
+    ]
+
+
+def _render_factored_reduction(definition: TempDef) -> list:
+    """Double reduction whose inner sum is accumulated in a temporary."""
     limits = definition.limits
-    if definition.factored and not free:
-        outer_f, inner_body = _split_factored(definition, limits)
-        acc = definition.acc
-        (o, o_lo, o_hi), (x, x_lo, x_hi) = limits
-        return [
-            f"{target_s} = 0.0d0",
-            f"do {o} = {_print_expr(o_lo)}, {_print_expr(o_hi)}",
-            f"{_INDENT}{acc} = 0.0d0",
-            f"{_INDENT}do {x} = {_print_expr(x_lo)}, {_print_expr(x_hi)}",
-            f"{_INDENT * 2}{acc} = {acc} + {_print_expr(inner_body)}",
-            f"{_INDENT}end do",
-            f"{_INDENT}{target_s} = {target_s} + {_print_expr(acc * outer_f)}",
-            "end do",
-        ]
+    target_s = _print_expr(definition.target)
+    outer_f, inner_body = _split_factored(definition, limits)
+    acc = definition.acc
+    (o, o_lo, o_hi), (x, x_lo, x_hi) = limits
+    return [
+        f"{target_s} = 0.0d0",
+        f"do {o} = {_print_expr(o_lo)}, {_print_expr(o_hi)}",
+        f"{_INDENT}{acc} = 0.0d0",
+        f"{_INDENT}do {x} = {_print_expr(x_lo)}, {_print_expr(x_hi)}",
+        f"{_INDENT * 2}{acc} = {acc} + {_print_expr(inner_body)}",
+        f"{_INDENT}end do",
+        f"{_INDENT}{target_s} = {target_s} + {_print_expr(acc * outer_f)}",
+        "end do",
+    ]
+
+
+def _render_loop_nest(definition: TempDef) -> list:
+    """Free loops around an assignment or a reduction."""
+    target_s = _print_expr(definition.target)
+    limits = definition.limits
+    lines = []
+    depth = 0
+    for idx in definition.free:
+        lines.append(_INDENT * depth + f"do {idx} = 1, nc")
+        depth += 1
     if limits:
         lines.append(_INDENT * depth + f"{target_s} = 0.0d0")
         for idx, low, high in limits:
@@ -520,10 +515,59 @@ def _render_definition(definition) -> list:
         body_s = _print_expr(definition.body)
         lines.append(_INDENT * depth + f"{target_s} = {body_s}")
 
-    for _ in free:
+    for _ in definition.free:
         depth -= 1
         lines.append(_INDENT * depth + "end do")
     return lines
+
+
+@functools.singledispatch
+def _render_definition(definition: TempDef) -> list:
+    """Render the statements that fill one shared temporary.
+
+    The base handler covers plain and annotated temporaries; the
+    annotations are tested in a fixed order (``symv``, ``colmajor``,
+    ``colsum``, ``mirror_sum``, ``mirror``, ``factored``, ``limits``).
+    The wrapper records have their own registered handlers.
+    """
+    if definition.symv:
+        return _render_symv(definition)
+    if definition.colmajor:
+        return _render_column_order(definition)
+    if definition.colsum:
+        return _render_column_sum(definition)
+    free = definition.free
+    if definition.mirror_sum and len(free) == 2 and definition.limits:
+        return _render_mirror_sum_table(definition)
+    if definition.mirror and len(free) == 2 and not definition.limits:
+        return _render_mirror_triangle(definition)
+    if definition.factored and not free:
+        return _render_factored_reduction(definition)
+    return _render_loop_nest(definition)
+
+
+@_render_definition.register
+def _(definition: SiblingNest) -> list:
+    """Render a sibling table nest."""
+    return _render_sibling(definition)
+
+
+@_render_definition.register
+def _(definition: OuterFusedNest) -> list:
+    """Render an outer-fused nest."""
+    return _render_outer_fused(definition)
+
+
+@_render_definition.register
+def _(definition: ComponentFusedMap) -> list:
+    """Render a component-fused map."""
+    return _render_component_fused(definition)
+
+
+@_render_definition.register
+def _(definition: FusedNest) -> list:
+    """Render a fused vector nest."""
+    return _render_fused(definition)
 
 
 def _dependency_order(definitions):
