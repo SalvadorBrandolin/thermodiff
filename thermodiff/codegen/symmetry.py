@@ -1,5 +1,7 @@
 """Symmetry helpers for the Fortran code generator."""
 
+from itertools import permutations
+
 import sympy as sp
 
 from thermodiff.codegen.common import (
@@ -37,6 +39,118 @@ def _free_alpha_key(total, indexes, symmetric_params=(), *, sym_rank3):
     return key, free
 
 
+def _canonical_image(term, bound, symmetric_params, sym_rank3):
+    """Return the smallest image of ``term`` under permutations of ``bound``.
+
+    Parameters
+    ----------
+    term : sympy expression
+        One term of a summation body.
+    bound : list
+        The bound indices of the summation.
+    symmetric_params : iterable of str
+        Symmetric parameters, canonicalised in every image.
+    sym_rank3 : bool
+        Also canonicalise symmetric parameters of rank three.
+
+    Returns
+    -------
+    sympy expression
+        The image with the smallest ``sp.default_sort_key``; ties keep the
+        first permutation that reached it.
+    """
+    best = None
+    for perm in permutations(bound):
+        image = term.xreplace(dict(zip(bound, perm)))
+        if symmetric_params:
+            image = _canonical_symmetric(image, symmetric_params, sym_rank3)
+        key = sp.default_sort_key(image)
+        if best is None or key < best[0]:
+            best = (key, image)
+    return best[1]
+
+
+def _merge_body_terms(body, bound, symmetric_params, sym_rank3):
+    """Merge the terms of ``body`` that are images of each other.
+
+    Parameters
+    ----------
+    body : sympy expression
+        Body of a summation over ``bound``.
+    bound : list
+        The bound indices of the summation.
+    symmetric_params : iterable of str
+        Symmetric parameters, canonicalised in every image.
+    sym_rank3 : bool
+        Also canonicalise symmetric parameters of rank three.
+
+    Returns
+    -------
+    sympy expression
+        The merged body, or ``body`` itself when no terms merge.
+    """
+    expanded = sp.expand(body)
+    terms = expanded.args if isinstance(expanded, sp.Add) else (expanded,)
+    if len(terms) <= 1:
+        return body
+    merged = {}
+    for term in terms:
+        image = _canonical_image(term, bound, symmetric_params, sym_rank3)
+        coeff, rest = image.as_coeff_Mul()
+        merged[rest] = merged.get(rest, 0) + coeff
+    if len(merged) < len(terms):
+        return sp.factor_terms(
+            sp.Add(*[coeff * rest for rest, coeff in merged.items()])
+        )
+    return body
+
+
+def _merge_in_sum(total, symmetric_params, shared_bases, sym_rank3):
+    """Rebuild a summation with its dummy images merged, innermost first.
+
+    Parameters
+    ----------
+    total : sympy.Sum
+        The summation to process.
+    symmetric_params : iterable of str
+        Symmetric parameters, canonicalised in every image.
+    shared_bases : frozenset of str
+        Arrays that keep a summation from being merged.
+    sym_rank3 : bool
+        Also canonicalise symmetric parameters of rank three.
+
+    Returns
+    -------
+    sympy.Sum
+        The summation with the merged body.
+    """
+    body = _merge_visit(
+        total.function, symmetric_params, shared_bases, sym_rank3
+    )
+    bound = [lim[0] for lim in total.limits]
+    ranges = {(lim[1], lim[2]) for lim in total.limits}
+    reads_shared = any(
+        str(indexed.base) in shared_bases for indexed in body.atoms(sp.Indexed)
+    )
+    if 2 <= len(bound) <= 3 and len(ranges) == 1 and not reads_shared:
+        body = _merge_body_terms(body, bound, symmetric_params, sym_rank3)
+    return total.func(body, *total.limits)
+
+
+def _merge_visit(sub, symmetric_params, shared_bases, sym_rank3):
+    """Apply the dummy-image merge to every summation inside ``sub``."""
+    if not getattr(sub, "args", ()) or isinstance(sub, (sp.Idx, sp.Indexed)):
+        return sub
+    if isinstance(sub, sp.Sum):
+        return _merge_in_sum(sub, symmetric_params, shared_bases, sym_rank3)
+    return sub.func(
+        *[
+            _merge_visit(arg, symmetric_params, shared_bases, sym_rank3)
+            for arg in sub.args
+        ]
+    )
+
+
 def _merge_dummy_images(
     expr, symmetric_params=(), shared_bases=frozenset(), *, sym_rank3
 ):
@@ -55,54 +169,7 @@ def _merge_dummy_images(
     as is: its unmerged form shares the inner tables with those outputs, and
     merging would add a second pass over the array.
     """
-    from itertools import permutations
-
-    def canon(term, bound):
-        best = None
-        for perm in permutations(bound):
-            image = term.xreplace(dict(zip(bound, perm)))
-            if symmetric_params:
-                image = _canonical_symmetric(
-                    image, symmetric_params, sym_rank3
-                )
-            key = sp.default_sort_key(image)
-            if best is None or key < best[0]:
-                best = (key, image)
-        return best[1]
-
-    def visit(sub):
-        if not getattr(sub, "args", ()) or isinstance(
-            sub, (sp.Idx, sp.Indexed)
-        ):
-            return sub
-        if isinstance(sub, sp.Sum):
-            body = visit(sub.function)
-            bound = [lim[0] for lim in sub.limits]
-            ranges = {(lim[1], lim[2]) for lim in sub.limits}
-            reads_shared = any(
-                str(x.base) in shared_bases for x in body.atoms(sp.Indexed)
-            )
-            if 2 <= len(bound) <= 3 and len(ranges) == 1 and not reads_shared:
-                expanded = sp.expand(body)
-                terms = (
-                    expanded.args
-                    if isinstance(expanded, sp.Add)
-                    else (expanded,)
-                )
-                if len(terms) > 1:
-                    merged = {}
-                    for term in terms:
-                        image = canon(term, bound)
-                        coeff, rest = image.as_coeff_Mul()
-                        merged[rest] = merged.get(rest, 0) + coeff
-                    if len(merged) < len(terms):
-                        body = sp.factor_terms(
-                            sp.Add(*[c * r for r, c in merged.items()])
-                        )
-            return sub.func(body, *sub.limits)
-        return sub.func(*[visit(a) for a in sub.args])
-
-    return visit(expr)
+    return _merge_visit(expr, symmetric_params, shared_bases, sym_rank3)
 
 
 def _symv_parts(definition, symmetric_params, *, sym_rank3):
