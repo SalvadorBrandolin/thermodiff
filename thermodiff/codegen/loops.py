@@ -25,6 +25,207 @@ from thermodiff.codegen.ir import (
 from thermodiff.codegen.symmetry import _alpha_key, _canonical_symmetric
 
 
+class _NestContext(NamedTuple):
+    """Inputs of the nesting of :func:`_nest_double_sums`.
+
+    Attributes
+    ----------
+    indexes : sequence
+        Indices of the model, to order the free indices of a sum.
+    symmetric_params : tuple of str
+        Symmetric parameters, whose subscripts are canonicalised.
+    sym_rank3 : bool
+        Whether rank-3 symmetric parameters are fully symmetric.
+    general : bool
+        Nest sums over three or more indices too.
+    """
+
+    indexes: Sequence
+    symmetric_params: tuple
+    sym_rank3: bool
+    general: bool
+
+
+class _NestChoice(NamedTuple):
+    """Which inner sums are shared and how often each one appears.
+
+    Attributes
+    ----------
+    vectors : set
+        Keys of the vector sums some output needs anyway.
+    shared : set
+        Keys of the inner sums worth a vector.
+    counts : dict
+        Number of double sums that nest onto each inner-sum key.
+    cost : bool
+        Nest by cost when no inner sum is shared.
+    """
+
+    vectors: set
+    shared: set
+    counts: dict
+    cost: bool
+
+
+def _sum_key(total, context):
+    """Return the canonical key of a sum, free indices renamed by order."""
+    free = _order_free(_free_indices(total), context.indexes)
+    mapping = {index: sp.Idx(f"_free{pos}") for pos, index in enumerate(free)}
+    renamed = _alpha_key(total.xreplace(mapping))
+    if context.symmetric_params:
+        renamed = _canonical_symmetric(
+            renamed, context.symmetric_params, context.sym_rank3
+        )
+    return renamed
+
+
+def _split_product(total, outer_factors):
+    """Return the numeric factors and the rest of the product of ``total``."""
+    numbers = [f for f in total.function.args if f.is_Number]
+    rest = [
+        f
+        for f in total.function.args
+        if f not in outer_factors and not f.is_Number
+    ]
+    return numbers, rest
+
+
+def _orientations_general(total):
+    """Nestings of a sum over two or more indices.
+
+    One bound index goes to an inner sum (rank 1 or 2 in its free indices),
+    the rest stay outside.  Returns ``(outer limits, outer factors, inner
+    sum, None)`` for each nesting.
+    """
+    if len(total.limits) < 2 or not isinstance(total.function, sp.Mul):
+        return []
+    ranges = {(lim[1], lim[2]) for lim in total.limits}
+    if len(ranges) != 1:
+        return []
+    result = []
+    for pos, (bound, low, high) in enumerate(total.limits):
+        outer_factors = [
+            f
+            for f in total.function.args
+            if bound not in f.atoms(sp.Idx) and f.atoms(sp.Idx)
+        ]
+        numbers, rest = _split_product(total, outer_factors)
+        if not outer_factors or not rest:
+            continue
+        inner = sp.Sum(sp.Mul(*rest), (bound, low, high))
+        if len(_free_indices(inner)) > 2:
+            continue
+        outer_limits = [lim for k, lim in enumerate(total.limits) if k != pos]
+        result.append((outer_limits, numbers + outer_factors, inner, None))
+    return result
+
+
+def _orientations_pair(total):
+    """Nestings of a double sum: ``(outer index, factors, inner, limits)``."""
+    if len(total.limits) != 2 or not isinstance(total.function, sp.Mul):
+        return []
+    (first, low_a, high_a), (second, low_b, high_b) = total.limits
+    if (low_a, high_a) != (low_b, high_b):
+        return []
+    result = []
+    for outer, inner_index, lims in (
+        (first, second, (low_a, high_a)),
+        (second, first, (low_b, high_b)),
+    ):
+        outer_factors = [
+            f
+            for f in total.function.args
+            if f.atoms(sp.Idx) <= {outer} and f.atoms(sp.Idx)
+        ]
+        numbers, rest = _split_product(total, outer_factors)
+        if not outer_factors or not rest:
+            continue
+        inner = sp.Sum(sp.Mul(*rest), (inner_index, *lims))
+        result.append((outer, numbers + outer_factors, inner, lims))
+    return result
+
+
+def _orientations(total, general):
+    """Return the nestings of ``total`` (general or double-sum form)."""
+    if general:
+        return _orientations_general(total)
+    return _orientations_pair(total)
+
+
+def _vector_keys(staged, context):
+    """Return the keys of the vector sums the outputs already contain."""
+    vectors = set()
+    for _, _, expr in staged:
+        for total in expr.atoms(sp.Sum):
+            if len(total.limits) == 1 and _free_indices(total):
+                vectors.add(_sum_key(total, context))
+    return vectors
+
+
+def _inner_key_counts(staged, context):
+    """Count, per inner-sum key, the sums that can nest onto it."""
+    counts = {}
+    for _, _, expr in staged:
+        for total in expr.atoms(sp.Sum):
+            options = _orientations(total, context.general)
+            for key in {_sum_key(o[2], context) for o in options}:
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _nest_by_cost(total, context):
+    """Nest by cost: fewest free indices inside, most factors outside."""
+    options = sorted(
+        _orientations(total, context.general),
+        key=lambda o: (len(_free_indices(o[2])), -len(o[1])),
+    )
+    if not options:
+        return None
+    outer_limits, outer_factors, inner, _ = options[0]
+    return sp.Sum(sp.Mul(*outer_factors) * inner, *outer_limits)
+
+
+def _nest_sum(total, context, choice):
+    """Return ``total`` nested onto a shared inner sum, or ``None``."""
+    options = [
+        o
+        for o in _orientations(total, context.general)
+        if _sum_key(o[2], context) in choice.shared
+    ]
+    if not options and choice.cost and context.general:
+        if len(total.limits) >= 3:
+            nested = _nest_by_cost(total, context)
+            if nested is not None:
+                return nested
+    if not options:
+        return None
+    # prefer an inner sum that some output needs anyway
+    options.sort(
+        key=lambda o: (
+            _sum_key(o[2], context) not in choice.vectors,
+            -choice.counts.get(_sum_key(o[2], context), 0),
+        )
+    )
+    outer, outer_factors, inner, lims = options[0]
+    if context.general:
+        return sp.Sum(sp.Mul(*outer_factors) * inner, *outer)
+    return sp.Sum(sp.Mul(*outer_factors) * inner, (outer, *lims))
+
+
+def _nest_expression(expr, context, choice):
+    """Nest the sums of ``expr`` repeatedly (up to three rounds if general)."""
+    for _ in range(3 if context.general else 1):
+        replacements = {}
+        for total in expr.atoms(sp.Sum):
+            nested = _nest_sum(total, context, choice)
+            if nested is not None:
+                replacements[total] = nested
+        if not replacements:
+            break
+        expr = expr.xreplace(replacements)
+    return expr
+
+
 def _nest_double_sums(
     staged,
     indexes,
@@ -49,148 +250,27 @@ def _nest_double_sums(
     becomes a rank-2 table (computed once, triangle when symmetric) and
     the factors of the outer indices leave the innermost loop.
     """
-
-    def key_of(total):
-        free = _order_free(_free_indices(total), indexes)
-        mapping = {
-            index: sp.Idx(f"_free{pos}") for pos, index in enumerate(free)
-        }
-        renamed = _alpha_key(total.xreplace(mapping))
-        if symmetric_params:
-            renamed = _canonical_symmetric(
-                renamed, symmetric_params, sym_rank3
-            )
-        return renamed
-
     from thermodiff.chain import factor_sums
 
+    context = _NestContext(indexes, symmetric_params, sym_rank3, general)
     # factors that do not depend on the bound indices leave the sums first
     staged = [
         (attr, out_name, factor_sums(expr)) for attr, out_name, expr in staged
     ]
-    vectors = set()
-    for _, _, expr in staged:
-        for total in expr.atoms(sp.Sum):
-            if (
-                len(total.limits) == 1
-                and _free_indices(total)
-                and (general or len(_free_indices(total)) >= 1)
-            ):
-                vectors.add(key_of(total))
-
-    def orientations_general(total):
-        """Nestings of a sum over two or more indices: one bound index goes
-        to an inner sum (rank 1 or 2 in its free indices), the rest stay
-        outside.  Returns (outer limits, outer factors, inner sum, None)."""
-        if len(total.limits) < 2 or not isinstance(total.function, sp.Mul):
-            return []
-        ranges = {(lim[1], lim[2]) for lim in total.limits}
-        if len(ranges) != 1:
-            return []
-        result = []
-        for pos, (b, lb, hb) in enumerate(total.limits):
-            outer_f = [
-                f
-                for f in total.function.args
-                if b not in f.atoms(sp.Idx) and f.atoms(sp.Idx)
-            ]
-            numbers = [f for f in total.function.args if f.is_Number]
-            rest = [
-                f
-                for f in total.function.args
-                if f not in outer_f and not f.is_Number
-            ]
-            if not outer_f or not rest:
-                continue
-            inner = sp.Sum(sp.Mul(*rest), (b, lb, hb))
-            if len(_free_indices(inner)) > 2:
-                continue
-            outer_limits = [
-                lim for k, lim in enumerate(total.limits) if k != pos
-            ]
-            result.append((outer_limits, numbers + outer_f, inner, None))
-        return result
-
-    def orientations(total):
-        """(outer index, outer factors, inner sum) for both nestings."""
-        if general:
-            return orientations_general(total)
-        if len(total.limits) != 2 or not isinstance(total.function, sp.Mul):
-            return []
-        (a, la, ha), (b, lb, hb) = total.limits
-        if (la, ha) != (lb, hb):
-            return []
-        result = []
-        for outer, inner_idx, lims in ((a, b, (la, ha)), (b, a, (lb, hb))):
-            outer_f = [
-                f
-                for f in total.function.args
-                if f.atoms(sp.Idx) <= {outer} and f.atoms(sp.Idx)
-            ]
-            numbers = [f for f in total.function.args if f.is_Number]
-            rest = [
-                f
-                for f in total.function.args
-                if f not in outer_f and not f.is_Number
-            ]
-            if not outer_f or not rest:
-                continue
-            inner = sp.Sum(sp.Mul(*rest), (inner_idx, *lims))
-            result.append((outer, numbers + outer_f, inner, lims))
-        return result
-
+    vectors = _vector_keys(staged, context)
     # inner sums shared by several double sums are worth a vector too
     # (e.g. the temperature derivatives of sum_kl n_k n_l s_k s_l K_kl)
-    counts = {}
-    for _, _, expr in staged:
-        for total in expr.atoms(sp.Sum):
-            for key in {key_of(o[2]) for o in orientations(total)}:
-                counts[key] = counts.get(key, 0) + 1
+    counts = _inner_key_counts(staged, context)
     shared = vectors | (
         {k for k, c in counts.items() if c >= 2} if shared_inner else set()
     )
     if not shared and not (cost and general):
         return staged
-
-    def nest(total):
-        options = [o for o in orientations(total) if key_of(o[2]) in shared]
-        if not options and cost and general and len(total.limits) >= 3:
-            # by cost: the inner sum with the fewest free indices, then the
-            # one that leaves the most factors outside
-            options = sorted(
-                orientations(total),
-                key=lambda o: (len(_free_indices(o[2])), -len(o[1])),
-            )
-            if options:
-                outer_limits, outer_f, inner, _ = options[0]
-                return sp.Sum(sp.Mul(*outer_f) * inner, *outer_limits)
-        if not options:
-            return None
-        # prefer an inner sum that some output needs anyway
-        options.sort(
-            key=lambda o: (
-                key_of(o[2]) not in vectors,
-                -counts.get(key_of(o[2]), 0),
-            )
-        )
-        outer, outer_f, inner, lims = options[0]
-        if general:
-            return sp.Sum(sp.Mul(*outer_f) * inner, *outer)
-        return sp.Sum(sp.Mul(*outer_f) * inner, (outer, *lims))
-
-    result = []
-    for attr, out_name, expr in staged:
-        for _ in range(3 if general else 1):
-            replacements = {}
-            for total in expr.atoms(sp.Sum):
-                nested = nest(total)
-                if nested is not None:
-                    replacements[total] = nested
-            if not replacements:
-                break
-            expr = expr.xreplace(replacements)
-        result.append((attr, out_name, expr))
-    return result
+    choice = _NestChoice(vectors, shared, counts, cost)
+    return [
+        (attr, out_name, _nest_expression(expr, context, choice))
+        for attr, out_name, expr in staged
+    ]
 
 
 class _FuseSettings(NamedTuple):
