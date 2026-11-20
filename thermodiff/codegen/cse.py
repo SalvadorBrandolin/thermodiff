@@ -1,0 +1,655 @@
+"""Common-subexpression search for the Fortran code generator."""
+
+import functools
+from collections.abc import Callable
+
+import sympy as sp
+
+from thermodiff.codegen.common import (
+    _AUX_INDEX_NAMES,
+    _MAX_ARRAY_CSE_RANK,
+    _free_indices,
+    _index_set,
+    _is_expensive,
+    _memoised_call,
+    _new_shared_temp,
+    _order_free,
+    _sorted_indices,
+)
+from thermodiff.codegen.symmetry import (
+    _alpha_key,
+    _canonical_symmetric,
+    _free_alpha_key,
+)
+
+
+def _sum_atoms(expr: sp.Basic, memo: dict) -> set:
+    """Return ``expr.atoms(sp.Sum)``, memoised in ``memo`` by expression.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to scan.
+    memo : dict
+        Per-call cache from expression to its set of ``Sum`` atoms.
+
+    Returns
+    -------
+    set
+        The ``Sum`` nodes of ``expr``; callers must not mutate it.
+    """
+    found = memo.get(expr)
+    if found is None:
+        found = memo[expr] = expr.atoms(sp.Sum)
+    return found
+
+
+def _sorted_sums(expr: sp.Basic, memo: dict, sorted_memo: dict) -> tuple:
+    """Return the ``Sum`` atoms of ``expr`` sorted by ``default_sort_key``.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to scan.
+    memo : dict
+        Per-call cache used by :func:`_sum_atoms`.
+    sorted_memo : dict
+        Per-call cache from expression to its sorted ``Sum`` atoms.
+
+    Returns
+    -------
+    tuple
+        The sorted ``Sum`` nodes of ``expr``.
+    """
+    ordered = sorted_memo.get(expr)
+    if ordered is None:
+        ordered = tuple(
+            sorted(_sum_atoms(expr, memo), key=sp.default_sort_key)
+        )
+        sorted_memo[expr] = ordered
+    return ordered
+
+
+def _share_sums(
+    expressions,
+    namer,
+    indexes,
+    arrays,
+    alpha=False,
+    free_alpha=False,
+    symmetric_params=(),
+    transpose=False,
+    *,
+    sym_rank3,
+):
+    """Replace every ``Sum`` by a temporary that is computed once.
+
+    Identical summations reused by several outputs are evaluated a single
+    time.  Sums that appear in only one output are hoisted too, which keeps
+    the output residuals free of loop nests and lets the scalar common
+    sub-expression pass below see through them.
+
+    Parameters
+    ----------
+    expressions : list of sympy expressions
+        Expressions that may contain summations.
+    namer : _Namer
+        Generator of temporary variable names.
+    indexes : list
+        User index order, used to sort the free indices of a temporary.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    residuals : list of sympy expressions
+        ``expressions`` with every ``Sum`` replaced by a temporary.
+    definitions : list of dict
+        How to compute each temporary, in dependency order.
+    """
+    exprs = list(expressions)
+    definitions = []
+    sums_memo: dict = {}
+    sorted_memo: dict = {}
+    while True:
+        innermost = []
+        seen = set()
+        for expr in exprs:
+            for total in _sorted_sums(expr, sums_memo, sorted_memo):
+                if _sum_atoms(total.function, sums_memo) or total in seen:
+                    continue
+                seen.add(total)
+                innermost.append(total)
+        if not innermost:
+            break
+        replacements = {}
+        by_key = {}
+        for total in innermost:
+            if free_alpha:
+                key, free_here = _free_alpha_key(
+                    total, indexes, symmetric_params, sym_rank3=sym_rank3
+                )
+                if transpose and key not in by_key and len(free_here) == 2:
+                    # the transpose of a rank-2 sum already computed
+                    swapped = list(reversed(free_here))
+                    mapping = {
+                        index: sp.Idx(f"_free{pos}")
+                        for pos, index in enumerate(swapped)
+                    }
+                    tkey = _alpha_key(total.xreplace(mapping))
+                    if symmetric_params:
+                        tkey = _canonical_symmetric(
+                            tkey, symmetric_params, sym_rank3
+                        )
+                    if tkey in by_key:
+                        target_, _ = by_key[tkey]
+                        replacements[total] = sp.Indexed(
+                            target_.base, *swapped
+                        )
+                        continue
+                if key in by_key:
+                    # equal up to the names of its bound and free indices:
+                    # reuse the temporary, indexed by this sum's free indices
+                    target_, _ = by_key[key]
+                    replacements[total] = (
+                        sp.Indexed(target_.base, *free_here)
+                        if free_here
+                        else target_
+                    )
+                    continue
+            elif alpha:
+                key = _alpha_key(total)
+                if key in by_key:
+                    # alpha-equivalent to a summation already hoisted
+                    replacements[total] = by_key[key]
+                    continue
+            free = _order_free(_free_indices(total), indexes)
+            target = _new_shared_temp(namer, free, arrays)
+            definitions.append(
+                {
+                    "target": target,
+                    "free": free,
+                    "limits": list(total.limits),
+                    "body": total.function,
+                }
+            )
+            replacements[total] = target
+            if free_alpha:
+                by_key[
+                    _free_alpha_key(
+                        total, indexes, symmetric_params, sym_rank3=sym_rank3
+                    )[0]
+                ] = (
+                    target,
+                    free,
+                )
+            elif alpha:
+                by_key[_alpha_key(total)] = target
+        exprs = [expr.xreplace(replacements) for expr in exprs]
+    return exprs, definitions
+
+
+def _common_scalar_cse(expressions, namer, arrays):
+    """Extract scalar sub-expressions shared by several outputs.
+
+    Only sub-expressions without free indices are hoisted, so every
+    temporary can be computed once, before the output loops, without
+    worrying about the index scope of a particular output.
+
+    Parameters
+    ----------
+    expressions : list of sympy expressions
+        Sum free expressions to optimise.
+    namer : _Namer
+        Generator of temporary variable names.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    residuals : list of sympy expressions
+        ``expressions`` with the shared sub-expressions replaced.
+    definitions : list of dict
+        How to compute each shared scalar, in dependency order.
+    """
+    exprs = list(expressions)
+    definitions = []
+    own_entries = functools.partial(
+        _own_scalar_candidate, index_memo={}, eligible_memo={}
+    )
+    entries_memo = {}
+    rank_memo = {}
+    candidate_sets = {}
+    while True:
+        counts = _count_scalar_candidates(exprs, own_entries, entries_memo)
+        repeated = [sub for sub, count in counts.items() if count > 1]
+        if not repeated:
+            break
+        best = _best_scalar_candidate(repeated, counts, rank_memo)
+        target = _new_shared_temp(namer, [], arrays)
+        definitions.append(
+            {
+                "target": target,
+                "free": [],
+                "limits": [],
+                "body": best,
+            }
+        )
+        rule = {best: target}
+        for position, expr in enumerate(exprs):
+            candidates = _candidate_set(
+                expr, own_entries, entries_memo, candidate_sets
+            )
+            if best in candidates:
+                exprs[position] = expr.xreplace(rule)
+    return exprs, definitions
+
+
+def _best_scalar_candidate(
+    repeated: list, counts: dict, rank_memo: dict
+) -> sp.Expr:
+    """Pick the candidate with the highest ``(count, count_ops, sort key)``.
+
+    Only the candidates with the maximum count can win, so the rank is
+    evaluated for those alone.  ``repeated`` keeps the order of ``counts``
+    and ``max`` returns the first maximum, as it would over all of them.
+    """
+    top_count = max(counts[sub] for sub in repeated)
+    contenders = [sub for sub in repeated if counts[sub] == top_count]
+    return max(contenders, key=lambda sub: _candidate_rank(sub, rank_memo))
+
+
+def _candidate_set(
+    expr: sp.Basic,
+    own_entries: Callable[[sp.Basic], tuple],
+    entries_memo: dict,
+    sets_memo: dict,
+) -> frozenset:
+    """Return the set of candidates occurring in ``expr`` (memoised).
+
+    ``sets_memo`` is the per-call cache ``expression -> frozenset``; it is
+    keyed by the expression object, which ``xreplace`` leaves unchanged
+    when nothing in it is replaced.
+    """
+    if expr not in sets_memo:
+        sets_memo[expr] = frozenset(
+            _preorder_entries(expr, own_entries, entries_memo)
+        )
+    return sets_memo[expr]
+
+
+def _is_scalar_candidate(
+    sub: sp.Basic, index_memo: dict, eligible_memo: dict
+) -> bool:
+    """Tell whether ``sub`` may be hoisted as a shared scalar (memoised)."""
+    if sub not in eligible_memo:
+        eligible_memo[sub] = (
+            isinstance(sub, sp.Expr)
+            and not sub.is_Atom
+            and not _free_indices(sub, index_memo)
+            and not sub.has(sp.Sum)
+        )
+    return eligible_memo[sub]
+
+
+def _own_scalar_candidate(
+    sub: sp.Basic, index_memo: dict, eligible_memo: dict
+) -> tuple:
+    """Return ``(sub,)`` when ``sub`` is a scalar candidate, else ``()``."""
+    if _is_scalar_candidate(sub, index_memo, eligible_memo):
+        return (sub,)
+    return ()
+
+
+def _count_scalar_candidates(
+    exprs: list,
+    own_entries: Callable[[sp.Basic], tuple],
+    entries_memo: dict,
+) -> dict:
+    """Count the occurrences of every hoistable sub-expression.
+
+    The dict keeps the order in which candidates are first met in a
+    pre-order walk of ``exprs``, which fixes the tie-break of the caller.
+    ``entries_memo`` is the per-call memo of :func:`_preorder_entries`.
+    """
+    counts = {}
+    for expr in exprs:
+        for sub in _preorder_entries(expr, own_entries, entries_memo):
+            counts[sub] = counts.get(sub, 0) + 1
+    return counts
+
+
+def _candidate_rank(sub: sp.Expr, rank_memo: dict) -> tuple:
+    """Return ``(count_ops, default_sort_key)`` of ``sub`` (memoised)."""
+    if sub not in rank_memo:
+        rank_memo[sub] = (sp.count_ops(sub), sp.default_sort_key(sub))
+    return rank_memo[sub]
+
+
+def _node_children(node: sp.Basic):
+    """Return the children that ``sp.preorder_traversal`` visits.
+
+    Mirrors ``sp.preorder_traversal(expr)`` with ``keys=None`` for SymPy
+    ``Basic`` nodes: ``LatticeOp`` nodes (``Max``, ``Min``, ``And``...) are
+    walked through their ``_argset``, everything else through ``args``.
+    Non-``Basic`` iterable args (e.g. matrices) are not supported.
+    """
+    if hasattr(node, "_argset"):
+        return node._argset
+    return node.args
+
+
+def _preorder_entries(
+    expr: sp.Basic, own_entries: Callable[[sp.Basic], tuple], memo: dict
+) -> tuple:
+    """Collect per-node entries of ``expr`` in pre-order, memoised.
+
+    The result equals the concatenation of ``own_entries(node)`` over
+    ``sp.preorder_traversal(expr)`` with ``keys=None``, for SymPy ``Basic``
+    trees.  Non-``Basic`` iterable args (e.g. matrices) are not supported;
+    they never occur in the expressions of the generator.  Entries are
+    cached per subtree in ``memo``; ``xreplace`` returns the very same
+    objects for the subtrees it leaves alone, so a later walk of a
+    rewritten expression only visits the nodes that changed.
+
+    Parameters
+    ----------
+    expr : sympy expression
+        Root of the walk.
+    own_entries : callable
+        Maps a node to the tuple of entries it contributes by itself.
+        It must be pure for the lifetime of ``memo``.
+    memo : dict
+        Per-call cache ``subtree -> tuple of entries``, owned by the
+        caller and valid for one fixed ``own_entries``.
+
+    Returns
+    -------
+    tuple
+        The entries of ``expr`` in pre-order.
+    """
+    stack = [expr]
+    while stack:
+        node = stack[-1]
+        if node in memo:
+            stack.pop()
+            continue
+        children = _node_children(node)
+        pending = [child for child in children if child not in memo]
+        if pending:
+            stack.extend(pending)
+            continue
+        memo[node] = (
+            *own_entries(node),
+            *(entry for child in children for entry in memo[child]),
+        )
+        stack.pop()
+    return memo[expr]
+
+
+def _is_hoistable(sub, index_memo: dict | None = None) -> bool:
+    """Whether ``sub`` may be replaced by an array temporary.
+
+    ``index_memo`` optionally supplies the memo of :func:`_index_set`
+    used for the final index test instead of ``sub.atoms(sp.Idx)``.
+    """
+    if not isinstance(sub, sp.Expr) or sub.is_Atom:
+        return False
+    if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)):
+        return False
+    if sub.has(sp.Sum) or sub.has(sp.Piecewise):
+        return False
+    if sub.is_Relational or sub.is_Boolean:
+        return False
+    if index_memo is not None:
+        return bool(_index_set(sub, index_memo))
+    return bool(sub.atoms(sp.Idx))
+
+
+def _canonical_form(sub, indices: list, slots: list):
+    """Rename ``indices`` of ``sub`` to the leading auxiliary ``slots``."""
+    mapping = {
+        index: slots[position] for position, index in enumerate(indices)
+    }
+    return sub.xreplace(mapping)
+
+
+def _cached_hoistable(sub, index_memo: dict, cache: dict) -> bool:
+    """:func:`_is_hoistable` memoised in the per-call ``cache``."""
+    if sub not in cache:
+        cache[sub] = _is_hoistable(sub, index_memo)
+    return cache[sub]
+
+
+def _cached_canonical(sub, indices: list, slots: list, cache: dict):
+    """:func:`_canonical_form` memoised in the per-call ``cache``.
+
+    The result depends on ``slots``, so ``cache`` must not outlive the
+    call that fixed them.
+    """
+    if sub not in cache:
+        cache[sub] = _canonical_form(sub, indices, slots)
+    return cache[sub]
+
+
+def _own_hoistable_entry(
+    sub,
+    slots: list,
+    index_memo: dict,
+    hoistable_cache: dict,
+    canonical_cache: dict,
+) -> tuple:
+    """Return the ``(sub, canonical, indices)`` entry of ``sub`` itself.
+
+    The tuple is empty when ``sub`` is not hoistable or its rank exceeds
+    :data:`_MAX_ARRAY_CSE_RANK`.
+    """
+    if not _cached_hoistable(sub, index_memo, hoistable_cache):
+        return ()
+    indices = _sorted_indices(sub, index_memo)
+    if len(indices) > _MAX_ARRAY_CSE_RANK:
+        return ()
+    canon = _cached_canonical(sub, indices, slots, canonical_cache)
+    return ((sub, canon, indices),)
+
+
+def _best_indexed_candidate(
+    counts: dict, expensive_twice: bool, ops_memo: dict, sort_key_memo: dict
+):
+    """Pick the canonical sub-expression to hoist next, or ``None``.
+
+    The winner maximises ``(count, count_ops)`` among the candidates that
+    pass the cheap-operation filter, the first one in ``default_sort_key``
+    order on ties.  Count groups are visited in descending order, so
+    ``count_ops`` and the sort key are only computed for the groups that
+    can still win: a lower count is reached only when every candidate of
+    the higher groups was filtered out.
+    """
+    repeated = [canon for canon, count in counts.items() if count >= 2]
+    for count in sorted({counts[canon] for canon in repeated}, reverse=True):
+        group = sorted(
+            (canon for canon in repeated if counts[canon] == count),
+            key=lambda item: _memoised_call(
+                sp.default_sort_key, item, sort_key_memo
+            ),
+        )
+        best = None
+        best_ops = None
+        for canon in group:
+            ops = _memoised_call(sp.count_ops, canon, ops_memo)
+            # A single repeated operation is not worth the extra array
+            # unless it is used at least three times.
+            if (
+                ops < 2
+                and count < 3
+                and not (expensive_twice and _is_expensive(canon))
+            ):
+                continue
+            if best_ops is None or ops > best_ops:
+                best_ops = ops
+                best = canon
+        if best is not None:
+            return best
+    return None
+
+
+def _indexed_cse(
+    expressions, namer, arrays, expensive_twice=False, counted=None
+):
+    """Hoist index-dependent sub-expressions shared by several outputs.
+
+    :func:`_common_scalar_cse` only hoists sub-expressions that do not
+    depend on an index.  This pass also handles sub-expressions that *do*:
+    the indices are first renamed to a canonical set, so that
+    ``sqrt(ac(k)*ac(l))`` and ``sqrt(ac(i)*ac(j))`` are recognised as the
+    same array.  Every such sub-expression is then materialised into an
+    array temporary that is computed a single time.
+
+    For a mixture model this turns the ``sqrt``/``log``/``pow`` calls
+    repeated inside the ``nc``-nested summations into one pass, so a
+    derivative that needs a shared factor reads it from memory instead of
+    recomputing it.
+
+    The rewrite is exact: a sub-expression is only replaced by an indexed
+    temporary whose definition is that very sub-expression, evaluated over
+    the same indices.
+
+    Only sub-expressions of rank up to :data:`_MAX_ARRAY_CSE_RANK` are
+    materialised; see that constant for why rank three and above are left
+    alone.
+
+    Parameters
+    ----------
+    expressions : list of sympy expressions
+        Expressions to optimise (they may still contain ``Sum`` objects).
+    namer : _Namer
+        Generator of temporary variable names.
+    arrays : dict
+        Records the rank of every array temporary created.
+
+    Returns
+    -------
+    residuals : list of sympy expressions
+        ``expressions`` with the shared index-dependent sub-expressions
+        replaced by array temporaries.
+    definitions : list of dict
+        How to compute each array temporary, in dependency order.
+    """
+    exprs = list(expressions)
+    definitions = []
+    # Fortran is case insensitive: compare lower-cased names, so that an
+    # auxiliary index ``r`` never clashes with e.g. a module constant ``R``.
+    used = {
+        str(symbol).lower()
+        for expr in exprs
+        for symbol in expr.atoms(sp.Symbol)
+    }
+    used.update(
+        {str(b).lower() for expr in exprs for b in expr.atoms(sp.IndexedBase)}
+    )
+    used.update({"nc", "res"})
+    slots = [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
+
+    index_memo = {}
+    own_entries = functools.partial(
+        _own_hoistable_entry,
+        slots=slots,
+        index_memo=index_memo,
+        hoistable_cache={},
+        canonical_cache={},
+    )
+    entries_memo = {}
+    ops_memo = {}
+    sort_key_memo = {}
+
+    while True:
+        entries = [
+            _preorder_entries(expr, own_entries, entries_memo)
+            for expr in exprs
+        ]
+        counts = {}
+        sizes = {}
+        for position, position_entries in enumerate(entries):
+            if counted is not None and not counted[position]:
+                continue
+            for _, canon, indices in position_entries:
+                counts[canon] = counts.get(canon, 0) + 1
+                sizes[canon] = len(indices)
+        best = _best_indexed_candidate(
+            counts, expensive_twice, ops_memo, sort_key_memo
+        )
+        if best is None:
+            break
+        free = slots[: sizes[best]]
+        target = _new_shared_temp(namer, free, arrays)
+        definitions.append(
+            {
+                "target": target,
+                "free": free,
+                "limits": [],
+                "body": best,
+            }
+        )
+        base = target.base
+        rank = len(free)
+        replacements = {}
+        touched = set()
+        for position, position_entries in enumerate(entries):
+            for sub, canon, indices in position_entries:
+                if len(indices) == rank and canon == best:
+                    replacements[sub] = sp.Indexed(base, *indices)
+                    touched.add(position)
+        # ``xreplace`` returns the very same object when no key occurs.
+        exprs = [
+            expr.xreplace(replacements) if position in touched else expr
+            for position, expr in enumerate(exprs)
+        ]
+    return exprs, definitions
+
+
+# ---------------------------------------------------------------------------
+# SymPy CSE backend
+# ---------------------------------------------------------------------------
+
+
+def _sympy_scalar_cse(expressions, namer, arrays):
+    """Scalar common sub-expression elimination with :func:`sympy.cse`.
+
+    Drop-in alternative to :func:`_common_scalar_cse` used to compare the
+    greedy thermodiff pass against SymPy's own algorithm.  ``sympy.cse`` is
+    unaware of index scopes, so every replacement that depends on an index
+    (or contains a summation) is substituted back; only index-free scalar
+    temporaries are kept.
+    """
+    exprs = list(expressions)
+    if not exprs:
+        return exprs, []
+    replacements, reduced = sp.cse(
+        exprs,
+        symbols=sp.numbered_symbols("cse_tmp_"),
+        order="canonical",
+        optimizations=None,
+    )
+    inlined = {}
+    kept = []
+    for symbol, value in replacements:
+        value = value.xreplace(inlined)
+        if value.atoms(sp.Idx) or value.has(sp.Sum):
+            inlined[symbol] = value
+            continue
+        kept.append((symbol, value))
+    renames = {}
+    definitions = []
+    for symbol, value in kept:
+        target = _new_shared_temp(namer, [], arrays)
+        renames[symbol] = target
+        definitions.append(
+            {
+                "target": target,
+                "free": [],
+                "limits": [],
+                "body": value.xreplace(renames),
+            }
+        )
+    reduced = [expr.xreplace(inlined).xreplace(renames) for expr in reduced]
+    return reduced, definitions
