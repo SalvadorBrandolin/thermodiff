@@ -246,3 +246,16 @@ def test_streamlit_app_compiles_default_example():
     assert not app.error
     assert app.success
     assert app.code  # the Fortran module is rendered
+
+
+def test_build_result_default_preset_is_standard():
+    text = examples.get_example(examples.DEFAULT_EXAMPLE)
+    assert logic.DEFAULT_PRESET == "standard"
+    assert (
+        logic.build_result(text)["code"]
+        == logic.build_result(text, preset="standard")["code"]
+    )
+    assert (
+        logic.build_result(text)["code"]
+        != logic.build_result(text, preset="minimal")["code"]
+    )

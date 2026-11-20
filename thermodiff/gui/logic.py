@@ -5,6 +5,7 @@ these helpers.  Keeping it free of any Streamlit import means the helpers
 can be unit tested without installing the optional ``gui`` extra.
 """
 
+from thermodiff.codegen.options import Preset
 from thermodiff.model.emit import build_diff, emit_module
 from thermodiff.model.errors import ModelError
 from thermodiff.model.ir import build_ir
@@ -12,6 +13,8 @@ from thermodiff.model.parser import read_sections
 from thermodiff.model.preview import latex_preview
 
 __all__ = [
+    "DEFAULT_PRESET",
+    "PRESET_HELP",
     "assemble_model",
     "build_from_parts",
     "build_result",
@@ -19,6 +22,18 @@ __all__ = [
     "annotated_source",
     "error_context",
 ]
+
+#: Preset selected by default in the GUI.
+DEFAULT_PRESET = Preset.STANDARD.value
+
+#: One-line description of each code-generation preset.
+PRESET_HELP = {
+    Preset.MINIMAL.value: "Plain generator output, no extra optimisations.",
+    Preset.STANDARD.value: "Recommended: chain rule, symmetry and sharing.",
+    Preset.FASTEST.value: (
+        "Fastest generated code; slower generation, last-bit differences."
+    ),
+}
 
 
 def _declaration(row):
@@ -101,7 +116,12 @@ def assemble_model(
     return "\n".join(lines)
 
 
-def build_result(text, filename="<editor>", optional_derivatives=False):
+def build_result(
+    text,
+    filename="<editor>",
+    optional_derivatives=False,
+    preset=DEFAULT_PRESET,
+):
     """Compile ``.model`` text and collect everything the GUI shows.
 
     This never raises: compilation problems are reported in the ``error``
@@ -117,6 +137,8 @@ def build_result(text, filename="<editor>", optional_derivatives=False):
         Declare the outputs as Fortran ``optional`` arguments so the
         generated subroutine computes only the derivatives the caller
         passes.
+    preset : {"minimal", "standard", "fastest"}, optional
+        Code-generation preset, see :data:`PRESET_HELP`.
 
     Returns
     -------
@@ -133,6 +155,7 @@ def build_result(text, filename="<editor>", optional_derivatives=False):
             derivatives=derivatives,
             diff=diff,
             optional_derivatives=optional_derivatives,
+            preset=preset,
         )
         preview = latex_preview(diff, derivatives)
         warnings = list(ir.warnings)
@@ -165,6 +188,7 @@ def build_from_parts(
     expressions,
     function,
     optional_derivatives=False,
+    preset=DEFAULT_PRESET,
 ):
     """Assemble structured parts and compile them in one step.
 
@@ -173,6 +197,8 @@ def build_from_parts(
     model_name, uses, variables, parameters, expressions, function
         See :func:`assemble_model`.
     optional_derivatives : bool, optional
+        See :func:`build_result`.
+    preset : str, optional
         See :func:`build_result`.
 
     Returns
@@ -183,7 +209,9 @@ def build_from_parts(
     text = assemble_model(
         model_name, uses, variables, parameters, expressions, function
     )
-    return build_result(text, optional_derivatives=optional_derivatives)
+    return build_result(
+        text, optional_derivatives=optional_derivatives, preset=preset
+    )
 
 
 def parse_parts(text):
