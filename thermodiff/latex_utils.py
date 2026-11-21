@@ -101,7 +101,6 @@ class DerivativeReplacer:
         self, wrt_var: sp.Symbol, func_type: type
     ) -> Callable:
         """Create a predicate matching Derivative(expr, wrt) for a specific func type."""  # noqa: E501
-
         def match(e: sp.Expr) -> bool:  # noqa: BLK100
             return (
                 isinstance(e, Derivative)

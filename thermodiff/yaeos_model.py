@@ -80,6 +80,7 @@ _DECL = re.compile(
 
 
 def family_outputs(family):
+    """Return the output map (kernel name -> yaeos name) of ``family``."""
     if family == "ar":
         return AR_OUTPUTS
     if family == "ge":
@@ -137,8 +138,10 @@ def _wrap(line, indent, width=110):
 
 
 def _call(routine, args, outs, actual):
-    """Keyword call of a kernel; ``outs`` maps kernel output name -> actual
-    argument."""
+    """Keyword call of a kernel.
+
+    ``outs`` maps kernel output name -> actual argument.
+    """
     parts = []
     for name, _ in args:
         if name in outs:

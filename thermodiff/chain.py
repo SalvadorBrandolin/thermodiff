@@ -2425,7 +2425,7 @@ def chain_rule_derivatives(
     table_layout=False,
     scalar_chain=False,
 ):
-    """Derivatives of ``expression`` assembled by the chain rule.
+    """Assemble the derivatives of ``expression`` by the chain rule.
 
     Parameters
     ----------

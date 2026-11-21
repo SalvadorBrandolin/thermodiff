@@ -177,7 +177,8 @@ def _declare_output(
     """Return the declaration line for an output argument.
 
     With ``contiguous=True`` assumed-shape outputs carry the ``contiguous``
-    attribute (option ``contiguous_args``)."""
+    attribute (option ``contiguous_args``).
+    """
     if optional:
         attributes = "real(8), optional, intent(out)"
     else:
@@ -274,9 +275,12 @@ def _render_column_order(definition: TempDef) -> list[str]:
 
 
 def _render_column_sum(definition: TempDef) -> list[str]:
-    """Rank-2 sum in ``jki`` order: for every column ``q``, axpy updates over
-    the bound index; a symmetric (``mirror_sum``) sum fills ``p <= q`` and
-    mirrors the row."""
+    """Rank-2 sum in ``jki`` order.
+
+    For every column ``q``, axpy updates over the bound index; a
+    symmetric (``mirror_sum``) sum fills ``p <= q`` and mirrors the
+    row.
+    """
     target = definition.target
     p_, q_ = definition.free
     b, low, high = definition.limits[0]
@@ -668,8 +672,11 @@ def _(definition: FusedNest) -> list[str]:
 
 
 def _dependency_order(definitions: list[TempDef]) -> list[TempDef]:
-    """Stable topological order: a definition goes after every one it reads,
-    otherwise in its original position (lowest index first)."""
+    """Stable topological order of the definitions.
+
+    A definition goes after every one it reads, otherwise in its
+    original position (lowest index first).
+    """
     import heapq
 
     index = {_temp_name(d.target): k for k, d in enumerate(definitions)}

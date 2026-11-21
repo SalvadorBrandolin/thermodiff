@@ -325,11 +325,14 @@ def _is_expensive(expr: sp.Basic) -> bool:
 
 
 def _canonical_floats(expr: sp.Basic) -> sp.Basic:
-    """Round every floating-point constant to its double value, with one
-    representation per value.  Constants that SymPy carried with different
-    precisions (``5.96554738597035e-7`` and ``5.96554738597034e-7`` from the
-    same product of literals) become the same object, so the common
-    sub-expression passes can merge the expressions that contain them."""
+    """Round every floating-point constant to its double value.
+
+    Each value gets one representation.  Constants that SymPy carried
+    with different precisions (``5.96554738597035e-7`` and
+    ``5.96554738597034e-7`` from the same product of literals) become
+    the same object, so the common sub-expression passes can merge the
+    expressions that contain them.
+    """
     floats = expr.atoms(sp.Float)
     if not floats:
         return expr
@@ -337,9 +340,12 @@ def _canonical_floats(expr: sp.Basic) -> sp.Basic:
 
 
 def _calls_libm(expr: sp.Basic) -> bool:
-    """Whether ``expr`` calls a vectorisable libm routine (``exp``, ``log``,
-    ``sqrt``, a real power): a function other than ``Piecewise`` or a power
-    whose exponent is not an integer."""
+    """Whether ``expr`` calls a vectorisable libm routine.
+
+    The routines are ``exp``, ``log``, ``sqrt`` and a real power: a
+    function other than ``Piecewise`` or a power whose exponent is not
+    an integer.
+    """
     for sub in sp.preorder_traversal(expr):
         if isinstance(sub, sp.Function) and not isinstance(sub, sp.Piecewise):
             return True

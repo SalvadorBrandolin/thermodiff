@@ -187,8 +187,7 @@ def _merge_dummy_images(
     *,
     sym_rank3: bool,
 ) -> sp.Basic:
-    """Merge the terms of a summation that are images under a renaming of
-    its bound indices.
+    """Merge summation terms that are images under renaming of bound indices.
 
     In ``sum_{k,l,m} F`` with all indices over the same range, renaming the
     dummies never changes the value, so
