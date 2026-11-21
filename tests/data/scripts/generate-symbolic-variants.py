@@ -27,14 +27,24 @@ sys.path.insert(0, os.path.join(SESSION_ROOT, "thermodiff"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(SESSION_ROOT)))
 
 from benchmarks.td_bench import (  # noqa: E402
-    VARIANTS,
     WORKLOADS,
     generate_workload,
     variant_settings,
 )
 
 #: Order in which the workloads are generated (frozen file names).
-WORKLOAD_ORDER = ["w0", "w1", "w2", "w3", "w4", "w5a", "w5b", "w5c", "w5d", "w6"]
+WORKLOAD_ORDER = [
+    "w0",
+    "w1",
+    "w2",
+    "w3",
+    "w4",
+    "w5a",
+    "w5b",
+    "w5c",
+    "w5d",
+    "w6",
+]
 
 #: Manifest keys copied verbatim from the hook metadata (protocol 8.2 maps
 #: ``lines -> code_lines``, ``bytes -> code_bytes``,
@@ -144,9 +154,7 @@ def generate_all(model, out_root, variants, workloads, optional_derivatives):
         ],
         "optional_derivatives": bool(optional_derivatives),
         "operation_count_tool": "sympy.count_ops(visual=False)",
-        "files": [
-            _manifest_entry(metadata, out_root) for metadata in results
-        ],
+        "files": [_manifest_entry(metadata, out_root) for metadata in results],
     }
     aggregate_path = os.path.join(out_root, "manifest.json")
     with open(aggregate_path, "w", encoding="utf-8") as handle:

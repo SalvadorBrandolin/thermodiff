@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 import pytest
+
 import sympy as sp
 
 from thermodiff.codegen import cse, render, symmetry

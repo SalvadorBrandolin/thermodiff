@@ -5,13 +5,13 @@ V1 "none" = ``array_cse=False, share=False`` (D-007), V2 "partial" =
 must emit identical interfaces and equivalent bodies.
 """
 
+from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
+
 import pytest
 
 from thermodiff import DiffPlz, T, V, k, n, sum_components, to_fortran
 from thermodiff.model import compile_model
 from thermodiff.model.cli import main as cli_main
-
-from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
 
 V1 = {"array_cse": False, "share": False}
 V2 = {"array_cse": False, "share": True}

@@ -7,9 +7,9 @@ from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
-from thermodiff.thermovars import i, j, k, l, m
 from thermodiff.model.ir import build_ir
 from thermodiff.model.parser import read_sections
+from thermodiff.thermovars import i, j, k, l
 
 
 class TestReduceDeltaSums:

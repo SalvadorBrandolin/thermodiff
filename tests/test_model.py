@@ -6,12 +6,12 @@ import os
 import re
 import subprocess
 
+from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
+
 import pytest
 
 from thermodiff.model import ModelError, compile_model, compile_model_file
 from thermodiff.model.cli import main
-
-from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
 
 PR_MODEL = """
 model pr

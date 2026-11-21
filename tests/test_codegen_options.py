@@ -4,9 +4,10 @@ import dataclasses
 import inspect
 import warnings
 
+from benchmarks import td_bench as bench_hooks
+
 import pytest
 
-from benchmarks import td_bench as bench_hooks
 from thermodiff.codegen import (
     CodegenOptions,
     CseBackend,

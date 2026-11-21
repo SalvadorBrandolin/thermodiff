@@ -14,18 +14,21 @@ variants must agree with the reference variant ``a0`` (no optimisation).
 import os
 import warnings
 
+from benchmarks.td_bench import EXTENDED_VARIANTS
+
+from fortran_tools import DEBUG_FREE_FORM_FLAGS, GFORTRAN, compile_and_run
+
 import numpy as np
+
 import pytest
+
 import sympy as sp
 
-from benchmarks.td_bench import EXTENDED_VARIANTS
 from thermodiff.fortran import _canonical_symmetric, _fold_symmetric_sums
 from thermodiff.model import compile_model
 from thermodiff.model.errors import ModelError
 from thermodiff.model.ir import build_ir
 from thermodiff.model.parser import read_sections
-
-from fortran_tools import GFORTRAN, DEBUG_FREE_FORM_FLAGS, compile_and_run
 
 # Variants are applied with optional_derivatives=True, so validate() is
 # expected to report inert options; silence only that message here.
@@ -337,14 +340,16 @@ program drive
    use rkpr_mod
    implicit none
    integer :: nc, i, j, u, m, ncs(2)
-   real(8), allocatable :: tc(:), ac(:), b(:), k(:), d1(:), kij(:,:), lij(:,:), n(:)
+   real(8), allocatable :: tc(:), ac(:), b(:), k(:), d1(:), &
+      kij(:,:), lij(:,:), n(:)
    real(8), allocatable :: dn(:), dnv(:), dnt(:), dnn(:,:)
    real(8) :: v, t, f, fv, ft, fvv, ftt, ftv
    ncs = [3, 7]
    open(newunit=u, file='out.txt')
    do m = 1, 2
       nc = ncs(m)
-      allocate(tc(nc), ac(nc), b(nc), k(nc), d1(nc), kij(nc,nc), lij(nc,nc), n(nc))
+      allocate(tc(nc), ac(nc), b(nc), k(nc), d1(nc), &
+         kij(nc,nc), lij(nc,nc), n(nc))
       allocate(dn(nc), dnv(nc), dnt(nc), dnn(nc,nc))
       do i = 1, nc
          tc(i) = 190d0 + 37d0*i
@@ -482,7 +487,8 @@ def test_hoisted_slot_index_never_clashes_with_an_argument():
         .replace("    -ntot*g*T - D*f", "    -ntot*g*T - D*f + P*G")
         .replace(
             "    g       = R",
-            "    G       = sum_i sum_j n_i*n_j*log(Tc_i + ntot)\n    g       = R",
+            "    G       = sum_i sum_j n_i*n_j*log(Tc_i + ntot)\n"
+            "    g       = R",
         )
     )
     for settings in (dict(), dict(param_symmetry=True, hessian_symmetry=True)):
@@ -548,18 +554,21 @@ def test_chain_rule_nodes_of_pr76():
 
 
 def test_nested_nodes_extracts_inner_sums():
-    """sum_i n_i f_i(sum_k ...) gets the inner index-free sum as its own node."""
+    """sum_i n_i f_i(sum_k ...) gets the inner index-free sum as its own
+    node."""
     from thermodiff.chain import _nest_inner_nodes
 
     i, k = sp.Idx("i", (1, 3)), sp.Idx("k", (1, 3))
     n, d = sp.IndexedBase("n"), sp.IndexedBase("d")
     inner = sp.Sum(n[k] * d[k] ** 3, (k, 1, 3))
     outer = sp.Sum(n[i] * sp.log(1 - d[i] * inner), (i, 1, 3))
-    S0, S1 = sp.Dummy("S0"), sp.Dummy("S1")
-    nodes, inner_map = _nest_inner_nodes([(S0, outer), (S1, inner)])
+    outer_dummy, inner_dummy = sp.Dummy("S0"), sp.Dummy("S1")
+    nodes, inner_map = _nest_inner_nodes(
+        [(outer_dummy, outer), (inner_dummy, inner)]
+    )
     assert len(nodes) == 2  # the inner sum is the existing node S1
-    assert inner_map[S0] == {S1}
-    assert not dict(nodes)[S0].function.has(sp.Sum)
+    assert inner_map[outer_dummy] == {inner_dummy}
+    assert not dict(nodes)[outer_dummy].function.has(sp.Sum)
 
 
 def _double_loop_statements(code):
@@ -662,7 +671,7 @@ expressions
     D = sum_i sum_j n_i*n_j*sqrt(a_i*a_j)*(1 - kij_ij)
 function
     -ntot*log(1 - 0.1*ntot/V)*T - D/(V + S0) + (sum_m n_m*ia_m + sum_m n_m*cmp0_m + sum_m sum_l n_m*n_l*mat1_ml/ntot)*T
-""",
+""",  # noqa: E501 (model text is one expression per line)
     # index-free sums nested inside other sums (PC-SAFT hard chain, UNIQUAC)
     "nested": """
 model ns
@@ -680,7 +689,7 @@ expressions
     g_i = 1/(1 - z3) + d_i*z2/(1 - z3)^2
 function
     T*sum_i n_i*(m_i - 1)*log(g_i) + T*sum_i n_i*q_i*log(q_i*(sum_j n_j)/(sum_j n_j*q_j))
-""",
+""",  # noqa: E501 (model text is one expression per line)
 }
 _REVIEW_INITS = {
     "tv_factor": {
@@ -785,7 +794,8 @@ def test_measured_kernels_regenerate(model, path, variant, workload):
 
 
 def test_imported_symbol_differing_only_in_case_is_renamed():
-    """A parameter ``r`` and the imported constant ``R`` would clash in Fortran."""
+    """A parameter ``r`` and the imported constant ``R`` would clash in
+    Fortran."""
     text = """model cl
 target fortran
 use yaeos__constants, only: R
@@ -981,10 +991,10 @@ def test_contiguous_args_only_adds_the_attribute():
     )["source"]
     new = new.replace("_p23_", "_p22_")
     assert "contiguous" not in base
-    decls = [l for l in new.splitlines() if "contiguous" in l]
-    assert decls and all(("(:" in l) for l in decls)
-    assert any("intent(in)" in l for l in decls) and any(
-        "intent(out)" in l for l in decls
+    decls = [stmt for stmt in new.splitlines() if "contiguous" in stmt]
+    assert decls and all(("(:" in stmt) for stmt in decls)
+    assert any("intent(in)" in stmt for stmt in decls) and any(
+        "intent(out)" in stmt for stmt in decls
     )
     assert new.replace("real(8), contiguous, ", "real(8), ") == base
 
@@ -1001,7 +1011,7 @@ def _loops_with_nested_loop(source):
         if s == "end do":
             depth -= 1
             if depth == 0:
-                if sum(l.startswith("do ") for l in cur) > 1:
+                if sum(stmt.startswith("do ") for stmt in cur) > 1:
                     out.append("\n".join(cur))
                 cur = []
     return out
@@ -1037,9 +1047,9 @@ def test_keep_libm_tables_moves_exp_out_of_reductions():
     new = generate_workload(
         path, "g0", "p25", ".", optional_derivatives=False, write=False
     )["source"]
-    assert any(acc.match(l) for l in old.splitlines())
-    assert not any(acc.match(l) for l in new.splitlines())
-    assert any("= exp(" in l for l in new.splitlines())
+    assert any(acc.match(stmt) for stmt in old.splitlines())
+    assert not any(acc.match(stmt) for stmt in new.splitlines())
+    assert any("= exp(" in stmt for stmt in new.splitlines())
 
 
 @pytest.mark.slow
@@ -1057,14 +1067,14 @@ def test_table_layout_follows_parameter_subscripts():
     table = re.compile(r"mat0\(ia, ib\) = .*\bb\((\w+), (\w+)\)")
     assert table.search(old).groups() == ("ib", "ia")
     assert table.search(new).groups() == ("ia", "ib")
-    lines = [l.strip() for l in new.splitlines()]
-    k = next(i for i, l in enumerate(lines) if table.search(l))
+    lines = [stmt.strip() for stmt in new.splitlines()]
+    k = next(i for i, stmt in enumerate(lines) if table.search(stmt))
     assert lines[k - 2 : k] == ["do ib = 1, nc", "do ia = 1, nc"]
     # the O(N^3) products read the tables with the contiguous inner index
     acc = [
         i
-        for i, l in enumerate(lines)
-        if re.match(r"t\d+\(i, j\) = t\d+\(i, j\) \+ mat0\(i, k\)", l)
+        for i, stmt in enumerate(lines)
+        if re.match(r"t\d+\(i, j\) = t\d+\(i, j\) \+ mat0\(i, k\)", stmt)
     ]
     assert acc and all(
         lines[i - 1].startswith("do i = 1, ")
@@ -1084,9 +1094,9 @@ def test_table_layout_follows_parameter_subscripts():
 
 def _hessian_nest(source):
     """Lines of the loop nest that assembles ``dfdndn``."""
-    lines = [l.strip() for l in source.splitlines()]
+    lines = [stmt.strip() for stmt in source.splitlines()]
     end = next(
-        k for k, l in enumerate(lines) if l.startswith("dfdndn(i, j) = ")
+        k for k, stmt in enumerate(lines) if stmt.startswith("dfdndn(i, j) = ")
     )
     start = max(
         k
@@ -1116,7 +1126,8 @@ def test_lowrank_hess_assembles_columns_from_vectors():
         and "dfdndn(j, i) = res" not in new_nest
     )
     body = " ".join(new_nest)
-    # the separable terms q(i)*q(j), q(i)*r(j), r(i)*r(j) became two products r_l(i)*g_l(j)
+    # the separable terms q(i)*q(j), q(i)*r(j), r(i)*r(j) became two
+    # products r_l(i)*g_l(j)
     assert "q(i)*q(j)" not in body and "r(i)*r(j)" not in body
     assert "q(j)*t" in body and "r(j)*t" in body
     # NRTL has only pair terms: unchanged
@@ -1163,12 +1174,14 @@ def test_drop_pair_tables_inlines_the_dispersion_table():
         path, "w0", "p28", ".", optional_derivatives=False, write=False
     )["source"]
     assert "mat5(" in old and "mat" not in new.replace("_p28_", "")
-    lines = [l.strip() for l in new.splitlines()]
-    k = next(i for i, l in enumerate(lines) if l.startswith("do x = w + 1"))
+    lines = [stmt.strip() for stmt in new.splitlines()]
+    k = next(
+        i for i, stmt in enumerate(lines) if stmt.startswith("do x = w + 1")
+    )
     # inner accumulators, outer factor applied once per outer iteration
-    accs = [l.split(" = ")[0] for l in lines[k - 2 : k]]
+    accs = [stmt.split(" = ")[0] for stmt in lines[k - 2 : k]]
     assert lines[k - 2 : k] == [f"{a} = 0.0d0" for a in accs]
-    assert [l.split(" = ")[0] for l in lines[k + 1 : k + 3]] == accs
+    assert [stmt.split(" = ")[0] for stmt in lines[k + 1 : k + 3]] == accs
     assert "n(x)" not in lines[k + 1] and "m(x)" not in lines[k + 2]
     assert lines[k + 3] == "end do"
     assert lines[k + 4].startswith(f"t13 = t13 + {accs[0]}*")
@@ -1186,16 +1199,17 @@ def test_share_elementwise_reuses_logs_between_value_and_gradient():
     new = generate_workload(
         path, "g1", "p29", ".", optional_derivatives=False, write=False
     )["source"]
-    # three per-component logs, computed in the value reduction and again in the gradient
+    # three per-component logs, computed in the value reduction and again
+    # in the gradient
     assert old.count("log(") == 7 and new.count("log(") == 4
-    lines = [l.strip() for l in new.splitlines()]
-    maps = [l for l in lines if re.match(r"t\d+\(k\) = log\(", l)]
+    lines = [stmt.strip() for stmt in new.splitlines()]
+    maps = [stmt for stmt in lines if re.match(r"t\d+\(k\) = log\(", stmt)]
     assert len(maps) == 3
     vecs = [m.split("(")[0] for m in maps]
     grad = new[new.index("do i = 1, nc\n      res =") :]
     assert all(f"{v}(i)" in grad for v in vecs) and "log(" not in grad
     # x/y and (1/y)*x prefactors are merged: one scalar per ratio
-    assert sum(bool(re.match(r"t\d+ = 1d0/t7$", l)) for l in lines) == 1
+    assert sum(bool(re.match(r"t\d+ = 1d0/t7$", stmt)) for stmt in lines) == 1
     # NRTL has no such logs: unchanged
     nrtl = os.path.join(_ROOT_MODELS, "nrtl", "nrtl.model")
     a = generate_workload(
@@ -1249,9 +1263,14 @@ def test_scalar_chain_shrinks_the_scalar_block():
     assert new["source"] == again["source"]
     assert new["operation_count"] < 0.6 * old["operation_count"]
     # same loops as without the option: only the scalar block changes
-    loops = lambda src: [
-        l.strip() for l in src.splitlines() if l.strip().startswith("do ")
-    ]
+
+    def loops(src):
+        return [
+            stmt.strip()
+            for stmt in src.splitlines()
+            if stmt.strip().startswith("do ")
+        ]
+
     assert len(loops(new["source"])) == len(loops(old["source"]))
     # the value alone needs no derivative of F: unchanged
     a = generate_workload(
@@ -1347,12 +1366,15 @@ def test_split_affine_leaves_one_multiply_add_in_the_cmr_nest():
     new = generate_workload(
         path, "w0", "p31", ".", optional_derivatives=False, write=False
     )["source"]
-    inner = lambda src: [
-        l.strip() for l in src.splitlines() if "ijk(m, k, l)" in l
-    ]
-    assert all("(1" in l for l in inner(old))
+
+    def inner(src):
+        return [
+            stmt.strip() for stmt in src.splitlines() if "ijk(m, k, l)" in stmt
+        ]
+
+    assert all("(1" in stmt for stmt in inner(old))
     body = inner(new)
-    assert len(body) == 2 and not any("(1" in l for l in body)
+    assert len(body) == 2 and not any("(1" in stmt for stmt in body)
     # cmp0(m)*n(m) is read from a vector, and the readers subtract the table
     assert re.search(r"kijk\(m, k, l\)\*t\d+\(m\)", body[1])
     assert re.search(r"\(t\d+ - t\d+\(k, l\)\)", new)
@@ -1425,7 +1447,7 @@ def test_split_acc_uses_two_accumulators_in_the_cmr_nest():
         path, "w0", "p33", ".", optional_derivatives=False, write=False
     )["source"]
     assert "do m = 1, nc - 1, 2" not in old
-    lines = [l.strip() for l in new.splitlines()]
+    lines = [stmt.strip() for stmt in new.splitlines()]
     k = lines.index("do m = 1, nc - 1, 2")
     assert lines[k + 1 : k + 5] == [
         "t15 = t15 + lijk(m, k, l)*n(m)",

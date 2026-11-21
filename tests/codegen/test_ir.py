@@ -1,6 +1,7 @@
 """Tests for the typed definition records and their mapping protocol."""
 
 import pytest
+
 import sympy as sp
 
 from thermodiff.codegen.ir import (

@@ -3,10 +3,13 @@
 import sys
 import warnings
 
-import model_harness as harness
-import numpy as np
-import pytest
 from fortran_tools import GFORTRAN
+
+import model_harness as harness
+
+import numpy as np
+
+import pytest
 
 from thermodiff.codegen.options import (
     CodegenOptions,

@@ -2,9 +2,9 @@
 
 import os
 
-import pytest
-
 from benchmarks.td_bench import generate_workload, variant_settings
+
+import pytest
 
 #: Root of the test fixtures (``models/`` and ``scripts/``).
 SESSION_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")

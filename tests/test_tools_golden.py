@@ -11,9 +11,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from tools import check_golden, golden  # noqa: E402
 from tools.golden_cases import (  # noqa: E402
-    MODELS,
     Case,
     GoldenRoots,
+    MODELS,
     cases_for_tier,
 )
 

@@ -16,8 +16,6 @@ import subprocess
 import sys
 import warnings
 
-import pytest
-
 from benchmarks.td_bench import (
     VARIANTS,
     WORKLOADS,
@@ -26,11 +24,14 @@ from benchmarks.td_bench import (
 )
 
 from conftest import PR76_MODEL, SESSION_ROOT, VARIANT_ORDER, WORKLOAD_ORDER
+
 from fortran_tools import (
     GFORTRAN,
     OPTIMISED_FREE_FORM_FLAGS,
     compile_and_run,
 )
+
+import pytest
 
 R_GAS = 0.08314462618  # yaeos/src/constants.f90:7-8 [bar L /(mol K)]
 
@@ -456,7 +457,8 @@ class TestDriverScript:
             "w6",
         )
         # Generate every one of the 30 variant/workload combinations in two
-        # fresh processes, with distinct seeds. All output stays under tmp_path.
+        # fresh processes, with distinct seeds. All output stays under
+        # tmp_path.
         for variant in VARIANT_ORDER:
             for workload in workloads:
                 generated_bytes = []
@@ -535,8 +537,8 @@ def _pr76_ar(state):
     _mixing.f90:64-70, base.f90:79-106); no SymPy involved.
     """
     n = state["n"]
-    V = state["V"]
-    T = state["T"]
+    volume = state["V"]
+    temperature = state["T"]
     nc = len(n)
     ntot = sum(n)
     a = []
@@ -546,7 +548,9 @@ def _pr76_ar(state):
             0.37464 + 1.54226 * state["w"][p] - 0.26993 * state["w"][p] ** 2
         )
         ac = 0.45723553 * R_GAS**2 * state["Tc"][p] ** 2 / state["Pc"][p]
-        alpha = (1.0 + kappa * (1.0 - math.sqrt(T / state["Tc"][p]))) ** 2
+        alpha = (
+            1.0 + kappa * (1.0 - math.sqrt(temperature / state["Tc"][p]))
+        ) ** 2
         a.append(ac * alpha)
         b.append(0.07779607 * R_GAS * state["Tc"][p] / state["Pc"][p])
     bmix = 0.0
@@ -564,9 +568,11 @@ def _pr76_ar(state):
     bmix = bmix / ntot
     d1 = 1.0 + math.sqrt(2.0)
     d2 = 1.0 - math.sqrt(2.0)
-    fterm = math.log((V + d1 * bmix) / (V + d2 * bmix)) / (bmix * (d1 - d2))
-    g = R_GAS * math.log(1.0 - bmix / V)
-    return -ntot * g * T - dattract * fterm
+    fterm = math.log((volume + d1 * bmix) / (volume + d2 * bmix)) / (
+        bmix * (d1 - d2)
+    )
+    g = R_GAS * math.log(1.0 - bmix / volume)
+    return -ntot * g * temperature - dattract * fterm
 
 
 def _at(state, **changes):

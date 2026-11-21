@@ -9,10 +9,10 @@ including the key order of each settings dict.
 import json
 from pathlib import Path
 
-import pytest
-
 from benchmarks import td_bench
 from benchmarks.td_bench import hooks, registry
+
+import pytest
 
 SNAPSHOT_PATH = Path(__file__).parent / "data" / "variant_settings.json"
 SNAPSHOT = json.loads(SNAPSHOT_PATH.read_text())

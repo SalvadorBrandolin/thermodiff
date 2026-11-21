@@ -1,5 +1,7 @@
 """Tests for the Fortran code generation module."""
 
+from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
+
 import pytest
 
 import sympy as sp
@@ -19,22 +21,20 @@ from thermodiff import (
     to_fortran,
 )
 from thermodiff.fortran import (
-    _index_set,
     _Namer,
     _best_indexed_candidate,
     _best_scalar_candidate,
     _common_scalar_cse,
+    _derivative_function_atoms,
     _expand_sums,
     _free_indices,
+    _index_set,
     _indexed_cse,
     _preorder_entries,
     _scan_atoms,
     _sorted_sums,
     _sum_atoms,
-    _derivative_function_atoms,
 )
-
-from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
 
 
 def explicit_diff():

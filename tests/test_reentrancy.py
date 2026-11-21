@@ -12,10 +12,10 @@ from typing import Any, NamedTuple
 
 import pytest
 
+from test_chain_names import forced_names_model
+
 from thermodiff.codegen import pipeline
 from thermodiff.model.compile import compile_model
-
-from test_chain_names import forced_names_model
 
 ROOT = Path(__file__).resolve().parent.parent
 PR_TEXT = (ROOT / "examples" / "pr.model").read_text(encoding="utf-8")

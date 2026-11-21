@@ -2,12 +2,18 @@
 compile a .model with given settings, build an automatic gfortran driver that
 calls it with nc = 3 and 7, and compare all outputs with the a0 reference."""
 
-import sys, re, tempfile, pathlib, json, itertools, warnings
+import pathlib
+import re
+import tempfile
+import warnings
+
+from benchmarks.td_bench import EXTENDED_VARIANTS
+
+from fortran_tools import DEBUG_FREE_FORM_FLAGS, compile_and_run
 
 import numpy as np
+
 from thermodiff.model import compile_model
-from benchmarks.td_bench import EXTENDED_VARIANTS
-from fortran_tools import DEBUG_FREE_FORM_FLAGS, compile_and_run
 
 W6 = "dT,dV,dn,dT2,dV2,dndn,dTdV,dndT,dndV"
 
@@ -61,7 +67,7 @@ def driver(code, inits, present, ncs=(3, 7)):
             continue
         r = ranks[o]
         decl.append(
-            f"real(8)"
+            "real(8)"
             + (
                 f", allocatable :: y_{o}({','.join([':']*r)})"
                 if r
@@ -73,26 +79,33 @@ def driver(code, inits, present, ncs=(3, 7)):
         for a in ins:
             r = ranks[a]
             if a == "T":
-                body.append(f"x_T = {inits.get('T','320d0')}")
+                body.append(f"x_T = {inits.get('T', '320d0')}")
                 continue
             if a == "V":
                 continue
             if r == 1:
+                value = inits.get(a, "0.5d0+0.13d0*i+0.02d0*i*i")
                 body.append(
-                    f"allocate(x_{a}(nc)); do i=1,nc; x_{a}(i) = {inits.get(a, '0.5d0+0.13d0*i+0.02d0*i*i')}; end do"
+                    f"allocate(x_{a}(nc)); do i=1,nc; "
+                    f"x_{a}(i) = {value}; end do"
                 )
             elif r == 2:
+                value = inits.get(a, "0.01d0*(i+j)+0.003d0*i*j")
                 body.append(
-                    f"allocate(x_{a}(nc,nc)); do i=1,nc; do j=1,nc; x_{a}(i,j) = {inits.get(a, '0.01d0*(i+j)+0.003d0*i*j')}; end do; end do"
+                    f"allocate(x_{a}(nc,nc)); do i=1,nc; do j=1,nc; "
+                    f"x_{a}(i,j) = {value}; end do; end do"
                 )
             elif r == 3:
+                value = inits.get(a, "0.002d0*(i+j+k)+0.0004d0*i*j*k")
                 body.append(
-                    f"allocate(x_{a}(nc,nc,nc)); do i=1,nc; do j=1,nc; do k=1,nc; x_{a}(i,j,k) = {inits.get(a, '0.002d0*(i+j+k)+0.0004d0*i*j*k')}; end do; end do; end do"
+                    f"allocate(x_{a}(nc,nc,nc)); do i=1,nc; do j=1,nc; "
+                    f"do k=1,nc; x_{a}(i,j,k) = {value}; end do; end do; "
+                    "end do"
                 )
             else:
-                body.append(f"x_{a} = {inits.get(a,'0.7d0')}")
+                body.append(f"x_{a} = {inits.get(a, '0.7d0')}")
         if "V" in ins:
-            body.append(f"x_V = {inits.get('V','0.9d0*sum(x_n)')}")
+            body.append(f"x_V = {inits.get('V', '0.9d0*sum(x_n)')}")
         for o in OUTS:
             if o not in args:
                 continue
@@ -119,9 +132,13 @@ def driver(code, inits, present, ncs=(3, 7)):
             if o in args and ranks[o]:
                 body.append(f"deallocate(y_{o})")
     return (
-        "module yaeos__constants\n implicit none\n real(8), parameter :: R = 0.0831446261815324d0\nend module\n"
+        "module yaeos__constants\n"
+        " implicit none\n"
+        " real(8), parameter :: R = 0.0831446261815324d0\n"
+        "end module\n"
         + code
-        + f"\nprogram drive\n use {mod}\n implicit none\n integer :: nc,i,j,k,u\n"
+        + f"\nprogram drive\n use {mod}\n implicit none\n"
+        " integer :: nc,i,j,k,u\n"
         + "\n".join(decl)
         + "\nopen(newunit=u,file='out.txt')\n"
         + "\n".join(body)
@@ -185,9 +202,9 @@ def compare(text, inits=None, variants=None, present=OUTS, label=""):
             val, code = run(text, s, inits, present)
             rel = np.abs(val - ref) / np.maximum(np.abs(ref), 1e-8)
             res[k] = rel.max()
-            uses_chain = "cmp" in code or "mat" in code
             print(
-                f"{label} {k:18s} relerr {rel.max():.2e} argmax {rel.argmax()} n={len(ref)}"
+                f"{label} {k:18s} relerr {rel.max():.2e} "
+                f"argmax {rel.argmax()} n={len(ref)}"
             )
         except Exception as e:
             print(f"{label} {k:18s} ERROR {str(e)[:600]}")

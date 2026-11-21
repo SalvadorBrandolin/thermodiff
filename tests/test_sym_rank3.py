@@ -3,6 +3,7 @@
 import hashlib
 
 import pytest
+
 import sympy as sp
 
 from thermodiff.codegen import pipeline

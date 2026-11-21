@@ -1,4 +1,5 @@
-"""Tests of thermodiff.yaeos_model (yaeos ArModel/GeModel wrappers of the kernels).
+"""Tests of thermodiff.yaeos_model (yaeos ArModel/GeModel wrappers of the
+kernels).
 
 Pure Python: the emitted Fortran source is checked textually for a small case
 (type name, parameter components and ranks, one ``case`` per workload mask with
@@ -104,7 +105,8 @@ def test_ar_wrapper_source():
     assert "v0 = sum(n*self%a)/sum(n)" in src
     assert "real(pr), optional, intent(out) :: Arn2(size(n), size(n))" in src
     flat = src.replace("&\n", "")
-    # one case per workload: mask = sum of the output bits (Ar 1, ArV 2, Arn 64, all 1023)
+    # one case per workload: mask = sum of the output bits
+    # (Ar 1, ArV 2, Arn 64, all 1023)
     cases = dict(re.findall(r"case \((\d+)\)  ! (\w+):", flat))
     assert cases == {"1": "W0", "3": "W1", "65": "W3", "1023": "W6"}
     w1 = re.search(r"case \(3\).*?\n\s*(call [^\n]*)", flat).group(1)
@@ -158,7 +160,8 @@ def test_ge_wrapper_and_shared_kernel():
     assert "use td_toy_k2, only: toy_g\n" in src
     flat = src.replace("&\n", "")
     assert re.search(
-        r"case \(1\)  ! G0: Ge\s+call toy_g\(nc=size\(n\), T=t, q=self%q, n=n, f=Ge\)",
+        r"case \(1\)  ! G0: Ge\s+"
+        r"call toy_g\(nc=size\(n\), T=t, q=self%q, n=n, f=Ge\)",
         flat,
     )
     assert "case (63)  ! G4" in flat

@@ -4,15 +4,17 @@ import hashlib
 import warnings
 from pathlib import Path
 
+from benchmarks import td_bench as bench_hooks
+
 import pytest
+
 import sympy as sp
 
-from benchmarks import td_bench as bench_hooks
 from thermodiff import chain
+from thermodiff.fortran import to_fortran
 from thermodiff.model.emit import build_diff
 from thermodiff.model.ir import build_ir
 from thermodiff.model.parser import read_sections
-from thermodiff.fortran import to_fortran
 
 ROOT = Path(__file__).resolve().parent.parent
 PR_MODEL = ROOT / "examples" / "pr.model"

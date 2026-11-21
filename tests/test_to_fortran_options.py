@@ -4,9 +4,10 @@ import inspect
 import warnings
 from pathlib import Path
 
+from benchmarks import td_bench as bench_hooks
+
 import pytest
 
-from benchmarks import td_bench as bench_hooks
 from thermodiff.codegen import CodegenOptions
 from thermodiff.fortran import to_fortran
 from thermodiff.model.emit import build_diff

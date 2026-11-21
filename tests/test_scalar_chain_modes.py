@@ -14,9 +14,10 @@ import hashlib
 import warnings
 from pathlib import Path
 
+from benchmarks import td_bench as bench_hooks
+
 import pytest
 
-from benchmarks import td_bench as bench_hooks
 from thermodiff import fortran
 from thermodiff.codegen import pipeline
 from thermodiff.fortran import to_fortran
