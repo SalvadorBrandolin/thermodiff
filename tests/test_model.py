@@ -181,7 +181,6 @@ class TestParsing:
         # derivative, so it must live in a rank-2 temporary computed once
         # instead of being repeated inside each sum.
         assert len(re.findall(r"sqrt\(T\*\*4\*ac\(\w+\)\*ac\(", code)) == 1
-        assert "sqrt(T**4*ac" in code
         assert re.search(r"real\(8\) :: \w+\(nc, nc\)", code)
 
     def test_array_cse_can_be_disabled(self):
