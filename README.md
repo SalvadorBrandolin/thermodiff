@@ -1,6 +1,6 @@
 # Thermodiff
 
-![logo](https://github.com/SalvadorBrandolin/thermodiff/blob/4005fa272baec3df8315654a0357acc8e14ef5b6/media/logo.jpg?raw=true)
+![logo](https://github.com/ipqa-research/thermodiff/blob/main/media/logo.jpg?raw=true)
 
 [![DOI](https://zenodo.org/badge/1006736196.svg)](https://doi.org/10.5281/zenodo.23065622)
 
@@ -19,7 +19,7 @@ pip install thermodiff
 ```
 
 Releases are published from the upstream repository
-[SalvadorBrandolin/thermodiff](https://github.com/SalvadorBrandolin/thermodiff).
+[ipqa-research/thermodiff](https://github.com/ipqa-research/thermodiff).
 
 To install the optional graphical front-end (see below):
 
@@ -46,10 +46,10 @@ thermodiff-gui
 ```
 
 ## Tutorial
-On the [tutorial](https://salvadorbrandolin.github.io/thermodiff/) you can
+On the [tutorial](https://ipqa-research.github.io/thermodiff/) you can
 check all the basics functionalities of this tool and an example of use.
 
-See the [GUI documentation](https://salvadorbrandolin.github.io/thermodiff/gui.html).
+See the [GUI documentation](https://ipqa-research.github.io/thermodiff/gui.html).
 
 ## Model files
 
@@ -60,7 +60,7 @@ compiled into a Fortran module with the function and all its derivatives:
 thermodiff-model model.model -o model.f90
 ```
 
-See the [model files](https://salvadorbrandolin.github.io/thermodiff/model.html)
+See the [model files](https://ipqa-research.github.io/thermodiff/model.html)
 documentation and the corresponding tutorial.
 
 

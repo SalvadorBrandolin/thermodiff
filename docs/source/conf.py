@@ -92,7 +92,7 @@ nbsphinx_prolog = r"""
 
    .. raw:: html
 
-      <a href="https://colab.research.google.com/github/SalvadorBrandolin/thermodiff/blob/main/{{ docname }}"
+      <a href="https://colab.research.google.com/github/ipqa-research/thermodiff/blob/main/{{ docname }}"
          target="_blank">
         <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
       </a>
