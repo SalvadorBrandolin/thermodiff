@@ -187,6 +187,13 @@ def main():
 
         st.divider()
         st.header("Output options")
+        preset = st.selectbox(
+            "Code generation preset",
+            list(logic.PRESET_HELP),
+            index=list(logic.PRESET_HELP).index(logic.DEFAULT_PRESET),
+            format_func=lambda name: f"{name}: {logic.PRESET_HELP[name]}",
+            help="Set of code-generation options used to emit the Fortran.",
+        )
         optional_derivatives = st.checkbox(
             "Compute derivatives on demand",
             value=True,
@@ -252,7 +259,9 @@ def main():
     )
 
     with st.spinner("Differentiating the model..."):
-        result = _compile(text, optional_derivatives=optional_derivatives)
+        result = _compile(
+            text, optional_derivatives=optional_derivatives, preset=preset
+        )
 
     _render_status(result)
 

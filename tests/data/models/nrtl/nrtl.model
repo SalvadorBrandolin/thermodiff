@@ -1,0 +1,23 @@
+# NRTL excess Gibbs energy, equivalent to yaeos NRTL (models/excess_gibbs/nrtl.f90,
+# base.f90 nrtl_hv_ge with b_i = 1 and nrtl_hv_tdep_linear):
+#     G^E = R T sum_i n_i (sum_j n_j tau_ji G_ji) / (sum_j n_j G_ji)
+#     tau_ij = a_ij + b_ij / T,   G_ij = exp(-c_ij tau_ij)
+model nrtl
+target fortran
+use yaeos__constants, only: R
+
+variables
+    n   nc
+    T
+
+parameters
+    a   nc nc
+    b   nc nc
+    c   nc nc
+
+expressions
+    tau_ij = a_ij + b_ij/T
+    G_ij   = exp(-c_ij*tau_ij)
+
+function
+    R*T*sum_i n_i*(sum_j n_j*tau_ji*G_ji)/(sum_j n_j*G_ji)

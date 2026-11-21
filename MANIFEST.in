@@ -1,4 +1,4 @@
-include LICENCE
+include LICENSE
 include README.md
 include pyproject.toml
 
@@ -16,8 +16,10 @@ exclude tox.ini *.ipynb
 exclude requirements-dev.txt
 exclude requirements.txt
 exclude AGENTS.md
+exclude .git-blame-ignore-revs
 
 recursive-exclude dist *
 recursive-exclude tests *
 recursive-exclude docs *
 recursive-exclude media *
+recursive-exclude tools *

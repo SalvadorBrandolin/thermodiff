@@ -57,6 +57,8 @@ class Declaration:
     letters: tuple
     dims: tuple
     line: int
+    symmetric: bool = False
+    positive: bool = False
 
 
 @dataclass
@@ -73,6 +75,7 @@ class ModelIR:
     function: sp.Expr | None = None
     indexes: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
+    symmetric: list = field(default_factory=list)
 
 
 def split_decl_name(token, dims):
@@ -122,6 +125,24 @@ def _imported_names(use_text):
         rest = rest[1:]
     names = [name.strip() for name in rest.split(",")]
     return [name for name in names if name]
+
+
+def _rename_use(use_text, renamed):
+    """Rewrite ``mod, only: R`` as ``mod, only: R_use => R``."""
+    lowered = use_text.lower()
+    marker = lowered.find("only")
+    if marker < 0:
+        return use_text
+    head = use_text[: marker + len("only")]
+    rest = use_text[marker + len("only") :].lstrip()
+    if rest.startswith(":"):
+        rest = rest[1:]
+    names = [name.strip() for name in rest.split(",") if name.strip()]
+    items = [
+        f"{renamed[name]} => {name}" if name in renamed else name
+        for name in names
+    ]
+    return head + ": " + ", ".join(items)
 
 
 class _Resolver:
@@ -196,22 +217,50 @@ def _build_declaration(raw, resolver, dimensions, filename, kind):
             raw.line,
             filename,
         )
-    declaration = Declaration(base, rank, letters, dims, raw.line)
+    symmetric = "symmetric" in getattr(raw, "attributes", ())
+    if symmetric:
+        if kind != "parameters":
+            raise ModelError(
+                f"only parameters can be declared symmetric ({base!r})",
+                raw.line,
+                filename,
+            )
+        if rank < 2 or any(dim != dims[0] for dim in dims):
+            raise ModelError(
+                f"symmetric parameter {base!r} must be an array of rank >= 2 "
+                "with equal dimensions (fully symmetric in its subscripts)",
+                raw.line,
+                filename,
+            )
+    positive = "positive" in getattr(raw, "attributes", ())
+    if positive and kind != "parameters":
+        raise ModelError(
+            f"only parameters can be declared positive ({base!r})",
+            raw.line,
+            filename,
+        )
+    declaration = Declaration(
+        base, rank, letters, dims, raw.line, symmetric, positive
+    )
     if kind == "variables":
         _register_variable(declaration, resolver, filename)
     return declaration
 
 
-def _indexed_base(name, rank, dims, resolver):
+def _indexed_base(name, rank, dims, resolver, positive=False):
     """Create an :class:`sympy.IndexedBase` with a well defined shape.
 
     A shape is required so that the Fortran printer can inspect bare
-    indexed objects without raising.
+    indexed objects without raising.  A parameter declared ``positive``
+    carries that assumption, so that e.g. ``sqrt(e_i*e_j)`` becomes
+    ``sqrt(e_i)*sqrt(e_j)``.
     """
     if dims:
         shape = tuple(resolver.scalars[dim] for dim in dims)
     else:
         shape = (resolver.default_upper,) * rank
+    if positive:
+        return sp.IndexedBase(name, shape=shape, positive=True)
     return sp.IndexedBase(name, shape=shape)
 
 
@@ -263,38 +312,121 @@ def _register_parameter(declaration, resolver, filename):
             filename,
         )
     if declaration.rank == 0:
-        resolver.add_scalar(base, sp.Symbol(base))
+        if declaration.positive:
+            resolver.add_scalar(base, sp.Symbol(base, positive=True))
+        else:
+            resolver.add_scalar(base, sp.Symbol(base))
     else:
         resolver.add_base(
             base,
             declaration.rank,
-            _indexed_base(base, declaration.rank, declaration.dims, resolver),
+            _indexed_base(
+                base,
+                declaration.rank,
+                declaration.dims,
+                resolver,
+                positive=declaration.positive,
+            ),
         )
 
 
+def _bound_indices(expr):
+    """Return the summation indices bound anywhere inside ``expr``."""
+    return {limit[0] for total in expr.atoms(sp.Sum) for limit in total.limits}
+
+
+def _fresh_index(resolver, avoid):
+    """Return a new internal index whose letter is not used anywhere."""
+    for letter in "abcdefghopqrstuvwxyz" + "klmn":
+        if letter in resolver.pool:
+            continue
+        index = resolver.index(letter)
+        if index not in avoid:
+            return index
+    raise ModelError("ran out of index letters while renaming summations")
+
+
+def _alpha_rename(definition, avoid, resolver):
+    """Rename the bound indices of ``definition`` that clash with ``avoid``.
+
+    This is the usual capture-avoiding substitution: a summation index of
+    an inlined definition must not coincide with an index that is free at
+    the insertion point (the subscripts of the occurrence) nor with an
+    index bound by an enclosing summation.
+    """
+    clashes = sorted(_bound_indices(definition) & set(avoid), key=str)
+    if not clashes:
+        return definition
+    mapping = {}
+    taken = set(avoid) | definition.atoms(sp.Idx)
+    for index in clashes:
+        fresh = _fresh_index(resolver, taken)
+        taken.add(fresh)
+        mapping[index] = fresh
+    return definition.xreplace(mapping)
+
+
+def _substitute(expr, defs, resolver, enclosing):
+    """One capture-avoiding substitution pass over ``expr``.
+
+    ``enclosing`` is the set of indices bound by the summations that
+    contain ``expr``.  Returns ``(new_expr, changed)``.
+    """
+    if isinstance(expr, sp.Symbol):
+        entry = defs.get(str(expr))
+        if entry is not None and entry[0] == 0:
+            return _alpha_rename(entry[2], enclosing, resolver), True
+        return expr, False
+    if isinstance(expr, sp.Indexed):
+        entry = defs.get(str(expr.base))
+        if entry is not None and len(expr.indices) == entry[0]:
+            rank, letters, definition = entry
+            # Rename the definition's own bound indices away from the
+            # occurrence subscripts *before* mapping its free indices.
+            avoid = set(enclosing) | set(expr.indices)
+            definition = _alpha_rename(definition, avoid, resolver)
+            mapping = {
+                resolver.index(letters[k]): expr.indices[k]
+                for k in range(rank)
+            }
+            return definition.xreplace(mapping), True
+        return expr, False
+    if not expr.args:
+        return expr, False
+    if isinstance(expr, sp.Sum):
+        inner = set(enclosing) | {limit[0] for limit in expr.limits}
+        body, changed = _substitute(expr.function, defs, resolver, inner)
+        if not changed:
+            return expr, False
+        return sp.Sum(body, *expr.limits), True
+    changed = False
+    args = []
+    for arg in expr.args:
+        new, flag = _substitute(arg, defs, resolver, enclosing)
+        changed = changed or flag
+        args.append(new)
+    if not changed:
+        return expr, False
+    return expr.func(*args), True
+
+
 def _inline(expr, defs, resolver):
-    """Substitute every known intermediate definition into ``expr``."""
+    """Substitute every known intermediate definition into ``expr``.
+
+    The substitution is capture avoiding: bound summation indices of an
+    inlined definition are renamed (alpha conversion) whenever they clash
+    with an index bound by an enclosing summation or with the subscripts
+    of the occurrence.  Without the renaming, ``ntot = sum_i n_i`` inlined
+    into ``sum_i sum_j n_i*n_j/ntot`` would silently bind ``i`` twice.
+    """
     for _ in range(len(defs) + 1):
-        replacements = {}
-        for base, (rank, letters, definition) in defs.items():
-            if rank == 0:
-                symbol = sp.Symbol(base)
-                if expr.has(symbol):
-                    replacements[symbol] = definition
-            else:
-                for occurrence in expr.atoms(sp.Indexed):
-                    if (
-                        str(occurrence.base) == base
-                        and len(occurrence.indices) == rank
-                    ):
-                        mapping = {
-                            resolver.index(letters[k]): occurrence.indices[k]
-                            for k in range(rank)
-                        }
-                        replacements[occurrence] = definition.xreplace(mapping)
-        if not replacements:
+        # Indices already present anywhere in the host expression (free
+        # or bound) are avoided too, so that an inlined summation can never
+        # shadow a free index of its surroundings.
+        context = frozenset(expr.atoms(sp.Idx))
+        expr, changed = _substitute(expr, defs, resolver, context)
+        if not changed:
             break
-        expr = expr.xreplace(replacements)
     return expr
 
 
@@ -433,9 +565,31 @@ def build_ir(raw, filename=None):
     model_name = (raw.model or "model").strip()
     warnings = _unused_warnings(function, parameters)
 
+    # Fortran is case insensitive: an imported symbol (``R``) and a model
+    # name that differs only in case (a parameter ``r``) would clash.  The
+    # imported symbol is renamed through the use statement (``R_use => R``).
+    uses = [use_text for use_text, _ in raw.uses]
+    local = {d.base.lower() for d in list(variables) + list(parameters)}
+    local |= {name.lower() for name in dimensions}
+    taken = local | {name.lower() for name in imported}
+    renamed = {}
+    for name in imported:
+        if name.lower() in local:
+            alias = f"{name}_use"
+            while alias.lower() in taken:
+                alias += "_"
+            taken.add(alias.lower())
+            renamed[name] = alias
+    if renamed:
+        function = function.xreplace(
+            {sp.Symbol(old): sp.Symbol(new) for old, new in renamed.items()}
+        )
+        uses = [_rename_use(text, renamed) for text in uses]
+        imported = [renamed.get(name, name) for name in imported]
+
     return ModelIR(
         model_name=model_name,
-        uses=[use_text for use_text, _ in raw.uses],
+        uses=uses,
         imported=imported,
         dimensions=dimensions,
         variables=variables,
@@ -444,6 +598,7 @@ def build_ir(raw, filename=None):
         function=function,
         indexes=list(resolver.pool.values()),
         warnings=warnings,
+        symmetric=[d.base for d in parameters if d.symmetric],
     )
 
 

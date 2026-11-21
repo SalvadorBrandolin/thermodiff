@@ -9,13 +9,16 @@ version = "1.6.0"
 authors = [{name = "Brandolín, Salvador Eduardo", email = "salvadorebrandolin@unc.edu.ar"}]
 license = {text = "MIT License"}
 readme = "README.md"
-description = "project description"
+description = "A lightweight Python package designed to simplify the symbolic differentiation and manipulation of thermodynamic expressions using SymPy."
 keywords = ["Thermodynamics", "Analytical differentiation", "Derivatives", "Equations of state"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
 ]
 
@@ -30,19 +33,21 @@ thermodiff-model = "thermodiff.model.cli:main"
 thermodiff-gui = "thermodiff.gui.cli:main"
 
 [project.optional-dependencies]
-gui = ["streamlit>=1.30"]
+gui = ["streamlit>=1.30", "pandas"]
 
-[tool.setuptools]
-packages = ["thermodiff", "thermodiff.core", "thermodiff.model", "thermodiff.gui"]
+[tool.setuptools.packages.find]
+include = ["thermodiff*"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 markers = [
-    "marker_name: marker_description",
+    "thesis: tests that need models or data outside the repository (deselected with -m 'not thesis')",
+    "slow: long-running tests (Fortran compile-and-run or large generations); run in G2, deselected in G1-full with -m 'not slow'",
 ]
 
 [tool.black]
 line-length = 79
-target-version = ["py312"]
+target-version = ["py310", "py311", "py312", "py313"]
 
 # The Streamlit application is a declarative UI script that can only run
 # with the optional ``gui`` extra, so it is not part of the standard test
@@ -52,3 +57,14 @@ omit = [
     "thermodiff/gui/app.py",
 ]
 
+
+[tool.mypy]
+python_version = "3.10"
+files = ["thermodiff/codegen"]
+strict = true
+follow_imports = "silent"
+untyped_calls_exclude = ["thermodiff.derivatives"]
+
+[[tool.mypy.overrides]]
+module = ["sympy", "sympy.*"]
+ignore_missing_imports = true

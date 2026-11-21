@@ -11,8 +11,10 @@ def compile_model(
     text,
     filename=None,
     derivatives=None,
-    optional_derivatives=False,
-    array_cse=True,
+    *,
+    preset=None,
+    options=None,
+    **overrides,
 ):
     """Compile the contents of a ``.model`` file into a Fortran module.
 
@@ -29,13 +31,20 @@ def compile_model(
         :class:`~thermodiff.diffplz.DiffPlz` attribute names are
         accepted.  By default every derivative applicable to the declared
         variables is emitted.
-    optional_derivatives : bool, optional
-        When ``True``, every output is declared as a Fortran ``optional``
-        argument and computed only when the caller passes it.
-    array_cse : bool, optional
-        When ``True`` (the default), index-dependent sub-expressions
-        shared by several derivatives are materialised into array
-        temporaries computed a single time.
+    preset : {"minimal", "standard", "fastest"}, optional
+        Named set of code-generation options.  The default ``"standard"``
+        is the recommended set; ``"minimal"`` reproduces the plain
+        generator output of earlier versions; ``"fastest"`` gives the
+        fastest generated code, with slower generation and last-bit
+        rounding differences.
+    options : CodegenOptions, optional
+        Explicit options used instead of a preset; passing both raises
+        ``ValueError``.
+    **overrides
+        Individual options replacing those of the preset, for example
+        ``optional_derivatives=True`` (declare every output as a Fortran
+        ``optional`` argument), ``array_cse=False`` or ``share=False``.
+        See :func:`thermodiff.model.emit.emit_module`.
 
     Returns
     -------
@@ -47,13 +56,19 @@ def compile_model(
     return emit_module(
         ir,
         derivatives=derivatives,
-        optional_derivatives=optional_derivatives,
-        array_cse=array_cse,
+        preset=preset,
+        options=options,
+        **overrides,
     )
 
 
 def compile_model_file(
-    path, derivatives=None, optional_derivatives=False, array_cse=True
+    path,
+    derivatives=None,
+    *,
+    preset=None,
+    options=None,
+    **overrides,
 ):
     """Compile a ``.model`` file into a Fortran module.
 
@@ -63,11 +78,14 @@ def compile_model_file(
         Path to the ``.model`` file.
     derivatives : str or list of str, optional
         Derivatives to emit.  See :func:`compile_model`.
-    optional_derivatives : bool, optional
-        Declare the outputs as Fortran ``optional`` arguments.  See
-        :func:`compile_model`.
-    array_cse : bool, optional
-        Materialise shared index-dependent sub-expressions.  See
+    preset : {"minimal", "standard", "fastest"}, optional
+        Named set of code-generation options (default ``"standard"``).
+        See :func:`compile_model`.
+    options : CodegenOptions, optional
+        Explicit options used instead of a preset; passing both raises
+        ``ValueError``.
+    **overrides
+        Individual options replacing those of the preset.  See
         :func:`compile_model`.
 
     Returns
@@ -81,6 +99,7 @@ def compile_model_file(
         text,
         filename=path,
         derivatives=derivatives,
-        optional_derivatives=optional_derivatives,
-        array_cse=array_cse,
+        preset=preset,
+        options=options,
+        **overrides,
     )

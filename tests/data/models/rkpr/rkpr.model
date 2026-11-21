@@ -1,0 +1,39 @@
+# RKPR (Cismondi & Mollerup 2005) residual Helmholtz energy Ar(n, V, T),
+# equivalent to yaeos RKPR (implementations.f90:278-372) with QMR mixing
+# and the linear delta1 mixing rule (mixing_rules/base.f90 d1mix_rkpr):
+#     D1 = sum_i n_i delta1_i / ntot,   D2 = (1 - D1)/(1 + D1)
+#     alpha_i = (3/(2 + T/Tc_i))^k_i
+# ac, b, k and delta1 are per-component inputs (yaeos computes them at
+# set-up from Tc, Pc, w, Zc by solving a cubic, which is outside Ar).
+
+model rkpr
+target fortran
+use yaeos__constants, only: R
+
+variables
+    n   nc
+    V
+    T
+
+parameters
+    Tc      nc
+    ac      nc
+    b       nc
+    k       nc
+    delta1  nc
+    kij     nc nc symmetric
+    lij     nc nc symmetric
+
+expressions
+    alpha_i = (3.0/(2.0 + T/Tc_i))^k_i
+    a_i     = ac_i*alpha_i
+    ntot    = sum_i n_i
+    bmix    = sum_i sum_j n_i*n_j*((b_i + b_j)/2.0)*(1.0 - lij_ij)/ntot
+    D       = sum_i sum_j n_i*n_j*sqrt(a_i*a_j)*(1.0 - kij_ij)
+    dm1     = sum_i n_i*delta1_i/ntot
+    dm2     = (1.0 - dm1)/(1.0 + dm1)
+    f       = log((V + dm1*bmix)/(V + dm2*bmix))/(bmix*(dm1 - dm2))
+    g       = R*log(1.0 - bmix/V)
+
+function
+    -ntot*g*T - D*f

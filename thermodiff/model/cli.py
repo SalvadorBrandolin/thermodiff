@@ -6,6 +6,7 @@ Usable as ``thermodiff-model`` or ``python -m thermodiff.model``.
 import argparse
 import sys
 
+from thermodiff.codegen.options import Preset
 from thermodiff.model.emit import emit_module
 from thermodiff.model.errors import ModelError
 from thermodiff.model.ir import build_ir
@@ -42,8 +43,23 @@ def _build_parser():
         ),
     )
     parser.add_argument(
+        "--preset",
+        choices=[preset.value for preset in Preset],
+        default=Preset.STANDARD.value,
+        help=(
+            "named set of code-generation options (default: %(default)s). "
+            "minimal: the plain generator.  standard: the recommended "
+            "set.  fastest: the fastest generated code, with slower "
+            "generation and last-bit rounding differences; best with one "
+            "kernel per derivative set.  The flags below override the "
+            "preset only when given."
+        ),
+    )
+    parser.add_argument(
         "--optional-derivatives",
-        action="store_true",
+        action="store_const",
+        const=True,
+        default=None,
         help=(
             "declare every output as a Fortran 'optional' argument and "
             "compute it only when the caller passes it.  The generated "
@@ -54,11 +70,80 @@ def _build_parser():
     parser.add_argument(
         "--no-array-cse",
         dest="array_cse",
-        action="store_false",
+        action="store_const",
+        const=False,
+        default=None,
         help=(
             "do not materialise index-dependent sub-expressions shared by "
             "several derivatives; keep the fully inlined expressions."
         ),
+    )
+    parser.add_argument(
+        "--no-share",
+        dest="share",
+        action="store_const",
+        const=False,
+        default=None,
+        help=(
+            "do not compute shared summations and common scalar "
+            "sub-expressions a single time; every output is emitted from "
+            "its own fully inlined expressions (benchmark variant "
+            "'V1 none' together with --no-array-cse)."
+        ),
+    )
+    parser.add_argument(
+        "--no-share-sums",
+        dest="share_sums",
+        action="store_const",
+        const=False,
+        default=None,
+        help="disable only the shared-summation pass (ablation).",
+    )
+    parser.add_argument(
+        "--no-scalar-cse",
+        dest="scalar_cse",
+        action="store_const",
+        const=False,
+        default=None,
+        help="disable only the scalar common sub-expression pass (ablation).",
+    )
+    parser.add_argument(
+        "--param-symmetry",
+        action="store_const",
+        const=True,
+        default=None,
+        help=(
+            "exploit the parameters declared 'symmetric': canonicalise "
+            "their subscripts and fold symmetric double sums into "
+            "triangular loops."
+        ),
+    )
+    parser.add_argument(
+        "--hessian-symmetry",
+        action="store_const",
+        const=True,
+        default=None,
+        help="compute only the upper triangle of dfdndn and mirror it.",
+    )
+    parser.add_argument(
+        "--sum-alpha",
+        action="store_const",
+        const=True,
+        default=None,
+        help="share summations equal up to renaming of their bound indices.",
+    )
+    parser.add_argument(
+        "--hoist-invariants",
+        action="store_const",
+        const=True,
+        default=None,
+        help="move costly loop-invariant sub-expressions out of summations.",
+    )
+    parser.add_argument(
+        "--cse-backend",
+        choices=["thermodiff", "sympy"],
+        default=None,
+        help="algorithm of the scalar common sub-expression pass.",
     )
     return parser
 
@@ -93,8 +178,17 @@ def main(argv=None):
         code = emit_module(
             ir,
             derivatives=derivatives,
+            preset=args.preset,
             optional_derivatives=args.optional_derivatives,
             array_cse=args.array_cse,
+            share=args.share,
+            share_sums=args.share_sums,
+            scalar_cse=args.scalar_cse,
+            param_symmetry=args.param_symmetry,
+            hessian_symmetry=args.hessian_symmetry,
+            cse_backend=args.cse_backend,
+            sum_alpha=args.sum_alpha,
+            hoist_invariants=args.hoist_invariants,
         )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)

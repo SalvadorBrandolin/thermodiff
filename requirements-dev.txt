@@ -1,4 +1,5 @@
 # Style
+mypy
 flake8-nb
 flake8-black
 flake8-builtins
@@ -18,9 +19,11 @@ furo
 
 # Testing
 check-manifest
+numpy
 pytest
 pytest-cov
 pytest-dependency
+pytest-xdist
 tox
 
 # General purpose

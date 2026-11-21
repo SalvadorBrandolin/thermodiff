@@ -4,8 +4,9 @@ import io
 import math
 import os
 import re
-import shutil
 import subprocess
+
+from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
 
 import pytest
 
@@ -73,16 +74,6 @@ function
     P*V + T + sum_i n_i*b_i
 """
 
-
-def _find_gfortran():
-    """Return the gfortran executable, honoring ``FC``."""
-    compiler = os.environ.get("FC")
-    if compiler and "gfortran" in os.path.basename(compiler).lower():
-        return compiler
-    return shutil.which("gfortran")
-
-
-GFORTRAN = _find_gfortran()
 
 _YAEOS_CONSTANTS_STUB = (
     "module yaeos__constants\n"
@@ -185,16 +176,15 @@ class TestParsing:
         assert len(re.findall(r"b\(\w+\)\*n\(\w+\)", code)) == 1
 
     def test_repeated_indexed_factor_is_materialised(self):
-        code = compile_model(PR_MODEL)
+        code = compile_model(PR_MODEL, preset="minimal")
         # The ``sqrt`` of the attractive term is shared by every
         # derivative, so it must live in a rank-2 temporary computed once
         # instead of being repeated inside each sum.
         assert len(re.findall(r"sqrt\(T\*\*4\*ac\(\w+\)\*ac\(", code)) == 1
-        assert "sqrt(T**4*ac" in code
         assert re.search(r"real\(8\) :: \w+\(nc, nc\)", code)
 
     def test_array_cse_can_be_disabled(self):
-        code = compile_model(PR_MODEL, array_cse=False)
+        code = compile_model(PR_MODEL, preset="minimal", array_cse=False)
         assert not re.search(r"real\(8\) :: \w+\(nc, nc\)", code)
         assert "sqrt(T**4*ac" in code
 
@@ -608,18 +598,7 @@ class TestCompile:
     def _compile_and_run(self, tmp_path, code, driver, stub=""):
         source = tmp_path / "main.f90"
         source.write_text(stub + code + driver)
-        exe = tmp_path / ("a.exe" if os.name == "nt" else "a.out")
-        result = subprocess.run(
-            [GFORTRAN, "-O2", "-o", str(exe), str(source)],
-            capture_output=True,
-            text=True,
-            cwd=tmp_path,
-        )
-        assert result.returncode == 0, result.stderr
-        run = subprocess.run(
-            [str(exe)], capture_output=True, text=True, cwd=tmp_path
-        )
-        assert run.returncode == 0, run.stderr
+        run = compile_and_run([source], tmp_path, OPTIMISED_FLAGS)
         return [float(value) for value in run.stdout.split()]
 
     def test_pr_matches_finite_differences(self, tmp_path):
