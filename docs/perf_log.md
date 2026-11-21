@@ -8,6 +8,33 @@ and `time.perf_counter`, without any profiler. Profiles (cProfile) are kept
 separate and are used only to locate hotspots; their times are inflated and
 must not be used as absolute timings.
 
+## Summary
+
+Times are `generation_s`, cold fresh processes, one generation each. Final
+cells are medians, with [min, max] in brackets.
+
+| case | Wave 0 baseline | Checkpoint 1 (331ad50) | final (5a61381) | final vs Wave 0 | final vs Checkpoint 1 | final vs 331ad50, same block |
+|------|-----------------|------------------------|-----------------|-----------------|-----------------------|------------------------------|
+| slow pcsaft e3 w6 (s) | 192.705 (401daf6; logged 193.238) | 57.636 (median of 3) | 57.696 [57.302, 57.713] (3 runs) | **−70.06 %** (−70.14 % vs logged) | +0.10 % | −1.74 % (A median 58.719) |
+| medium pcsaft e2 w5d (s) | 66.183 (in-process, not like-for-like) | 21.399 (median of 3) | 21.311 [21.213, 21.790] (3 runs) | −67.80 % (not like-for-like) | −0.41 % | −0.27 % (A median 21.370; min +2.45 %) |
+| p32 pcsaft p32 w6 (s) | 127.637 (ca6ddc4, one unprofiled run) | 62.323 (median of 2) | 62.025 [61.954, 62.097] (2 runs) | −51.40 % (cross-block) | −0.48 % | −2.76 % (A median 63.784) |
+| peak RSS slow (MiB) | 114.6 (3936fac) | 138.25 (min of 2) | 144.30 [143.95, 144.38] (3 runs) | +25.9 % | +4.4 % (cross-block) | +0.67 % (A median 143.34) |
+
+Headline: the slow case is **−70.06 % vs the Wave 0 baseline** (192.705 s to
+57.696 s median; −70.26 % with the min). Checkpoint 1 was already met, and the
+final code is within noise of it. On same-block medians, 5a61381 is not slower
+than 331ad50 on any case.
+
+Waves 2-9 did not cost measurable time. Against 331ad50 in the same block, the
+medians moved −1.74 % (slow), −0.27 % (medium) and −2.76 % (p32); the medium min
+is +2.45 %. All of this is inside the run-to-run spread, so no speedup is
+claimed. Slow diff went 18.46 to 18.21 s and emit 39.99 to 39.36 s (medians),
+and peak RSS rose 0.67 % (median). The RSS gap against Checkpoint 1 (138.25
+logged, 143.34 re-measured at 331ad50) is a session difference, so only the
+same-block row is used. No profile was needed: no case was more than 5 % slower.
+
+Details: "Final measurement (Wave 9, 5a61381)" at the end of this file.
+
 ## How to measure
 
 Run from the root of a worktree of the commit under test, with the shared
@@ -47,7 +74,15 @@ for rep in range(1, int(reps) + 1):
 
 Model paths: `tests/data/models/<name>/<name>.model` (pcsaft, srk, ...).
 Variant `e0` has no indexed CSE (`array_cse=False`); `e2`/`e3` and `p22`/`p33`
-do. Workloads: `w5c`, `w5d`, `w6` as listed in `thermodiff/bench_hooks.py`.
+do. Variants and workloads live in `benchmarks/td_bench` (`hooks.py`:
+`variant_settings`, `WORKLOADS`, `generate_workload`). The former module
+`thermodiff/bench_hooks.py` no longer exists at 5a61381 (it was present up to
+331ad50). Workloads: `w5c`, `w5d`, `w6` are listed in
+`benchmarks/td_bench/hooks.py` (`WORKLOADS`).
+
+Presets (`CodegenOptions.from_preset`): `"standard"` = the e8 bench settings and
+`"fastest"` = the p33 bench settings. This is pinned by
+`tests/test_codegen_options.py::TestPresets::test_matches_bench_variant`.
 
 Profiles are cold since T1.12: `tools/profile_case.py` runs the profiled
 generation in a fresh child process (`--warm` restores the old in-process
@@ -1084,3 +1119,102 @@ runs (58.823 s) was above the threshold. The result is marginal, not robust.
 - The T1.11c (`_share_sums`) effect is not resolvable at this sample size
   (medium +1.5 % min, ranges overlapping). Any further claim needs more
   repetitions or a profile of that step alone.
+
+## Final measurement (Wave 9, 5a61381)
+
+Task T8.6. Commits: A = 331ad50 (Checkpoint 1 code, detached worktree, timed
+through `thermodiff.bench_hooks`, since `benchmarks/` does not exist there);
+B = 5a61381 (final code, timed through `benchmarks.td_bench`). Protocol as in
+"Wave 1 after T1.11 — Checkpoint 1": `taskset -c 0-4,6-10`,
+`PYTHONHASHSEED=0`, `PYTHONPATH` set to the worktree under test, one fresh
+process per run and one generation per process, `perf_counter` around
+`generate_workload(write=False)`, peak RSS from `ru_maxrss` of the same
+process. Runs were serial and interleaved A B A B (no parallel job, no `-j`,
+no pytest). No cProfile was used for the timings. Raw JSON lines are in
+`/tmp/t86/raw/{slow,medium,p32}.jsonl` (not committed).
+
+### Machine state
+
+- Before the first run (22:53:26): load 1.64 / 5.21 / 6.79 (1, 5, 15 min).
+- After the last run (23:05:40): load 2.10 / 2.35 / 4.20.
+- Process check before the first run: no `pytest`, `check_golden` or `tox -e`
+  process was running.
+- The external campaign `bench3-LOW` (pid 3497339, `bench_v2`) was running on
+  CPU 5 at 99.6 % CPU (checked at 22:52, before the run). It was not touched.
+  It was not re-checked during the run.
+
+### Variant settings check
+
+`variant_settings` gives the same settings at both commits for `e2`, `e3` and
+`p32`. The full settings dict was serialised with `sort_keys=True` at both
+commits and the two texts are identical. Each run also recorded the SHA-256
+prefix of that text: `e3` = `298e22fae00f`, `e2` = `e46c755ea707`, `p32` =
+`6b2f4d07b32f`, identical at A and B.
+
+### Raw runs (generation s; parse, diff, emit s; peak RSS MiB)
+
+Slow pcsaft e3 w6 (3 interleaved pairs, cold single-generation processes):
+
+| order | commit | generation | parse | diff | emit | peak RSS |
+|-------|--------|------------|-------|------|------|----------|
+| 1 | A 331ad50 | 58.719 | 0.129 | 18.455 | 40.134 | 143.34 |
+| 1 | B 5a61381 | 57.302 | 0.130 | 17.404 | 39.768 | 144.38 |
+| 2 | A 331ad50 | 58.577 | 0.130 | 18.460 | 39.987 | 143.11 |
+| 2 | B 5a61381 | 57.696 | 0.132 | 18.205 | 39.359 | 144.30 |
+| 3 | A 331ad50 | 58.871 | 0.130 | 18.787 | 39.955 | 143.67 |
+| 3 | B 5a61381 | 57.713 | 0.129 | 18.341 | 39.242 | 143.95 |
+
+Medium pcsaft e2 w5d (3 interleaved pairs, fresh processes):
+
+| order | commit | generation | parse | diff | emit | peak RSS |
+|-------|--------|------------|-------|------|------|----------|
+| 1 | A 331ad50 | 21.370 | 0.129 | 7.366 | 13.874 | 99.79 |
+| 1 | B 5a61381 | 21.213 | 0.132 | 7.199 | 13.882 | 100.84 |
+| 2 | A 331ad50 | 20.706 | 0.130 | 6.710 | 13.866 | 99.80 |
+| 2 | B 5a61381 | 21.790 | 0.128 | 7.775 | 13.886 | 100.68 |
+| 3 | A 331ad50 | 21.579 | 0.130 | 7.538 | 13.911 | 99.89 |
+| 3 | B 5a61381 | 21.311 | 0.129 | 7.272 | 13.910 | 100.69 |
+
+p32 pcsaft p32 w6 (2 interleaved pairs, cold processes):
+
+| order | commit | generation | parse | diff | emit | peak RSS |
+|-------|--------|------------|-------|------|------|----------|
+| 1 | A 331ad50 | 64.710 | 0.128 | 19.645 | 44.936 | 174.85 |
+| 1 | B 5a61381 | 61.954 | 0.127 | 17.817 | 44.009 | 175.74 |
+| 2 | A 331ad50 | 62.858 | 0.130 | 18.312 | 44.415 | 174.71 |
+| 2 | B 5a61381 | 62.097 | 0.129 | 17.846 | 44.121 | 175.43 |
+
+### Min / median / max and deltas (B vs A, same block)
+
+| case | commit | min (s) | median (s) | max (s) | Δ % B vs A (min / median / max) | median phases (diff / emit, s) |
+|------|--------|---------|------------|---------|---------------------------------|--------------------------------|
+| slow e3 w6 | A 331ad50 | 58.577 | 58.719 | 58.871 | | 18.460 / 39.987 |
+| slow e3 w6 | B 5a61381 | 57.302 | 57.696 | 57.713 | −2.18 / −1.74 / −1.97 | 18.205 / 39.359 |
+| medium e2 w5d | A 331ad50 | 20.706 | 21.370 | 21.579 | | 7.366 / 13.874 |
+| medium e2 w5d | B 5a61381 | 21.213 | 21.311 | 21.790 | +2.45 / −0.27 / +0.98 | 7.272 / 13.910 |
+| p32 w6 | A 331ad50 | 62.858 | 63.784 | 64.710 | | 18.979 / 44.676 |
+| p32 w6 | B 5a61381 | 61.954 | 62.025 | 62.097 | −1.44 / −2.76 / −4.04 | 17.832 / 44.065 |
+| slow peak RSS (MiB) | A 331ad50 | 143.11 | 143.34 | 143.67 | | |
+| slow peak RSS (MiB) | B 5a61381 | 143.95 | 144.30 | 144.38 | +0.58 / +0.67 / +0.50 | |
+
+Slow case, B against the Wave 0 baseline (192.705 s, 401daf6 re-measure): min
+−70.26 %, median −70.06 %, max −70.05 %. Against the logged 193.238 s: median
+−70.14 %. Against the Checkpoint 1 median (57.636 s): +0.10 %.
+
+### Drift and interpretation
+
+- The 331ad50 median of this block (58.719 s) is 1.9 % above its Checkpoint 1
+  median (57.636 s), so the machine was a little slower in this session. The
+  comparison that counts is the same-block B against A row.
+- The B-A differences are within the spread of the runs in every case. Nothing
+  shows a cost from Waves 2-9. Nothing here is a verified speedup either.
+- The slow RSS at 331ad50 is 143.3 MiB in this block, against 138.25 MiB logged
+  at Checkpoint 1. The same commit gives a different number across sessions,
+  so cross-session RSS values are not comparable.
+
+### Profile
+
+Not taken. The rule requires a cold cProfile of the slow case only when B is
+more than 5 % slower than A on the slow or medium median. B is faster on the
+slow median (−1.74 %) and about equal on the medium median (−0.27 %), so the
+condition was not met.
