@@ -122,7 +122,6 @@ class TestBody:
         code = to_fortran(diff, derivatives=["dni"])
         assert "if (i == k) then" in code
         assert "else" in code
-        assert "dx_kdn(i, k) = res" in code
 
     def test_zero_derivatives_are_skipped(self):
         code = to_fortran(mole_fraction_diff())
@@ -713,6 +712,35 @@ class TestCompile:
         # dx_1/dn_1 = 1/6 - 1/36 ; dx_1/dn_2 = -2/36
         assert values[3] == pytest.approx(1 / 6 - 1 / 36)
         assert values[4] == pytest.approx(-2 / 36)
+
+    def test_piecewise_branches_match_the_analytic_jacobian(self, tmp_path):
+        """Both Kronecker branches agree with ``d x_k / d n_i``."""
+        code = to_fortran(mole_fraction_diff(), derivatives=["dni"])
+        driver = (
+            "program main\n"
+            "  use thermo_mod\n"
+            "  implicit none\n"
+            "  integer, parameter :: nc = 3\n"
+            "  real(8) :: n(nc)\n"
+            "  real(8) :: x_k(nc), dx_kdn(nc, nc)\n"
+            "  integer :: i\n"
+            "  n = [1.0d0, 2.0d0, 3.0d0]\n"
+            "  call x_k_derivs(nc, n, x_k, dx_kdn)\n"
+            "  do i = 1, nc\n"
+            "    write(*,*) dx_kdn(i, :)\n"
+            "  end do\n"
+            "end program main\n"
+        )
+        output = self._compile_and_run(tmp_path, code, driver)
+        values = [float(value) for value in output.split()]
+        moles = [1.0, 2.0, 3.0]
+        total = sum(moles)
+        expected = [
+            float(i == k) / total - moles[k] / total**2
+            for i in range(3)
+            for k in range(3)
+        ]
+        assert values == pytest.approx(expected, rel=1e-12)
 
     def test_optional_derivatives_subset(self, tmp_path):
         code = to_fortran(explicit_diff(), optional_derivatives=True)
