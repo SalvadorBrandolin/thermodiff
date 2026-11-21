@@ -1,5 +1,7 @@
 """Tests for the targeted Kronecker-delta reduction inside summations."""
 
+from pathlib import Path
+
 import sympy as sp
 
 from thermodiff import n, nc
@@ -160,9 +162,7 @@ class TestSumLetterCapture:
         assert _nested_binding_violations(ir.function) == []
 
     def test_pr76_model_file_uses_sum_m(self):
-        path = (
-            __file__.split("/tests/")[0] + "/tests/data/models/pr76/pr76.model"
-        )
+        path = Path(__file__).resolve().parent / "data/models/pr76/pr76.model"
         with open(path, "r", encoding="utf-8") as handle:
             text = handle.read()
         assert "ntot    = sum_m n_m" in text

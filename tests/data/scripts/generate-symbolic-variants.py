@@ -72,6 +72,18 @@ _ENTRY_KEYS = [
 ]
 
 
+def _relative_or_absolute(path, start):
+    """Return ``path`` relative to ``start``.
+
+    On Windows two paths on different drives have no relative form; the
+    absolute path is returned then.
+    """
+    try:
+        return os.path.relpath(path, start)
+    except ValueError:
+        return os.path.abspath(path)
+
+
 def _manifest_entry(metadata, out_dir):
     """Return the manifest copy of one hook metadata dict."""
     entry = {key: metadata[key] for key in _ENTRY_KEYS}
@@ -120,7 +132,7 @@ def generate_all(model, out_root, variants, workloads, optional_derivatives):
             )
         manifest = {
             "model": model_name,
-            "model_file": os.path.relpath(model, out_root),
+            "model_file": _relative_or_absolute(model, out_root),
             "variant": {
                 "key": settings["key"],
                 "id": settings["id"],
@@ -141,7 +153,7 @@ def generate_all(model, out_root, variants, workloads, optional_derivatives):
 
     aggregate = {
         "model": model_name,
-        "model_file": os.path.relpath(model, out_root),
+        "model_file": _relative_or_absolute(model, out_root),
         "variants": [
             {
                 "key": variant_settings(v)["key"],
