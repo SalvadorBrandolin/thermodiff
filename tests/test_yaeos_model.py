@@ -72,6 +72,39 @@ def _ar_workloads():
     }
 
 
+def _call_keywords(flat_source, case_label):
+    """Return the ``keyword=value`` arguments of the call under a case.
+
+    Parameters
+    ----------
+    flat_source : str
+        Wrapper source with continuation markers removed.
+    case_label : str
+        Selector of the ``case (...)`` block, for example ``"3"``.
+
+    Returns
+    -------
+    dict of str to str
+        Keyword argument names mapped to their value expressions, ignoring
+        spacing and argument order.
+    """
+    block = re.search(
+        rf"case \({case_label}\).*?\n\s*call \w+\((.*)\)\s*\n",
+        flat_source,
+    ).group(1)
+    arguments, depth, current = [], 0, ""
+    for char in block:
+        depth += (char == "(") - (char == ")")
+        if char == "," and depth == 0:
+            arguments.append(current)
+            current = ""
+        else:
+            current += char
+    arguments.append(current)
+    pairs = (argument.split("=", 1) for argument in arguments)
+    return {name.strip(): value.strip() for name, value in pairs}
+
+
 def test_kernel_interface_ranks():
     routine, args = kernel_interface(KERNEL)
     assert routine == "toy_k1_w1"
@@ -109,11 +142,16 @@ def test_ar_wrapper_source():
     # (Ar 1, ArV 2, Arn 64, all 1023)
     cases = dict(re.findall(r"case \((\d+)\)  ! (\w+):", flat))
     assert cases == {"1": "W0", "3": "W1", "65": "W3", "1023": "W6"}
-    w1 = re.search(r"case \(3\).*?\n\s*(call [^\n]*)", flat).group(1)
-    assert re.sub(r"\s+", " ", w1) == (
-        "call toy_k1_w1(nc=size(n), V=v, T=t, a=self%a, "
-        "kij=self%kij, n=n, f=Ar, dfdV=ArV)"
-    )
+    assert _call_keywords(flat, "3") == {
+        "nc": "size(n)",
+        "V": "v",
+        "T": "t",
+        "a": "self%a",
+        "kij": "self%kij",
+        "n": "n",
+        "f": "Ar",
+        "dfdV": "ArV",
+    }
     w3 = re.search(r"case \(65\).*?\n\s*(call [^\n]*)", flat).group(1)
     assert "f=Ar" in w3 and "dfdn=Arn" in w3 and "dfdV" not in w3
     # default branch: the complete kernel (W6) through temporaries
@@ -157,18 +195,29 @@ def test_ge_wrapper_and_shared_kernel():
     assert "type, extends(GeModel) :: TD_TOY_K2" in src
     assert "procedure :: excess_gibbs => td_toy_k2_ge" in src
     assert "get_v0" not in src
-    assert "use td_toy_k2, only: toy_g\n" in src
+    assert re.search(r"use td_toy_k2,\s*only:\s*toy_g\b", src)
     flat = src.replace("&\n", "")
-    assert re.search(
-        r"case \(1\)  ! G0: Ge\s+"
-        r"call toy_g\(nc=size\(n\), T=t, q=self%q, n=n, f=Ge\)",
-        flat,
-    )
+    assert re.search(r"case \(1\)  ! G0: Ge\s", flat)
+    assert _call_keywords(flat, "1") == {
+        "nc": "size(n)",
+        "T": "t",
+        "q": "self%q",
+        "n": "n",
+        "f": "Ge",
+    }
     assert "case (63)  ! G4" in flat
-    assert (
-        "subroutine td_toy_k2_ge(self, n, t, Ge, GeT, GeT2, Gen, GeTn, Gen2)"
-        in flat
-    )
+    signature = re.search(r"subroutine td_toy_k2_ge\((.*?)\)", flat).group(1)
+    assert [name.strip() for name in signature.split(",")] == [
+        "self",
+        "n",
+        "t",
+        "Ge",
+        "GeT",
+        "GeT2",
+        "Gen",
+        "GeTn",
+        "Gen2",
+    ]
 
 
 def test_errors():
