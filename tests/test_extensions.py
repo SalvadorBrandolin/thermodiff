@@ -927,6 +927,45 @@ function
     assert "sqrt(e(" in code and "sqrt(e(i)*e(j))" not in code.replace(" ", "")
 
 
+@pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
+def test_positive_parameter_split_matches_closed_form():
+    """The split roots reproduce ``f`` and ``df/dn`` of the pair sum."""
+    from model_harness import run
+
+    text = """model pos
+variables
+    n nc
+    T
+parameters
+    e nc positive
+    k nc nc symmetric
+function
+    T*sum_i sum_j n_i*n_j*sqrt(e_i*e_j)*(1 - k_ij)
+"""
+    values, _ = run(
+        text,
+        EXTENDED_VARIANTS["a3"],
+        {"T": "320d0", "k": "0.01d0*(i+j)+0.003d0*i*j"},
+        derivs="dn",
+        opt=False,
+    )
+    temperature = 320.0
+    offset = 0
+    for count in (3, 7):  # the driver evaluates nc = 3 and nc = 7
+        idx = np.arange(1, count + 1, dtype=float)
+        moles = 0.5 + 0.13 * idx + 0.02 * idx * idx
+        positive = moles  # ``e`` shares the default rank-one initialiser
+        pair = np.sqrt(np.outer(positive, positive)) * (
+            1.0 - (0.01 * np.add.outer(idx, idx) + 0.003 * np.outer(idx, idx))
+        )
+        expected_f = temperature * moles @ pair @ moles
+        expected_dn = 2.0 * temperature * pair @ moles
+        got = values[offset : offset + 1 + count]
+        offset += 1 + count
+        assert got[0] == pytest.approx(expected_f, rel=1e-12)
+        assert got[1:] == pytest.approx(expected_dn, rel=1e-12)
+
+
 def test_positive_only_for_parameters():
     from thermodiff.model.errors import ModelError
 
@@ -1092,6 +1131,29 @@ def test_table_layout_follows_parameter_subscripts():
     assert a.replace("_p25_", "_X_") == b.replace("_p26_", "_X_")
 
 
+@pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
+def test_table_layout_gives_the_same_derivatives():
+    from model_harness import run
+
+    text = open(os.path.join(_ROOT_MODELS, "nrtl", "nrtl.model")).read()
+    inits = {
+        "a": "0.1d0*(i-j)",
+        "b": "10d0*(i-j)+3d0*i*j",
+        "c": "0.2d0+0.01d0*(i+j)",
+    }
+    base = dict(EXTENDED_VARIANTS["it25"])
+    ref, ref_code = run(text, base, inits, derivs="dT,dn,dndn", opt=False)
+    val, code = run(
+        text,
+        dict(base, table_layout=True),
+        inits,
+        derivs="dT,dn,dndn",
+        opt=False,
+    )
+    assert code != ref_code  # the option changed the generated tables
+    assert _max_relative_difference(val, ref) < 1e-12
+
+
 def _hessian_nest(source):
     """Lines of the loop nest that assembles ``dfdndn``."""
     lines = [stmt.strip() for stmt in source.splitlines()]
@@ -1104,6 +1166,12 @@ def _hessian_nest(source):
         if lines[k].startswith("do ") and lines[k + 1].startswith("do ")
     )
     return lines[start : end + 4]
+
+
+def _max_relative_difference(values, reference):
+    """Largest relative difference, floored at ``1e-8`` in the reference."""
+    floor = np.maximum(np.abs(reference), 1e-8)
+    return np.max(np.abs(values - reference) / floor)
 
 
 def test_lowrank_hess_assembles_columns_from_vectors():
@@ -1164,6 +1232,7 @@ def test_lowrank_hess_gives_the_same_hessian():
 
 
 def test_drop_pair_tables_inlines_the_dispersion_table():
+    import re
     from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "pcsaft", "pcsaft.model")
@@ -1184,8 +1253,35 @@ def test_drop_pair_tables_inlines_the_dispersion_table():
     assert [stmt.split(" = ")[0] for stmt in lines[k + 1 : k + 3]] == accs
     assert "n(x)" not in lines[k + 1] and "m(x)" not in lines[k + 2]
     assert lines[k + 3] == "end do"
-    assert lines[k + 4].startswith(f"t13 = t13 + {accs[0]}*")
-    assert lines[k + 5].startswith(f"t14 = t14 + {accs[1]}*")
+    # each inner accumulator is folded once into an outer running total
+    for line, acc in zip(lines[k + 4 : k + 6], accs):
+        assert re.fullmatch(rf"(\w+) = \1 \+ {acc}\*.*", line), line
+
+
+@pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
+def test_drop_pair_tables_gives_the_same_value():
+    from model_harness import run
+
+    text = open(os.path.join(_ROOT_MODELS, "pcsaft", "pcsaft.model")).read()
+    inits = {
+        "m": "1d0+0.3d0*i",
+        "sigma": "3d0+0.1d0*i",
+        "epsk": "200d0+10d0*i",
+        "kij": "0.01d0*(i+j)*merge(0d0,1d0,i==j)",
+        "V": "2d0*sum(x_n)",
+    }
+    base = dict(EXTENDED_VARIANTS["it27"])
+    ref, ref_code = run(text, base, inits, derivs="none", opt=False)
+    val, code = run(
+        text,
+        dict(base, drop_pair_tables=True),
+        inits,
+        derivs="none",
+        opt=False,
+    )
+    assert "mat5(" in ref_code and "mat5(" not in code
+    assert np.all(np.isfinite(val)) and len(val) == 2  # nc = 3 and 7
+    assert _max_relative_difference(val, ref) < 1e-12
 
 
 def test_share_elementwise_reuses_logs_between_value_and_gradient():
@@ -1437,6 +1533,7 @@ def test_scalar_chain_estimate_reproduces_cost_choice(workload):
 
 @pytest.mark.slow
 def test_split_acc_uses_two_accumulators_in_the_cmr_nest():
+    import re
     from benchmarks.td_bench import generate_workload
 
     path = os.path.join(_ROOT_MODELS, "cmr", "cmr.model")
@@ -1449,15 +1546,24 @@ def test_split_acc_uses_two_accumulators_in_the_cmr_nest():
     assert "do m = 1, nc - 1, 2" not in old
     lines = [stmt.strip() for stmt in new.splitlines()]
     k = lines.index("do m = 1, nc - 1, 2")
-    assert lines[k + 1 : k + 5] == [
-        "t15 = t15 + lijk(m, k, l)*n(m)",
-        "t17 = t17 + lijk(m + 1, k, l)*n(m + 1)",
-        "t16 = t16 + kijk(m, k, l)*t11(m)",
-        "t18 = t18 + kijk(m + 1, k, l)*t11(m + 1)",
+    updates = [
+        re.fullmatch(r"(t\d+) = \1 \+ (.*)", line)
+        for line in lines[k + 1 : k + 5]
     ]
-    assert lines[k + 6] == "do m = m, nc" and lines[k + 10 : k + 12] == [
-        "t15 = t15 + t17",
-        "t16 = t16 + t18",
+    assert all(updates)
+    accs = [update.group(1) for update in updates]
+    assert len(set(accs)) == 4  # lijk and kijk, even and odd steps
+    assert [re.sub(r"t\d+\(", "tN(", u.group(2)) for u in updates] == [
+        "lijk(m, k, l)*n(m)",
+        "lijk(m + 1, k, l)*n(m + 1)",
+        "kijk(m, k, l)*tN(m)",
+        "kijk(m + 1, k, l)*tN(m + 1)",
+    ]
+    # the remainder loop runs once, then the odd partial sums are folded
+    assert lines[k + 6] == "do m = m, nc"
+    assert lines[k + 10 : k + 12] == [
+        f"{accs[0]} = {accs[0]} + {accs[1]}",
+        f"{accs[2]} = {accs[2]} + {accs[3]}",
     ]
     # no rank-3 parameter elsewhere: the other models are unchanged
     cub = os.path.join(_ROOT_MODELS, "pr76", "pr76_sym.model")
