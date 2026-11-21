@@ -191,7 +191,8 @@ def _merge_dummy_images(
     its bound indices.
 
     In ``sum_{k,l,m} F`` with all indices over the same range, renaming the
-    dummies never changes the value, so ``sum (b_k + b_l + b_m) L_klm n_k n_l n_m``
+    dummies never changes the value, so
+    ``sum (b_k + b_l + b_m) L_klm n_k n_l n_m``
     with ``L`` symmetric equals ``3 sum b_k L_klm n_k n_l n_m``.  Each term of
     the body is mapped to the smallest of its images under every permutation
     of the bound indices (symmetric parameters canonicalised), equal images

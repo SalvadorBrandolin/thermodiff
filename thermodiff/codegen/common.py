@@ -338,8 +338,8 @@ def _canonical_floats(expr: sp.Basic) -> sp.Basic:
 
 def _calls_libm(expr: sp.Basic) -> bool:
     """Whether ``expr`` calls a vectorisable libm routine (``exp``, ``log``,
-    ``sqrt``, a real power): a function other than ``Piecewise`` or a power whose
-    exponent is not an integer."""
+    ``sqrt``, a real power): a function other than ``Piecewise`` or a power
+    whose exponent is not an integer."""
     for sub in sp.preorder_traversal(expr):
         if isinstance(sub, sp.Function) and not isinstance(sub, sp.Piecewise):
             return True

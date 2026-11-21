@@ -1,8 +1,8 @@
 """Definition rendering for the Fortran code generator."""
 
 import functools
-from typing import cast
 from collections.abc import Collection, Iterable, Mapping
+from typing import cast
 
 import sympy as sp
 from sympy.printing.fortran import fcode
@@ -289,7 +289,8 @@ def _render_column_sum(definition: TempDef) -> list[str]:
         f"{_INDENT}end do",
         f"{_INDENT}do {b} = {_print_expr(low)}, {_print_expr(high)}",
         f"{_INDENT * 2}do {p_} = 1, {upper}",
-        f"{_INDENT * 3}{target_s} = {target_s} + {_print_expr(definition.body)}",
+        f"{_INDENT * 3}{target_s} = {target_s} + "
+        f"{_print_expr(definition.body)}",
         f"{_INDENT * 2}end do",
         f"{_INDENT}end do",
     ]
@@ -317,10 +318,12 @@ def _render_fused(definition: FusedNest) -> list[str]:
     lo_o, hi_o = (low, high) if colmajor else (1, sp.Symbol("nc"))
     lo_i, hi_i = (1, sp.Symbol("nc")) if colmajor else (low, high)
     lines.append(
-        f"do {outer} = {_print_expr(sp.sympify(lo_o))}, {_print_expr(sp.sympify(hi_o))}"
+        f"do {outer} = {_print_expr(sp.sympify(lo_o))}, "
+        f"{_print_expr(sp.sympify(hi_o))}"
     )
     lines.append(
-        f"{_INDENT}do {inner} = {_print_expr(sp.sympify(lo_i))}, {_print_expr(sp.sympify(hi_i))}"
+        f"{_INDENT}do {inner} = {_print_expr(sp.sympify(lo_i))}, "
+        f"{_print_expr(sp.sympify(hi_i))}"
     )
     for d in group:
         t = _print_expr(d.target)
@@ -482,7 +485,8 @@ def _render_sibling(definition: SiblingNest) -> list[str]:
         for _acc, acc2, _g in pairs:
             lines.append(f"{_INDENT * 2}{acc2} = 0.0d0")
         lines.append(
-            f"{_INDENT * 2}do {m} = {_print_expr(lo)}, {_print_expr(hi - 1)}, 2"
+            f"{_INDENT * 2}do {m} = {_print_expr(lo)}, "
+            f"{_print_expr(hi - 1)}, 2"
         )
         for acc, acc2, g in pairs:
             lines.append(f"{_INDENT * 3}{acc} = {acc} + {_print_expr(g.body)}")

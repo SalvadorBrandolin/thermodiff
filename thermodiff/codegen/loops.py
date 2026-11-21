@@ -19,9 +19,9 @@ from thermodiff.codegen.common import (
 from thermodiff.codegen.ir import (
     ComponentFusedMap,
     FusedNest,
-    OuterFusedNest,
     Limit,
     Namer,
+    OuterFusedNest,
     SiblingNest,
     TempDef,
 )
@@ -725,7 +725,10 @@ def _fuse_loop_nests(
 
 
 def _loop_order(definition: TempDef) -> list[sp.Idx] | None:
-    """Loop variables of a rendered definition, outermost first (None if unknown)."""
+    """Loop variables of a rendered definition, outermost first.
+
+    ``None`` if unknown.
+    """
     free = list(definition.free)
     bound = [lim[0] for lim in definition.limits]
     if (
@@ -1597,8 +1600,9 @@ def _drop_pair_tables(
     routine, read by no output and only by scalar reductions -- at most one
     double reduction (triangular when the table is filled as a triangle) and
     any number of single reductions (its diagonal) -- is not materialised:
-    its body is substituted where it is read (reportes/brechas/ronda2-pcsaft.md,
-    T1).  Then, in every scalar double reduction ``sum_p sum_x B``:
+    its body is substituted where it is read
+    (reportes/brechas/ronda2-pcsaft.md, T1).  Then, in every scalar
+    double reduction ``sum_p sum_x B``:
 
     * the factors of ``B`` that do not depend on the inner index ``x`` are
       applied once per outer iteration (``acc = sum_x B_x``, then
@@ -2310,9 +2314,10 @@ def _split_accumulators(
 
     A symmetric rank-2 table filled by a sum whose body reads a parameter of
     rank 3 or more (the CMR nest ``t(k, l) = sum_m L(m, k, l) n(m)``) gets two
-    scalar accumulators per sum in its inner loop.  A table alone (``mirror_sum``)
-    first becomes a one-member nest of :func:`_fuse_sibling_tables`, which
-    renders the same loops with a scalar accumulator.
+    scalar accumulators per sum in its inner loop.  A table alone
+    (``mirror_sum``) first becomes a one-member nest of
+    :func:`_fuse_sibling_tables`, which renders the same loops with a
+    scalar accumulator.
     """
 
     def rank3(body: sp.Expr) -> bool:

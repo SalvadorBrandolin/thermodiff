@@ -1,7 +1,7 @@
 """Placeholder resolution for the Fortran code generator."""
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple, TYPE_CHECKING
 
 import sympy as sp
 from sympy.core.function import DefinedFunction

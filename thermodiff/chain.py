@@ -1495,8 +1495,9 @@ def _nested_node_derivatives(nodes, inner_map, needed, indexes):
     } | {symbol: done[symbol] for symbol in done}
 
 
-#: functions without a usable symbolic derivative: the outer function falls back
-#: to the plain ``sp.diff`` path when it contains one of them
+#: functions without a usable symbolic derivative: the outer function
+#: falls back to the plain ``sp.diff`` path when it contains one of
+#: them
 _NONSMOOTH = (
     sp.Piecewise,
     sp.Max,
@@ -1511,16 +1512,17 @@ _NONSMOOTH = (
 )
 
 
-def _scalar_dag(F, mode):
-    """Nodes ``[(u, phi)]`` of the scalar function ``F`` in dependency order.
+def _scalar_dag(scalar_expr, mode):
+    """Nodes ``[(u, phi)]`` of the scalar function in dependency order.
 
-    ``"cse"``: the common sub-expressions of ``F`` (``sympy.cse``) and ``F``
-    itself, so each node is a coarse block (``dm1 = S0/S1``, the rest of F).
+    The function is ``scalar_expr``.  ``"cse"``: the common sub-expressions
+    of ``scalar_expr`` (``sympy.cse``) and ``scalar_expr`` itself, so each
+    node is a coarse block (``dm1 = S0/S1``, the rest of F).
     ``"fine"``: in addition every compound sub-expression is a node of its own
     (one operation per node, n-ary sums and products kept whole).
     """
     rep, red = sp.cse(
-        F, symbols=sp.numbered_symbols("_scu"), optimizations="basic"
+        scalar_expr, symbols=sp.numbered_symbols("_scu"), optimizations="basic"
     )
     nodes = list(rep) + [(sp.Symbol("_sctop"), red[0])]
     if mode == "cse":
@@ -1645,8 +1647,10 @@ def _propagate_node(phi, state):
     )
 
 
-def _propagate(F, leaves, first, pairs, mode):
-    """Forward second-order propagation of ``F`` over the DAG of ``mode``.
+def _propagate(scalar_expr, leaves, first, pairs, mode):
+    """Forward second-order propagation of ``scalar_expr`` over a DAG.
+
+    The DAG is the one of ``mode``.
 
     Every node ``u = phi(p, ...)`` gets its gradient and the needed Hessian
     entries with respect to ``leaves`` from the local partials ``phi_p``,
@@ -1664,7 +1668,7 @@ def _propagate(F, leaves, first, pairs, mode):
         hess={leaf: {} for leaf in leaves if leaf in active},
         value={},
     )
-    for symbol, phi in _scalar_dag(F, mode):
+    for symbol, phi in _scalar_dag(scalar_expr, mode):
         state.value[symbol] = phi.xreplace(state.value)
         propagated = _propagate_node(phi, state)
         if propagated is None:
@@ -1678,25 +1682,27 @@ def _propagate(F, leaves, first, pairs, mode):
     )
 
 
-def _scalar_chain(F, leaves, first, pairs):
-    """Value, gradient and Hessian entries of ``F`` as named scalars.
+def _scalar_chain(scalar_expr, leaves, first, pairs):
+    """Value, gradient and Hessian entries of ``scalar_expr`` as named scalars.
 
-    The derivatives are propagated forward over a DAG of ``F``
-    (:func:`_propagate`) instead of differentiating the expanded ``F``, and
-    the result goes through one common sub-expression elimination.  Both
+    The derivatives are propagated forward over a DAG of ``scalar_expr``
+    (:func:`_propagate`) instead of differentiating the expanded
+    ``scalar_expr``, and the result goes through one common sub-expression
+    elimination.  Both
     DAG granularities are tried and the one with fewer operations is kept.
 
     Returns ``(definitions, value, d1, d2)``: ``definitions`` is a list of
     ``(symbol, expr)`` in dependency order (placeholder symbols ``_sc*``),
-    ``value`` the expression of ``F``, ``d1[l]`` and ``d2[(l, m)]`` the
-    expressions of the requested partial derivatives (a placeholder symbol,
-    a number or a leaf), or ``None`` when ``F`` is not smooth enough.
+    ``value`` the expression of ``scalar_expr``, ``d1[l]`` and ``d2[(l, m)]``
+    the expressions of the requested partial derivatives (a placeholder
+    symbol, a number or a leaf), or ``None`` when ``scalar_expr`` is not
+    smooth enough.
     """
-    if any(F.has(func) for func in _NONSMOOTH):
+    if any(scalar_expr.has(func) for func in _NONSMOOTH):
         return None
     best = None
     for mode in ("cse", "fine"):
-        flat = _propagate(F, leaves, first, pairs, mode)
+        flat = _propagate(scalar_expr, leaves, first, pairs, mode)
         if flat is None:
             return None
         rep, red = sp.cse(
@@ -2436,8 +2442,9 @@ def chain_rule_derivatives(
         of ``sp.diff`` of the expanded ``F``.  They become named scalars,
         returned in ``"_scalar_defs"`` (``[(symbol, expr)]`` in dependency
         order, in terms of the node symbols), and the derivatives read them;
-        ``"_scalar_nodes"`` gives the summation of every node they read.  Falls back to ``sp.diff``
-        when ``F`` contains a non-smooth function.
+        ``"_scalar_nodes"`` gives the summation of every node they read.
+        Falls back to ``sp.diff`` when ``F`` contains a non-smooth
+        function.
 
     Returns
     -------
