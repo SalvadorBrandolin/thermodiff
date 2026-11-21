@@ -1,8 +1,9 @@
 """Common-subexpression search for the Fortran code generator."""
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Any, cast
 
 import sympy as sp
 
@@ -15,6 +16,7 @@ from thermodiff.codegen.common import (
     _memoised_call,
     _new_shared_temp,
     _order_free,
+    _Namer,
     _sorted_indices,
 )
 from thermodiff.codegen.ir import TempDef
@@ -25,7 +27,9 @@ from thermodiff.codegen.symmetry import (
 )
 
 
-def _sum_atoms(expr: sp.Basic, memo: dict) -> set:
+def _sum_atoms(
+    expr: sp.Basic, memo: dict[sp.Basic, set[sp.Sum]]
+) -> set[sp.Sum]:
     """Return ``expr.atoms(sp.Sum)``, memoised in ``memo`` by expression.
 
     Parameters
@@ -46,7 +50,11 @@ def _sum_atoms(expr: sp.Basic, memo: dict) -> set:
     return found
 
 
-def _sorted_sums(expr: sp.Basic, memo: dict, sorted_memo: dict) -> tuple:
+def _sorted_sums(
+    expr: sp.Basic,
+    memo: dict[sp.Basic, set[sp.Sum]],
+    sorted_memo: dict[sp.Basic, tuple[sp.Sum, ...]],
+) -> tuple[sp.Sum, ...]:
     """Return the ``Sum`` atoms of ``expr`` sorted by ``default_sort_key``.
 
     Parameters
@@ -92,15 +100,19 @@ class _SumKeySettings:
         Also canonicalise symmetric parameters of rank three.
     """
 
-    indexes: list
+    indexes: list[sp.Idx]
     alpha: bool
     free_alpha: bool
-    symmetric_params: tuple
+    symmetric_params: tuple[str, ...]
     transpose: bool
     sym_rank3: bool
 
 
-def _innermost_sums(exprs: list, sums_memo: dict, sorted_memo: dict) -> list:
+def _innermost_sums(
+    exprs: list[sp.Expr],
+    sums_memo: dict[sp.Basic, set[sp.Sum]],
+    sorted_memo: dict[sp.Basic, tuple[sp.Sum, ...]],
+) -> list[sp.Sum]:
     """Return the distinct sums without inner sums, in encounter order.
 
     Parameters
@@ -115,8 +127,8 @@ def _innermost_sums(exprs: list, sums_memo: dict, sorted_memo: dict) -> list:
     list
         The ``Sum`` nodes whose body holds no ``Sum``, each once.
     """
-    innermost = []
-    seen = set()
+    innermost: list[sp.Sum] = []
+    seen: set[sp.Sum] = set()
     for expr in exprs:
         for total in _sorted_sums(expr, sums_memo, sorted_memo):
             if _sum_atoms(total.function, sums_memo) or total in seen:
@@ -127,8 +139,11 @@ def _innermost_sums(exprs: list, sums_memo: dict, sorted_memo: dict) -> list:
 
 
 def _transpose_replacement(
-    total: sp.Sum, free_here: list, by_key: dict, settings: _SumKeySettings
-):
+    total: sp.Sum,
+    free_here: list[sp.Idx],
+    by_key: dict[sp.Basic, Any],
+    settings: _SumKeySettings,
+) -> sp.Indexed | None:
     """Return the transpose of a rank-2 sum already hoisted, or ``None``.
 
     Parameters
@@ -163,8 +178,8 @@ def _transpose_replacement(
 
 
 def _free_alpha_replacement(
-    total: sp.Sum, by_key: dict, settings: _SumKeySettings
-) -> tuple:
+    total: sp.Sum, by_key: dict[sp.Basic, Any], settings: _SumKeySettings
+) -> tuple[sp.Basic | None, sp.Basic]:
     """Find an earlier temporary equal to ``total`` up to index names.
 
     Parameters
@@ -205,11 +220,11 @@ def _free_alpha_replacement(
 
 def _share_one_sum(
     total: sp.Sum,
-    by_key: dict,
-    replacements: dict,
-    definitions: list,
-    namer,
-    arrays: dict,
+    by_key: dict[sp.Basic, Any],
+    replacements: dict[sp.Sum, sp.Basic],
+    definitions: list[TempDef],
+    namer: _Namer,
+    arrays: dict[str, int],
     settings: _SumKeySettings,
 ) -> None:
     """Replace ``total`` by an earlier temporary or hoist a new one.
@@ -231,8 +246,8 @@ def _share_one_sum(
     settings : _SumKeySettings
         Options that decide when two sums are equal.
     """
-    key = None
-    found = None
+    key: sp.Basic | None = None
+    found: Any = None
     if settings.free_alpha:
         found, key = _free_alpha_replacement(total, by_key, settings)
     elif settings.alpha:
@@ -260,17 +275,17 @@ def _share_one_sum(
 
 
 def _share_sums(
-    expressions,
-    namer,
-    indexes,
-    arrays,
-    alpha=False,
-    free_alpha=False,
-    symmetric_params=(),
-    transpose=False,
+    expressions: Iterable[sp.Expr],
+    namer: _Namer,
+    indexes: list[sp.Idx],
+    arrays: dict[str, int],
+    alpha: bool = False,
+    free_alpha: bool = False,
+    symmetric_params: tuple[str, ...] = (),
+    transpose: bool = False,
     *,
-    sym_rank3,
-):
+    sym_rank3: bool,
+) -> tuple[list[sp.Expr], list[TempDef]]:
     """Replace every ``Sum`` by a temporary that is computed once.
 
     Identical summations reused by several outputs are evaluated a single
@@ -305,15 +320,15 @@ def _share_sums(
         sym_rank3=sym_rank3,
     )
     exprs = list(expressions)
-    definitions = []
-    sums_memo: dict = {}
-    sorted_memo: dict = {}
+    definitions: list[TempDef] = []
+    sums_memo: dict[sp.Basic, set[sp.Sum]] = {}
+    sorted_memo: dict[sp.Basic, tuple[sp.Sum, ...]] = {}
     while True:
         innermost = _innermost_sums(exprs, sums_memo, sorted_memo)
         if not innermost:
             break
-        replacements = {}
-        by_key = {}
+        replacements: dict[sp.Sum, sp.Basic] = {}
+        by_key: dict[sp.Basic, Any] = {}
         for total in innermost:
             _share_one_sum(
                 total,
@@ -328,7 +343,9 @@ def _share_sums(
     return exprs, definitions
 
 
-def _common_scalar_cse(expressions, namer, arrays):
+def _common_scalar_cse(
+    expressions: Iterable[sp.Expr], namer: _Namer, arrays: dict[str, int]
+) -> tuple[list[sp.Expr], list[TempDef]]:
     """Extract scalar sub-expressions shared by several outputs.
 
     Only sub-expressions without free indices are hoisted, so every
@@ -352,13 +369,13 @@ def _common_scalar_cse(expressions, namer, arrays):
         How to compute each shared scalar, in dependency order.
     """
     exprs = list(expressions)
-    definitions = []
+    definitions: list[TempDef] = []
     own_entries = functools.partial(
         _own_scalar_candidate, index_memo={}, eligible_memo={}
     )
-    entries_memo = {}
-    rank_memo = {}
-    candidate_sets = {}
+    entries_memo: dict[sp.Basic, tuple[Any, ...]] = {}
+    rank_memo: dict[sp.Expr, tuple[Any, ...]] = {}
+    candidate_sets: dict[sp.Basic, frozenset[Any]] = {}
     while True:
         counts = _count_scalar_candidates(exprs, own_entries, entries_memo)
         repeated = [sub for sub, count in counts.items() if count > 1]
@@ -380,7 +397,9 @@ def _common_scalar_cse(expressions, namer, arrays):
 
 
 def _best_scalar_candidate(
-    repeated: list, counts: dict, rank_memo: dict
+    repeated: list[sp.Expr],
+    counts: dict[sp.Expr, int],
+    rank_memo: dict[sp.Expr, tuple[Any, ...]],
 ) -> sp.Expr:
     """Pick the candidate with the highest ``(count, count_ops, sort key)``.
 
@@ -395,10 +414,10 @@ def _best_scalar_candidate(
 
 def _candidate_set(
     expr: sp.Basic,
-    own_entries: Callable[[sp.Basic], tuple],
-    entries_memo: dict,
-    sets_memo: dict,
-) -> frozenset:
+    own_entries: Callable[[sp.Basic], tuple[Any, ...]],
+    entries_memo: dict[sp.Basic, tuple[Any, ...]],
+    sets_memo: dict[sp.Basic, frozenset[Any]],
+) -> frozenset[Any]:
     """Return the set of candidates occurring in ``expr`` (memoised).
 
     ``sets_memo`` is the per-call cache ``expression -> frozenset``; it is
@@ -413,7 +432,9 @@ def _candidate_set(
 
 
 def _is_scalar_candidate(
-    sub: sp.Basic, index_memo: dict, eligible_memo: dict
+    sub: sp.Basic,
+    index_memo: dict[sp.Basic, Any],
+    eligible_memo: dict[sp.Basic, bool],
 ) -> bool:
     """Tell whether ``sub`` may be hoisted as a shared scalar (memoised)."""
     if sub not in eligible_memo:
@@ -427,8 +448,10 @@ def _is_scalar_candidate(
 
 
 def _own_scalar_candidate(
-    sub: sp.Basic, index_memo: dict, eligible_memo: dict
-) -> tuple:
+    sub: sp.Basic,
+    index_memo: dict[sp.Basic, Any],
+    eligible_memo: dict[sp.Basic, bool],
+) -> tuple[sp.Basic, ...]:
     """Return ``(sub,)`` when ``sub`` is a scalar candidate, else ``()``."""
     if _is_scalar_candidate(sub, index_memo, eligible_memo):
         return (sub,)
@@ -436,31 +459,33 @@ def _own_scalar_candidate(
 
 
 def _count_scalar_candidates(
-    exprs: list,
-    own_entries: Callable[[sp.Basic], tuple],
-    entries_memo: dict,
-) -> dict:
+    exprs: list[sp.Expr],
+    own_entries: Callable[[sp.Basic], tuple[Any, ...]],
+    entries_memo: dict[sp.Basic, tuple[Any, ...]],
+) -> dict[Any, int]:
     """Count the occurrences of every hoistable sub-expression.
 
     The dict keeps the order in which candidates are first met in a
     pre-order walk of ``exprs``, which fixes the tie-break of the caller.
     ``entries_memo`` is the per-call memo of :func:`_preorder_entries`.
     """
-    counts = {}
+    counts: dict[Any, int] = {}
     for expr in exprs:
         for sub in _preorder_entries(expr, own_entries, entries_memo):
             counts[sub] = counts.get(sub, 0) + 1
     return counts
 
 
-def _candidate_rank(sub: sp.Expr, rank_memo: dict) -> tuple:
+def _candidate_rank(
+    sub: sp.Expr, rank_memo: dict[sp.Expr, tuple[Any, ...]]
+) -> tuple[Any, ...]:
     """Return ``(count_ops, default_sort_key)`` of ``sub`` (memoised)."""
     if sub not in rank_memo:
         rank_memo[sub] = (sp.count_ops(sub), sp.default_sort_key(sub))
     return rank_memo[sub]
 
 
-def _node_children(node: sp.Basic):
+def _node_children(node: sp.Basic) -> Iterable[sp.Basic]:
     """Return the children that ``sp.preorder_traversal`` visits.
 
     Mirrors ``sp.preorder_traversal(expr)`` with ``keys=None`` for SymPy
@@ -469,13 +494,15 @@ def _node_children(node: sp.Basic):
     Non-``Basic`` iterable args (e.g. matrices) are not supported.
     """
     if hasattr(node, "_argset"):
-        return node._argset
-    return node.args
+        return cast(Iterable[sp.Basic], node._argset)
+    return cast(Iterable[sp.Basic], node.args)
 
 
 def _preorder_entries(
-    expr: sp.Basic, own_entries: Callable[[sp.Basic], tuple], memo: dict
-) -> tuple:
+    expr: sp.Basic,
+    own_entries: Callable[[sp.Basic], tuple[Any, ...]],
+    memo: dict[sp.Basic, tuple[Any, ...]],
+) -> tuple[Any, ...]:
     """Collect per-node entries of ``expr`` in pre-order, memoised.
 
     The result equals the concatenation of ``own_entries(node)`` over
@@ -521,7 +548,9 @@ def _preorder_entries(
     return memo[expr]
 
 
-def _is_hoistable(sub, index_memo: dict | None = None) -> bool:
+def _is_hoistable(
+    sub: sp.Basic, index_memo: dict[sp.Basic, frozenset[sp.Idx]] | None = None
+) -> bool:
     """Whether ``sub`` may be replaced by an array temporary.
 
     ``index_memo`` optionally supplies the memo of :func:`_index_set`
@@ -540,7 +569,9 @@ def _is_hoistable(sub, index_memo: dict | None = None) -> bool:
     return bool(sub.atoms(sp.Idx))
 
 
-def _canonical_form(sub, indices: list, slots: list):
+def _canonical_form(
+    sub: sp.Basic, indices: list[sp.Idx], slots: list[sp.Idx]
+) -> sp.Basic:
     """Rename ``indices`` of ``sub`` to the leading auxiliary ``slots``."""
     mapping = {
         index: slots[position] for position, index in enumerate(indices)
@@ -548,14 +579,23 @@ def _canonical_form(sub, indices: list, slots: list):
     return sub.xreplace(mapping)
 
 
-def _cached_hoistable(sub, index_memo: dict, cache: dict) -> bool:
+def _cached_hoistable(
+    sub: sp.Basic,
+    index_memo: dict[sp.Basic, frozenset[sp.Idx]],
+    cache: dict[sp.Basic, bool],
+) -> bool:
     """:func:`_is_hoistable` memoised in the per-call ``cache``."""
     if sub not in cache:
         cache[sub] = _is_hoistable(sub, index_memo)
     return cache[sub]
 
 
-def _cached_canonical(sub, indices: list, slots: list, cache: dict):
+def _cached_canonical(
+    sub: sp.Basic,
+    indices: list[sp.Idx],
+    slots: list[sp.Idx],
+    cache: dict[sp.Basic, sp.Basic],
+) -> sp.Basic:
     """:func:`_canonical_form` memoised in the per-call ``cache``.
 
     The result depends on ``slots``, so ``cache`` must not outlive the
@@ -567,12 +607,12 @@ def _cached_canonical(sub, indices: list, slots: list, cache: dict):
 
 
 def _own_hoistable_entry(
-    sub,
-    slots: list,
-    index_memo: dict,
-    hoistable_cache: dict,
-    canonical_cache: dict,
-) -> tuple:
+    sub: sp.Basic,
+    slots: list[sp.Idx],
+    index_memo: dict[sp.Basic, frozenset[sp.Idx]],
+    hoistable_cache: dict[sp.Basic, bool],
+    canonical_cache: dict[sp.Basic, sp.Basic],
+) -> tuple[Any, ...]:
     """Return the ``(sub, canonical, indices)`` entry of ``sub`` itself.
 
     The tuple is empty when ``sub`` is not hoistable or its rank exceeds
@@ -588,8 +628,11 @@ def _own_hoistable_entry(
 
 
 def _best_indexed_candidate(
-    counts: dict, expensive_twice: bool, ops_memo: dict, sort_key_memo: dict
-):
+    counts: dict[sp.Basic, int],
+    expensive_twice: bool,
+    ops_memo: dict[sp.Basic, Any],
+    sort_key_memo: dict[sp.Basic, Any],
+) -> sp.Basic | None:
     """Pick the canonical sub-expression to hoist next, or ``None``.
 
     The winner maximises ``(count, count_ops)`` among the candidates that
@@ -607,8 +650,8 @@ def _best_indexed_candidate(
                 sp.default_sort_key, item, sort_key_memo
             ),
         )
-        best = None
-        best_ops = None
+        best: sp.Basic | None = None
+        best_ops: Any = None
         for canon in group:
             ops = _memoised_call(sp.count_ops, canon, ops_memo)
             # A single repeated operation is not worth the extra array
@@ -627,7 +670,7 @@ def _best_indexed_candidate(
     return None
 
 
-def _free_aux_indices(exprs):
+def _free_aux_indices(exprs: Iterable[sp.Basic]) -> list[sp.Idx]:
     """Return the auxiliary indices that do not clash with ``exprs``.
 
     Fortran is case insensitive: lower-cased names are compared, so that
@@ -646,7 +689,9 @@ def _free_aux_indices(exprs):
     return [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
 
 
-def _count_canonical_entries(entries, counted):
+def _count_canonical_entries(
+    entries: list[tuple[Any, ...]], counted: list[bool] | None
+) -> tuple[dict[sp.Basic, int], dict[sp.Basic, int]]:
     """Count the canonical forms and record the rank of each one.
 
     Positions flagged ``False`` in ``counted`` do not contribute (all do
@@ -659,8 +704,8 @@ def _count_canonical_entries(entries, counted):
     sizes : dict
         Number of indices of every canonical form.
     """
-    counts = {}
-    sizes = {}
+    counts: dict[sp.Basic, int] = {}
+    sizes: dict[sp.Basic, int] = {}
     for position, position_entries in enumerate(entries):
         if counted is not None and not counted[position]:
             continue
@@ -670,15 +715,21 @@ def _count_canonical_entries(entries, counted):
     return counts, sizes
 
 
-def _replace_with_temp(exprs, entries, best, target, rank):
+def _replace_with_temp(
+    exprs: list[sp.Expr],
+    entries: list[tuple[Any, ...]],
+    best: sp.Basic,
+    target: sp.Indexed,
+    rank: int,
+) -> list[sp.Expr]:
     """Replace every occurrence of ``best`` by the array ``target``.
 
     Returns a new list; expressions without an occurrence are the very
     same objects.
     """
     base = target.base
-    replacements = {}
-    touched = set()
+    replacements: dict[sp.Basic, sp.Basic] = {}
+    touched: set[int] = set()
     for position, position_entries in enumerate(entries):
         for sub, canon, indices in position_entries:
             if len(indices) == rank and canon == best:
@@ -692,8 +743,12 @@ def _replace_with_temp(exprs, entries, best, target, rank):
 
 
 def _indexed_cse(
-    expressions, namer, arrays, expensive_twice=False, counted=None
-):
+    expressions: Iterable[sp.Expr],
+    namer: _Namer,
+    arrays: dict[str, int],
+    expensive_twice: bool = False,
+    counted: list[bool] | None = None,
+) -> tuple[list[sp.Expr], list[TempDef]]:
     """Hoist index-dependent sub-expressions shared by several outputs.
 
     :func:`_common_scalar_cse` only hoists sub-expressions that do not
@@ -734,9 +789,9 @@ def _indexed_cse(
         How to compute each array temporary, in dependency order.
     """
     exprs = list(expressions)
-    definitions = []
+    definitions: list[TempDef] = []
     slots = _free_aux_indices(exprs)
-    index_memo = {}
+    index_memo: dict[sp.Basic, frozenset[sp.Idx]] = {}
     own_entries = functools.partial(
         _own_hoistable_entry,
         slots=slots,
@@ -744,9 +799,9 @@ def _indexed_cse(
         hoistable_cache={},
         canonical_cache={},
     )
-    entries_memo = {}
-    ops_memo = {}
-    sort_key_memo = {}
+    entries_memo: dict[sp.Basic, tuple[Any, ...]] = {}
+    ops_memo: dict[sp.Basic, Any] = {}
+    sort_key_memo: dict[sp.Basic, Any] = {}
 
     while True:
         entries = [
@@ -773,7 +828,9 @@ def _indexed_cse(
 # ---------------------------------------------------------------------------
 
 
-def _sympy_scalar_cse(expressions, namer, arrays):
+def _sympy_scalar_cse(
+    expressions: Iterable[sp.Expr], namer: _Namer, arrays: dict[str, int]
+) -> tuple[list[sp.Expr], list[TempDef]]:
     """Scalar common sub-expression elimination with :func:`sympy.cse`.
 
     Drop-in alternative to :func:`_common_scalar_cse` used to compare the
@@ -791,16 +848,16 @@ def _sympy_scalar_cse(expressions, namer, arrays):
         order="canonical",
         optimizations=None,
     )
-    inlined = {}
-    kept = []
+    inlined: dict[sp.Basic, sp.Basic] = {}
+    kept: list[tuple[sp.Basic, sp.Basic]] = []
     for symbol, value in replacements:
         value = value.xreplace(inlined)
         if value.atoms(sp.Idx) or value.has(sp.Sum):
             inlined[symbol] = value
             continue
         kept.append((symbol, value))
-    renames = {}
-    definitions = []
+    renames: dict[sp.Basic, sp.Basic] = {}
+    definitions: list[TempDef] = []
     for symbol, value in kept:
         target = _new_shared_temp(namer, [], arrays)
         renames[symbol] = target

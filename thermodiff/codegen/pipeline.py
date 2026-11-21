@@ -1087,7 +1087,7 @@ def _array_cse(ctx: _EmitContext, state: _EmitState) -> None:
         Rewrites ``all_exprs``; writes ``array_defs`` and adds the
         temporaries to ``arrays``.  Draws names from the namer.
     """
-    state.all_exprs, state.array_defs = _indexed_cse(  # type: ignore[no-untyped-call]  # noqa: E501
+    state.all_exprs, state.array_defs = _indexed_cse(
         state.all_exprs,
         state.namer,
         state.arrays,
@@ -1224,7 +1224,7 @@ def _share_sum_temps(ctx: _EmitContext, state: _EmitState) -> None:
     """
     opts = state.opts
     if state.share_sums:
-        state.residuals, state.sum_defs = _share_sums(  # type: ignore[no-untyped-call]  # noqa: E501
+        state.residuals, state.sum_defs = _share_sums(
             state.all_exprs,
             state.namer,
             ctx.diff.indexes,
@@ -1279,7 +1279,7 @@ def _scalar_cse_pass(ctx: _EmitContext, state: _EmitState) -> None:
         cse = _sympy_scalar_cse
     else:
         cse = _common_scalar_cse
-    state.residuals, state.cse_defs = cse(  # type: ignore[no-untyped-call]
+    state.residuals, state.cse_defs = cse(
         state.residuals, state.namer, state.arrays
     )
 
