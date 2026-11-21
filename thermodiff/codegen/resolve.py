@@ -200,7 +200,7 @@ def _scan_atoms(expr: sp.Basic) -> _ScanAtoms:
 
 
 def _select_derivatives(
-    diff: DiffPlz, derivatives: Iterable[str] | None
+    diff: "DiffPlz", derivatives: Iterable[str] | None
 ) -> list[str]:
     """Return the derivative attributes to emit, in canonical order.
 
