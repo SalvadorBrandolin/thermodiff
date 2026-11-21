@@ -1,0 +1,43 @@
+# Peng-Robinson 1976 residual Helmholtz energy Ar(n, V, T), equivalent to
+# yaeos PengRobinson76 + QMR mixing rules + AlphaSoave + GenericCubic_Ar
+# (read-only cross-check: yaeos/src/models/residual_helmholtz/cubic/
+#  implementations.f90:24-91, alphas.f90:46, mixing_rules/base.f90:35-73,
+#  mixing_rules/quadratic_mixing.f90:64-70,139-156, base.f90:79-106).
+# Units follow yaeos: R [bar L /(mol K)], Pc [bar], Tc [K], V [L].
+#
+# NOTE: ntot uses the summation letter 'm' on purpose.  The IR inlines
+# definitions (thermodiff/model/ir.py::_inline); 'sum_i n_i' would be
+# captured inside the bodies of 'sum_i sum_j ...' after inlining.
+
+model pr76
+target fortran
+use yaeos__constants, only: R
+
+variables
+    n   nc
+    V
+    T
+
+parameters
+    Tc    nc
+    Pc    nc
+    w     nc
+    kij   nc nc
+    lij   nc nc
+
+expressions
+    kappa_i = 0.37464 + 1.54226*w_i - 0.26993*w_i^2
+    ac_i    = 0.45723553*R^2*Tc_i^2/Pc_i
+    b_i     = 0.07779607*R*Tc_i/Pc_i
+    alpha_i = (1 + kappa_i*(1 - sqrt(T/Tc_i)))^2
+    a_i     = ac_i*alpha_i
+    ntot    = sum_m n_m
+    bmix    = sum_i sum_j n_i*n_j*((b_i + b_j)/2.0)*(1.0 - lij_ij)/ntot
+    D       = sum_i sum_j n_i*n_j*sqrt(a_i*a_j)*(1.0 - kij_ij)
+    d1      = 1.0 + sqrt(2.0)
+    d2      = 1.0 - sqrt(2.0)
+    f       = log((V + d1*bmix)/(V + d2*bmix))/(bmix*(d1 - d2))
+    g       = R*log(1.0 - bmix/V)
+
+function
+    -ntot*g*T - D*f

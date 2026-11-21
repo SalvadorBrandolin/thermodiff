@@ -1,0 +1,72 @@
+# PC-SAFT (Gross & Sadowski 2001), transcription of the yaeos primal routine AR
+# (yaeos/src/models/residual_helmholtz/saft/pc_saft.f90, type PCSAFT):
+#     Ar = R T ntot (mave*arhs + archn + ardsp)
+# Units: R [bar L/(mol K)], T [K], V [L], sigma [Angstrom], epsk = eps/k_B [K];
+# number density rho = ntot N_A/(V 1e27) in 1/Angstrom^3; pi = 3.14159265359 and
+# N_A = 6.02214076e23 as in yaeos.  Segment diameter d_i = sigma_i (1 - 0.12 exp(-3 epsk_i/T)).
+# z0..z3 = rho pi/6 sum_i x_i m_i d_i^k;  eta = 1 - z3 (the variable `eta` of yaeos).
+# Dispersion: eps_ij = sqrt(epsk_i epsk_j)(1 - kij_ij), sigma_ij = (sigma_i + sigma_j)/2,
+#   m2es3 = sum_ij x_i x_j m_i m_j sigma_ij^3 eps_ij/T (and the squared analogue, m2e2s3);
+#   i1, i2 = sum_{k=0..6} (aa_k, bb_k) z3^k with
+#   aa_k = a0k + (mave-1)/mave a1k + (mave-1)/mave (mave-2)/mave a2k (same for bb_k);
+#   ardsp = -2 pi rho i1 m2es3 - pi rho mave c1 i2 m2e2s3.
+# The constants a0k..b2k are the float32 roundings of the decimals of the paper (yaeos
+# stores them as default-kind literals), written with 17 significant figures.
+# Declarations: epsk is positive (sqrt(epsk_i epsk_j) = sqrt(epsk_i) sqrt(epsk_j)) and kij is
+# symmetric, the same information the hand-written lean implementation uses
+# (bench2/src/bench3/pcsaft_lean.f90).  pcsaft_v1.model is the earlier version without them.
+
+model pcsaft
+target fortran
+use yaeos__constants, only: R
+
+variables
+    n   nc
+    V
+    T
+
+parameters
+    m      nc
+    sigma  nc
+    epsk   nc positive
+    kij    nc nc symmetric
+
+expressions
+    ntot  = sum_l n_l
+    x_i   = n_i/ntot
+    mave  = sum_i x_i*m_i
+    d_i   = sigma_i*(1.0 - 0.12*exp(-3.0*epsk_i/T))
+    rho   = ntot*6.02214076e23/(V*1.0e27)
+    z0    = rho*(3.14159265359/6.0)*sum_i x_i*m_i
+    z1    = rho*(3.14159265359/6.0)*sum_i x_i*m_i*d_i
+    z2    = rho*(3.14159265359/6.0)*sum_i x_i*m_i*d_i^2
+    z3    = rho*(3.14159265359/6.0)*sum_i x_i*m_i*d_i^3
+    eta   = 1.0 - z3
+    arhs  = (3.0*z1*z2/eta + z2^3/(z3*eta^2) + (z2^3/z3^2 - z0)*log(eta))/z0
+    gii_i = 1.0/eta + 3.0*(d_i/2.0)*z2/eta^2 + 2.0*(d_i/2.0)^2*z2^2/eta^3
+    archn = -sum_i x_i*(m_i - 1.0)*log(gii_i)
+    m2es3  = sum_i sum_j x_i*x_j*m_i*m_j*((sigma_i + sigma_j)/2.0)^3*(sqrt(epsk_i*epsk_j)*(1.0 - kij_ij)/T)
+    m2e2s3 = sum_i sum_j x_i*x_j*m_i*m_j*((sigma_i + sigma_j)/2.0)^3*(sqrt(epsk_i*epsk_j)*(1.0 - kij_ij)/T)^2
+    f1    = (mave - 1.0)/mave
+    f2    = (mave - 1.0)/mave*(mave - 2.0)/mave
+    aa0   = (0.9105631709098816 + f1*(-0.3084017038345337) + f2*(-0.09061483293771744))
+    aa1   = (0.6361281275749207 + f1*(0.1860531121492386) + f2*(0.4527842700481415))
+    aa2   = (2.6861348152160645 + f1*(-2.503004789352417) + f2*(0.5962700843811035))
+    aa3   = (-26.54736328125 + f1*(21.4197940826416) + f2*(-1.7241829633712769))
+    aa4   = (97.75920867919922 + f1*(-65.2558822631836) + f2*(-4.130211353302002))
+    aa5   = (-159.59153747558594 + f1*(83.31867980957031) + f2*(13.776632308959961))
+    aa6   = (91.29777526855469 + f1*(-33.74692153930664) + f2*(-8.672846794128418))
+    bb0   = (0.7240946888923645 + f1*(-0.5755497813224792) + f2*(0.09768830984830856))
+    bb1   = (2.238279104232788 + f1*(0.6995095610618591) + f2*(-0.25575751066207886))
+    bb2   = (-4.002584934234619 + f1*(3.8925673961639404) + f2*(-9.155856132507324))
+    bb3   = (-21.003576278686523 + f1*(-17.215471267700195) + f2*(20.64207649230957))
+    bb4   = (26.855640411376953 + f1*(192.67227172851562) + f2*(-38.8044319152832))
+    bb5   = (206.5513458251953 + f1*(-161.8264617919922) + f2*(93.62677764892578))
+    bb6   = (-355.60235595703125 + f1*(-165.2076873779297) + f2*(-29.666906356811523))
+    i1    = aa0 + aa1*z3 + aa2*z3^2 + aa3*z3^3 + aa4*z3^4 + aa5*z3^5 + aa6*z3^6
+    i2    = bb0 + bb1*z3 + bb2*z3^2 + bb3*z3^3 + bb4*z3^4 + bb5*z3^5 + bb6*z3^6
+    c1    = 1.0/(1.0 + mave*(8.0*z3 - 2.0*z3^2)/eta^4 + (1.0 - mave)*(20.0*z3 - 27.0*z3^2 + 12.0*z3^3 - 2.0*z3^4)/((1.0 - z3)*(2.0 - z3))^2)
+    ardsp = -(2.0*3.14159265359*rho*i1*m2es3) - 1.0*3.14159265359*rho*mave*c1*i2*m2e2s3
+
+function
+    R*T*ntot*(mave*arhs + archn + ardsp)

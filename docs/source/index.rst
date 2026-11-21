@@ -5,6 +5,7 @@
    :maxdepth: 2
 
    tutorial/index
+   architecture
 
 .. toctree::
    :maxdepth: 1

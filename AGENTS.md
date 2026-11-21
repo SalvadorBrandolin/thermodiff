@@ -41,7 +41,7 @@ flake8 tests/ thermodiff/
 # Docstyle (numpy convention)
 pydocstyle thermodiff --convention=numpy
 
-# Format (Black, line-length 79, target py312)
+# Format (Black, line-length 79, target py310 to py313)
 black tests/ thermodiff/
 
 # Check manifest
@@ -79,13 +79,20 @@ tox -e coverage
 ```
 thermodiff/
 ├── __init__.py          # Public exports
+├── chain.py             # Structured differentiation by the chain rule over summation nodes
+├── derivatives.py       # Resolution of user supplied derivative selections
 ├── diffplz.py           # DiffPlz class (main feature)
+├── fortran.py           # Fortran code generation for thermodynamic models
+├── latex_utils.py       # LaTeX formatting utilities for DiffPlz
 ├── thermovars.py        # Predefined symbols (P, R, T, V, i, j, k, l, m, n, nc)
-└── core/
-    ├── __init__.py
-    ├── easy_sums.py     # sum_components, sum_custom
-    ├── idxfunction.py   # idx_function factory
-    └── kronecker_handling.py  # handle_free_kronecker, handle_sum_kronecker
+├── yaeos_model.py       # yaeos model wrappers for thermodiff-generated kernels
+├── core/
+│   ├── __init__.py
+│   ├── easy_sums.py     # sum_components, sum_custom
+│   ├── idxfunction.py   # idx_function factory
+│   └── kronecker_handling.py  # handle_free_kronecker, handle_sum_kronecker
+├── gui/                 # Optional Streamlit front-end for the .model language
+└── model/               # Front-end for the .model file format
 ```
 
 ## Important Conventions
@@ -97,7 +104,7 @@ thermodiff/
 - Coverage threshold: 90% (enforced in `tox.ini`)
 
 ### Code Style
-- Black: line-length 79, target Python 3.12
+- Black: line-length 79, target Python 3.10 to 3.13
 - Flake8 with plugins: black, builtins, import-order, pep8-naming
 - Docstrings: NumPy convention (validated by pydocstyle)
 
@@ -169,11 +176,11 @@ When requested to implement or analyze a thermodynamic model specified in LaTeX,
 ## CI/CD
 - GitHub Actions runs: `py310` (with style, docstyle, check-manifest, coverage, docs), `py311`, `py312`, `py313`
 - Coverage must pass 90% threshold
-- No separate CI config file found; `tox.ini` defines the matrix via `[gh-actions]`
+- Workflows are in `.github/workflows/` (`ci.yml`, `docs.yml`, `release.yml`); `tox.ini` defines the matrix via `[gh-actions]`
 
 ## Common Gotchas
-1. **No `AGENTS.md` or `.github/` configs existed** — this file is the primary agent guide
-2. **Install via git** — `pip install git+https://github.com/SalvadorBrandolin/thermodiff` (not on PyPI)
+1. **Agent guide** — this file is the primary agent guide for the repository
+2. **Install** — `pip install thermodiff` from PyPI; releases are published from the upstream repository SalvadorBrandolin/thermodiff. All install commands are in the Installation section of `README.md`
 3. **SymPy >= 1.14.0** required
 4. **Predefined symbols** in `thermovars.py`: `P, R, T, V` (thermo vars) and `i, j, k, l, m, n, nc` (indices)
 5. **Internal functions** must be passed to `DiffPlz` for proper LaTeX substitution (`clean_plz`, `latex_readable_plz`)

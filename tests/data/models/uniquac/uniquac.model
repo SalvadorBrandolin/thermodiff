@@ -1,0 +1,34 @@
+# UNIQUAC excess Gibbs energy, equivalent to yaeos UNIQUAC (models/excess_gibbs/uniquac.f90)
+# with  u_lk = ua_lk + ub_lk/T + uc_lk*ln T  (dij = eij = 0), tau_lk = exp(u_lk):
+#     G^E/(R T) = sum_k n_k ln(phi_k/x_k) + z/2 sum_k q_k n_k ln(theta_k/phi_k)
+#                 - sum_k q_k n_k ln(sum_l theta_l tau_lk)
+#     x_k = n_k/ntot, phi_k = r_k n_k/sum(r n), theta_k = q_k n_k/sum(q n)
+# Index convention of yaeos: the residual sum runs over the FIRST index of tau
+# (tau(l,k) multiplies theta_l).  z = 10 as in yaeos.
+
+model uniquac
+target fortran
+use yaeos__constants, only: R
+
+variables
+    n   nc
+    T
+
+parameters
+    q   nc
+    r   nc
+    ua  nc nc
+    ub  nc nc
+    uc  nc nc
+
+expressions
+    z       = 10.0
+    u_ij    = ua_ij + ub_ij/T + uc_ij*log(T)
+    tau_ij  = exp(u_ij)
+    ntot    = sum_m n_m
+    sr      = sum_m n_m*r_m
+    sq      = sum_m n_m*q_m
+    theta_i = n_i*q_i/sq
+
+function
+    R*T*(sum_i n_i*log(ntot*r_i/sr) + z/2.0*sum_i n_i*q_i*log(q_i*sr/(r_i*sq)) - sum_i n_i*q_i*log(sum_l theta_l*tau_li))

@@ -1,8 +1,6 @@
 """Tests for the Fortran code generation module."""
 
-import os
-import shutil
-import subprocess
+from fortran_tools import GFORTRAN, OPTIMISED_FLAGS, compile_and_run
 
 import pytest
 
@@ -10,6 +8,7 @@ import sympy as sp
 
 from thermodiff import (
     DiffPlz,
+    R,
     T,
     V,
     idx_function,
@@ -17,21 +16,25 @@ from thermodiff import (
     l,
     m,
     n,
+    nc,
     sum_components,
     to_fortran,
 )
-from thermodiff.fortran import _Namer, _common_scalar_cse, _indexed_cse
-
-
-def _find_gfortran():
-    """Return the gfortran executable to use, honoring ``FC``."""
-    compiler = os.environ.get("FC")
-    if compiler and "gfortran" in os.path.basename(compiler).lower():
-        return compiler
-    return shutil.which("gfortran")
-
-
-GFORTRAN = _find_gfortran()
+from thermodiff.fortran import (
+    _Namer,
+    _best_indexed_candidate,
+    _best_scalar_candidate,
+    _common_scalar_cse,
+    _derivative_function_atoms,
+    _expand_sums,
+    _free_indices,
+    _index_set,
+    _indexed_cse,
+    _preorder_entries,
+    _scan_atoms,
+    _sorted_sums,
+    _sum_atoms,
+)
 
 
 def explicit_diff():
@@ -119,7 +122,6 @@ class TestBody:
         code = to_fortran(diff, derivatives=["dni"])
         assert "if (i == k) then" in code
         assert "else" in code
-        assert "dx_kdn(i, k) = res" in code
 
     def test_zero_derivatives_are_skipped(self):
         code = to_fortran(mole_fraction_diff())
@@ -228,6 +230,52 @@ class TestOptions:
         assert "if (present(dfdT)) then" in code
 
 
+class TestFreeIndices:
+    """Free-index detection on hand-built expressions."""
+
+    NC = sp.Symbol("nc", integer=True)
+
+    def test_free_and_bound_indices(self):
+        total = sp.Sum(n[k], (k, 1, self.NC))
+        assert _free_indices(n[k] + 1) == {k}
+        assert _free_indices(total + 1) == set()
+        assert _free_indices(sp.Sum(n[k] * n[l], (k, 1, self.NC))) == {l}
+
+    def test_nested_sums(self):
+        inner = sp.Sum(n[l], (l, 1, self.NC))
+        nested = sp.Sum(n[k] * inner, (k, 1, self.NC))
+        assert _free_indices(nested) == set()
+
+    def test_idx_under_sum_limit_stays_free(self):
+        assert _free_indices(sp.Sum(n[k], (k, 1, l))) == {l}
+
+    def test_bound_index_is_bound_everywhere(self):
+        # ``k`` is a summation index somewhere, so it is not reported
+        # as free even where it appears outside that sum.
+        first = sp.Sum(n[k], (k, 1, self.NC))
+        second = sp.Sum(n[k] * n[l], (k, 1, self.NC))
+        assert _free_indices(n[k] * first + n[l] * second) == {l}
+
+    def test_shared_memo_matches_unmemoised_on_every_subtree(self):
+        first = sp.Sum(n[k], (k, 1, self.NC))
+        second = sp.Sum(n[k] * n[l], (k, 1, self.NC))
+        expressions = [
+            n[k] * first + n[l] * second,
+            sp.Piecewise((n[k], sp.Eq(k, l)), (first, True)),
+            sp.KroneckerDelta(k, l) * second,
+            sp.Sum(sp.KroneckerDelta(k, l) * n[k], (k, 1, self.NC)),
+            first * sp.Sum(n[k], (k, 1, l)),
+            sp.Sum(
+                n[k] * sp.Sum(n[l] * n[k], (l, 1, self.NC)), (k, 1, self.NC)
+            )
+            + n[l],
+        ]
+        memo = {}
+        for expr in expressions:
+            for sub in sp.preorder_traversal(expr):
+                assert _free_indices(sub, memo=memo) == _free_indices(sub)
+
+
 class TestSharing:
     """Shared summations and common sub-expressions."""
 
@@ -246,8 +294,108 @@ class TestSharing:
         exprs = [product + x, product + y, product + 1]
         residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
         assert len(definitions) == 1
-        target = definitions[0]["target"]
+        target = definitions[0].target
         assert all(target in expr.free_symbols for expr in residuals)
+
+    def test_common_scalars_pinned_order(self):
+        namer = _Namer()
+        arrays = {}
+        a, b, c = sp.symbols("a b c")
+        inner = sp.exp(a * b)
+        shared = sp.sqrt(a * b + c)
+        exprs = [
+            inner * T + shared,
+            inner * V + shared,
+            inner + shared * T,
+            shared * inner * c,
+            sp.log(inner) + shared**2,
+        ]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert [str(expr) for expr in residuals] == [
+            "T*t2 + t3",
+            "V*t2 + t3",
+            "T*t3 + t2",
+            "c*t2*t3",
+            "c + t1 + log(t2)",
+        ]
+        assert [
+            (str(item.target), str(item.body)) for item in definitions
+        ] == [
+            ("t1", "a*b"),
+            ("t2", "exp(t1)"),
+            ("t3", "sqrt(c + t1)"),
+        ]
+        assert [str(name) for name in namer.created] == ["t1", "t2", "t3"]
+        assert arrays == {}
+
+    def test_common_scalars_sort_key_breaks_ties(self):
+        namer = _Namer()
+        arrays = {}
+        a, c = sp.symbols("a c")
+        # ``sin(a)`` and ``cos(a)`` share count and ``count_ops``, so the
+        # larger ``default_sort_key`` (``cos``) is hoisted first.
+        first, second = sp.sin(a), sp.cos(a)
+        assert sp.count_ops(first) == sp.count_ops(second)
+        exprs = [
+            first * T + second * V,
+            first * V + second * T,
+            first + second + c,
+        ]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert [str(expr) for expr in residuals] == [
+            "T*t2 + V*t1",
+            "T*t1 + V*t2",
+            "c + t1 + t2",
+        ]
+        assert [
+            (str(item.target), str(item.body)) for item in definitions
+        ] == [("t1", "cos(a)"), ("t2", "sin(a)")]
+        assert [str(name) for name in namer.created] == ["t1", "t2"]
+
+    def test_common_scalars_count_ops_breaks_count_ties(self):
+        namer = _Namer()
+        arrays = {}
+        a, b, c = sp.symbols("a b c")
+        # Both candidates occur twice; ``sqrt(a*b + c)`` has more
+        # operations, so it is hoisted first.  The last expression holds
+        # no candidate and must come back untouched.
+        big, small = sp.sqrt(a * b + c), sp.sin(a)
+        assert sp.count_ops(big) > sp.count_ops(small)
+        exprs = [big * T + small * V, big * V + small * T, c + 5]
+        residuals, definitions = _common_scalar_cse(exprs, namer, arrays)
+        assert [str(expr) for expr in residuals] == [
+            "T*t1 + V*t2",
+            "T*t2 + V*t1",
+            "c + 5",
+        ]
+        assert residuals[2] is exprs[2]
+        assert [
+            (str(item.target), str(item.body)) for item in definitions
+        ] == [("t1", "sqrt(a*b + c)"), ("t2", "sin(a)")]
+
+    def test_best_scalar_candidate_ranks_only_top_count(self):
+        a, b = sp.symbols("a b")
+        cheap, costly, rare = sp.sin(a), sp.exp(a * b), sp.log(a)
+        counts = {cheap: 3, rare: 2, costly: 3}
+        ranked = {}
+        best = _best_scalar_candidate(list(counts), counts, ranked)
+        assert best == costly
+        assert rare not in ranked
+
+    def test_best_indexed_candidate_falls_back_to_lower_count(self):
+        ac = sp.IndexedBase("ac", shape=(sp.Symbol("nc", integer=True),))
+        cheap = sp.log(ac[k])
+        costly = sp.sqrt(ac[k] ** 2 + 1)
+        # The count-three group holds only the cheap factor, which is
+        # kept (three uses); the pair at count two is never examined.
+        counts = {costly: 2, cheap: 3}
+        ops_memo = {}
+        assert _best_indexed_candidate(counts, False, ops_memo, {}) == cheap
+        assert costly not in ops_memo
+        # With the cheap factor used twice it is filtered out.
+        counts = {costly: 2, cheap: 2}
+        assert _best_indexed_candidate(counts, False, {}, {}) == costly
+        assert _best_indexed_candidate({cheap: 2}, False, {}, {}) is None
 
     def test_index_dependent_terms_are_not_hoisted(self):
         namer = _Namer()
@@ -266,8 +414,8 @@ class TestSharing:
         residuals, definitions = _indexed_cse(exprs, namer, arrays)
         assert len(definitions) == 1
         definition = definitions[0]
-        assert len(definition["free"]) == 1
-        base = definition["target"].base
+        assert len(definition.free) == 1
+        base = definition.target.base
         assert str(base) in arrays
         assert arrays[str(base)] == 1
         assert all(
@@ -282,12 +430,124 @@ class TestSharing:
         exprs = [root * T, root * V, root + 1]
         residuals, definitions = _indexed_cse(exprs, namer, arrays)
         assert len(definitions) == 1
-        base = definitions[0]["target"].base
+        base = definitions[0].target.base
         assert arrays[str(base)] == 2
         assert all(
             any(indexed.base == base for indexed in expr.atoms(sp.Indexed))
             for expr in residuals
         )
+
+    @staticmethod
+    def _pinned_cse_expressions():
+        ac = sp.IndexedBase("ac", shape=(sp.Symbol("nc", integer=True),))
+        pair = sp.sqrt(ac[k] * ac[l])
+        root = sp.sqrt(n[k] ** 2 + 1)
+        logn = sp.log(n[k] + ac[k])
+        return [
+            pair * T + root * V,
+            pair * V + root + logn,
+            pair + logn * T,
+            root * logn + 3,
+        ]
+
+    @staticmethod
+    def _describe_cse(residuals, definitions, arrays):
+        return (
+            [str(expr) for expr in residuals],
+            [
+                (
+                    str(item.target),
+                    [str(index) for index in item.free],
+                    str(item.body),
+                )
+                for item in definitions
+            ],
+            arrays,
+        )
+
+    def test_indexed_cse_output_is_pinned(self):
+        arrays = {}
+        residuals, definitions = _indexed_cse(
+            self._pinned_cse_expressions(), _Namer(), arrays
+        )
+        assert self._describe_cse(residuals, definitions, arrays) == (
+            [
+                "T*t2[k, l] + V*t1[k]",
+                "V*t2[k, l] + t1[k] + t3[k]",
+                "T*t3[k] + t2[k, l]",
+                "t1[k]*t3[k] + 3",
+            ],
+            [
+                ("t1[p]", ["p"], "sqrt(n[p]**2 + 1)"),
+                ("t2[p, q]", ["p", "q"], "sqrt(ac[p]*ac[q])"),
+                ("t3[p]", ["p"], "log(ac[p] + n[p])"),
+            ],
+            {"t1": 1, "t2": 2, "t3": 1},
+        )
+
+    def test_indexed_cse_output_is_pinned_with_counted(self):
+        # Only positions 1 and 2 are counted, but every position is
+        # rewritten once a shared factor has been chosen.
+        arrays = {}
+        residuals, definitions = _indexed_cse(
+            self._pinned_cse_expressions(),
+            _Namer(),
+            arrays,
+            counted=[False, True, True, False],
+        )
+        assert self._describe_cse(residuals, definitions, arrays) == (
+            [
+                "T*t1[k, l] + V*sqrt(n[k]**2 + 1)",
+                "V*t1[k, l] + sqrt(n[k]**2 + 1) + t2[k]",
+                "T*t2[k] + t1[k, l]",
+                "sqrt(n[k]**2 + 1)*t2[k] + 3",
+            ],
+            [
+                ("t1[p, q]", ["p", "q"], "sqrt(ac[p]*ac[q])"),
+                ("t2[p]", ["p"], "log(ac[p] + n[p])"),
+            ],
+            {"t1": 2, "t2": 1},
+        )
+
+    def test_indexed_cse_cheap_filter_with_counted(self):
+        # ``log(ac[k])`` is counted twice with a single operation, so the
+        # ``ops < 2 and count < 3`` filter keeps it inline; the third
+        # position is not counted although it also holds the factor.
+        ac = sp.IndexedBase("ac", shape=(sp.Symbol("nc", integer=True),))
+        cheap = sp.log(ac[k])
+        root = sp.sqrt(n[k] ** 2 + 1)
+        exprs = [
+            cheap * T + root * V,
+            cheap * V + root + 3,
+            cheap + root * T,
+            cheap * 5,
+        ]
+        arrays = {}
+        residuals, definitions = _indexed_cse(
+            exprs, _Namer(), arrays, counted=[True, True, False, False]
+        )
+        assert self._describe_cse(residuals, definitions, arrays) == (
+            [
+                "T*log(ac[k]) + V*t1[k]",
+                "V*log(ac[k]) + t1[k] + 3",
+                "T*t1[k] + log(ac[k])",
+                "5*log(ac[k])",
+            ],
+            [("t1[p]", ["p"], "sqrt(n[p]**2 + 1)")],
+            {"t1": 1},
+        )
+
+    def test_index_set_matches_atoms(self):
+        total = sp.Sum(n[k], (k, 1, 5))
+        exprs = [
+            sp.sqrt(n[k] * n[l]) + T,
+            total + n[l],
+            sp.KroneckerDelta(k, l) * V,
+        ]
+        memo = {}
+        for expr in exprs:
+            for sub in sp.preorder_traversal(expr):
+                assert _index_set(sub, memo) == frozenset(sub.atoms(sp.Idx))
 
     def test_indexed_cse_skips_rank_three(self):
         # A rank three temporary is ``nc**3`` entries; benchmarks show it
@@ -335,6 +595,56 @@ class TestSharing:
         assert residuals == exprs
 
 
+def _nested_expressions():
+    """Build expressions that cover the node types of the CSE passes."""
+    f = sp.Function("f")
+    body = sp.sqrt(n[k] * n[l]) + sp.exp(-T / (R * n[k]))
+    return [
+        sp.Sum(body * f(T, n[k]), (k, 1, nc)) ** 2 + T,
+        sp.Piecewise((body, sp.Eq(k, l)), (n[k] ** 3 / T, True)),
+        sp.KroneckerDelta(k, l) * sp.log(T) * f(T, T) + sp.Max(T, 2, R),
+        sp.And(sp.Eq(k, l), sp.Lt(T, 3)),
+    ]
+
+
+class TestPreorderEntries:
+    """The memoised walk reproduces ``sp.preorder_traversal``."""
+
+    @staticmethod
+    def _node_itself(node):
+        return (node,)
+
+    def test_matches_preorder_traversal(self):
+        memo = {}
+        for expr in _nested_expressions():
+            walked = _preorder_entries(expr, self._node_itself, memo)
+            assert list(walked) == list(sp.preorder_traversal(expr))
+
+    def test_reuses_memo_after_xreplace(self):
+        memo = {}
+        exprs = _nested_expressions()
+        for expr in exprs:
+            _preorder_entries(expr, self._node_itself, memo)
+        rule = {sp.exp(-T / (R * n[k])): sp.Symbol("tmp")}
+        for expr in exprs:
+            rewritten = expr.xreplace(rule)
+            walked = _preorder_entries(rewritten, self._node_itself, memo)
+            assert list(walked) == list(sp.preorder_traversal(rewritten))
+
+    def test_filtered_entries(self):
+        def only_functions(node):
+            return (node,) if isinstance(node, sp.Function) else ()
+
+        for expr in _nested_expressions():
+            walked = _preorder_entries(expr, only_functions, {})
+            expected = [
+                node
+                for node in sp.preorder_traversal(expr)
+                if isinstance(node, sp.Function)
+            ]
+            assert list(walked) == expected
+
+
 @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
 class TestCompile:
     """Compile and run the generated code with gfortran."""
@@ -344,19 +654,7 @@ class TestCompile:
         module += "\nend module thermo_mod\n"
         source = tmp_path / "main.f90"
         source.write_text(module + driver)
-        exe = tmp_path / ("a.exe" if os.name == "nt" else "a.out")
-        compile_result = subprocess.run(
-            [GFORTRAN, "-O2", "-o", str(exe), str(source)],
-            capture_output=True,
-            text=True,
-            cwd=tmp_path,
-        )
-        assert compile_result.returncode == 0, compile_result.stderr
-        run_result = subprocess.run(
-            [str(exe)], capture_output=True, text=True, cwd=tmp_path
-        )
-        assert run_result.returncode == 0, run_result.stderr
-        return run_result.stdout
+        return compile_and_run([source], tmp_path, OPTIMISED_FLAGS).stdout
 
     def test_explicit_model(self, tmp_path):
         code = to_fortran(explicit_diff())
@@ -415,6 +713,35 @@ class TestCompile:
         assert values[3] == pytest.approx(1 / 6 - 1 / 36)
         assert values[4] == pytest.approx(-2 / 36)
 
+    def test_piecewise_branches_match_the_analytic_jacobian(self, tmp_path):
+        """Both Kronecker branches agree with ``d x_k / d n_i``."""
+        code = to_fortran(mole_fraction_diff(), derivatives=["dni"])
+        driver = (
+            "program main\n"
+            "  use thermo_mod\n"
+            "  implicit none\n"
+            "  integer, parameter :: nc = 3\n"
+            "  real(8) :: n(nc)\n"
+            "  real(8) :: x_k(nc), dx_kdn(nc, nc)\n"
+            "  integer :: i\n"
+            "  n = [1.0d0, 2.0d0, 3.0d0]\n"
+            "  call x_k_derivs(nc, n, x_k, dx_kdn)\n"
+            "  do i = 1, nc\n"
+            "    write(*,*) dx_kdn(i, :)\n"
+            "  end do\n"
+            "end program main\n"
+        )
+        output = self._compile_and_run(tmp_path, code, driver)
+        values = [float(value) for value in output.split()]
+        moles = [1.0, 2.0, 3.0]
+        total = sum(moles)
+        expected = [
+            float(i == k) / total - moles[k] / total**2
+            for i in range(3)
+            for k in range(3)
+        ]
+        assert values == pytest.approx(expected, rel=1e-12)
+
     def test_optional_derivatives_subset(self, tmp_path):
         code = to_fortran(explicit_diff(), optional_derivatives=True)
         driver = (
@@ -440,3 +767,92 @@ class TestCompile:
         assert values[1] == pytest.approx(58.0)  # f alongside dfdT
         assert values[2] == pytest.approx(14.0)  # dfdT alongside f
         assert values[3] == pytest.approx(14.0)  # dfdT on its own
+
+
+def test_scan_atoms_matches_separate_atoms_calls():
+    """The merged walk returns the same sets as separate ``atoms`` calls."""
+    idx = sp.Idx("a")
+    base = sp.IndexedBase("w")
+    other = sp.IndexedBase("z")
+    scalar_symbol = sp.Symbol("x")
+    exprs = [
+        scalar_symbol,
+        base[idx] * scalar_symbol
+        + sp.Sum(other[idx, idx] * sp.exp(scalar_symbol), (idx, 1, 3)),
+        sp.Integer(3),
+        sp.Sum(sp.Sum(base[idx], (idx, 1, 2)) * scalar_symbol, (idx, 1, 4)),
+    ]
+    for expr in exprs:
+        scan = _scan_atoms(expr)
+        assert scan.indexed == expr.atoms(sp.Indexed)
+        assert scan.sums == expr.atoms(sp.Sum)
+        assert scan.idxs == expr.atoms(sp.Idx)
+        assert scan.bases == expr.atoms(sp.IndexedBase)
+        assert scan.symbols == expr.atoms(sp.Symbol)
+        assert (scalar_symbol in scan.symbols) == expr.has(scalar_symbol)
+
+
+def test_derivative_function_atoms_match_atoms_calls():
+    """The merged walk equals ``atoms(Derivative)`` / ``atoms(Function)``."""
+    scalar_symbol = sp.Symbol("x")
+    func = sp.Function("f")(scalar_symbol)
+    exprs = [
+        scalar_symbol,
+        func + sp.sin(scalar_symbol),
+        sp.Derivative(func, scalar_symbol) * sp.exp(func),
+    ]
+    for expr in exprs:
+        derivatives, functions = _derivative_function_atoms(expr)
+        assert derivatives == expr.atoms(sp.Derivative)
+        assert functions == expr.atoms(sp.Function)
+
+
+def test_sum_atoms_memo_matches_atoms_and_sorting():
+    """The memoised helpers equal ``atoms(Sum)`` and its sorted order."""
+    idx = sp.Idx("a")
+    base = sp.IndexedBase("w")
+    inner = sp.Sum(base[idx], (idx, 1, 2))
+    expr = sp.Sum(inner * base[idx], (idx, 1, 3)) + sp.Sum(
+        base[idx] ** 2, (idx, 1, 5)
+    )
+    memo, sorted_memo = {}, {}
+    for _ in range(2):  # second round is served from the memo
+        assert _sum_atoms(expr, memo) == expr.atoms(sp.Sum)
+        assert _sorted_sums(expr, memo, sorted_memo) == tuple(
+            sorted(expr.atoms(sp.Sum), key=sp.default_sort_key)
+        )
+    assert _sum_atoms(sp.Symbol("x"), memo) == set()
+
+
+def test_expand_sums_nested_and_sibling_output_is_pinned():
+    """Pin statements and residual of ``_expand_sums``."""
+    a, b = sp.Idx("a"), sp.Idx("b")
+    w, g = sp.IndexedBase("w"), sp.IndexedBase("g")
+
+    nested = sp.Sum(w[a] / sp.Sum(w[b] * g[b, a], (b, 1, 3)), (a, 1, 3))
+    statements, residual = _expand_sums(nested, _Namer())
+    assert statements == [
+        "t1 = 0.0d0",
+        "do a = 1, 3",
+        "   t2 = 0.0d0",
+        "   do b = 1, 3",
+        "      t2 = t2 + g(b, a)*w(b)",
+        "   end do",
+        "   t1 = t1 + w(a)/t2",
+        "end do",
+    ]
+    assert residual == sp.Symbol("t1")
+
+    siblings = sp.Sum(w[a], (a, 1, 2)) * sp.Sum(w[b] ** 2, (b, 1, 4))
+    statements, residual = _expand_sums(siblings, _Namer())
+    assert statements == [
+        "t1 = 0.0d0",
+        "do a = 1, 2",
+        "   t1 = t1 + w(a)",
+        "end do",
+        "t2 = 0.0d0",
+        "do b = 1, 4",
+        "   t2 = t2 + w(b)**2",
+        "end do",
+    ]
+    assert residual == sp.Symbol("t1") * sp.Symbol("t2")

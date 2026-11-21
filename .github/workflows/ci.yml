@@ -9,7 +9,7 @@ on:
 jobs:
   test-linux:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # setup-fortran has no gcc "latest" for ubuntu-26.04 yet
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13']
