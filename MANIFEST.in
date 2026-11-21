@@ -16,6 +16,7 @@ exclude tox.ini *.ipynb
 exclude requirements-dev.txt
 exclude requirements.txt
 exclude AGENTS.md
+exclude REPORT.md
 exclude .git-blame-ignore-revs
 
 recursive-exclude dist *
