@@ -1,5 +1,6 @@
 """Invariant and affine hoisting for the Fortran code generator."""
 
+from collections.abc import Callable, Iterable, Sequence
 from typing import NamedTuple
 
 import sympy as sp
@@ -11,10 +12,17 @@ from thermodiff.codegen.common import (
     _free_indices,
     _index_symbols,
     _is_expensive,
+    _Namer,
     _new_shared_temp,
     _temp_name,
 )
-from thermodiff.codegen.ir import TempDef
+from thermodiff.codegen.ir import Limit, TempDef
+
+#: A separable term ``(scalar, factor over first, factor over second)``.
+_SeparableTerm = tuple[sp.Expr, sp.Expr, sp.Expr]
+
+#: A rank-2 output residual and its free indices.
+_Output = tuple[sp.Expr, Sequence[sp.Idx]]
 
 
 class _HoistState(NamedTuple):
@@ -34,14 +42,19 @@ class _HoistState(NamedTuple):
         Canonical body -> target of every temporary created so far.
     """
 
-    slots: list
-    namer: object
-    arrays: dict
-    definitions: list
-    temps: dict
+    slots: list[sp.Idx]
+    namer: _Namer
+    arrays: dict[str, int]
+    definitions: list[TempDef]
+    temps: dict[sp.Basic, sp.Basic]
 
 
-def _used_names(expressions, sum_definitions, arrays, reserved):
+def _used_names(
+    expressions: Iterable[sp.Basic],
+    sum_definitions: Iterable[TempDef],
+    arrays: Iterable[str],
+    reserved: Iterable[object],
+) -> set[str]:
     """Lower-cased names the slot indices of the temporaries must avoid.
 
     ``reserved`` holds every name of the subroutine (arguments, outputs,
@@ -70,7 +83,9 @@ def _used_names(expressions, sum_definitions, arrays, reserved):
     return used
 
 
-def _new_hoist_state(used, namer, arrays):
+def _new_hoist_state(
+    used: set[str], namer: _Namer, arrays: dict[str, int]
+) -> _HoistState:
     """Empty state whose slot indices avoid the names in ``used``."""
     return _HoistState(
         slots=[sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used],
@@ -81,7 +96,7 @@ def _new_hoist_state(used, namer, arrays):
     )
 
 
-def _is_hoist_candidate(sub, bound):
+def _is_hoist_candidate(sub: sp.Basic, bound: set[sp.Idx]) -> bool:
     """Whether ``sub`` is a costly sub-expression worth hoisting.
 
     Parameters
@@ -107,7 +122,7 @@ def _is_hoist_candidate(sub, bound):
     return _is_expensive(sub)
 
 
-def _hoisted_temporary(state, sub):
+def _hoisted_temporary(state: _HoistState, sub: sp.Expr) -> sp.Basic:
     """Replace ``sub`` by its temporary, created on first use.
 
     The temporary is canonicalised onto the slot indices, so equal
@@ -129,7 +144,9 @@ def _hoisted_temporary(state, sub):
     return sp.Indexed(target.base, *indices)
 
 
-def _rewrite_leaf(state, expr, bound):
+def _rewrite_leaf(
+    state: _HoistState, expr: sp.Basic, bound: set[sp.Idx]
+) -> sp.Basic:
     """Rewrite an expression without arguments, an ``Indexed`` or a
     ``Piecewise`` (only a ``Piecewise`` that holds a sum is descended)."""
     if isinstance(expr, sp.Piecewise) and expr.has(sp.Sum):
@@ -139,11 +156,13 @@ def _rewrite_leaf(state, expr, bound):
     return expr
 
 
-def _rewrite_terms(state, expr, bound):
+def _rewrite_terms(
+    state: _HoistState, expr: sp.Basic, bound: set[sp.Idx]
+) -> sp.Basic:
     """Rewrite a product or sum, hoisting the groups of factors that share
     the same indices (when the group is costly enough to be a candidate)."""
-    groups = {}
-    rest = []
+    groups: dict[frozenset[sp.Idx], list[sp.Basic]] = {}
+    rest: list[sp.Basic] = []
     for arg in expr.args:
         indices = frozenset(_index_symbols(arg))
         if bound <= indices or arg.has(sp.Sum) or arg.is_Number:
@@ -163,7 +182,9 @@ def _rewrite_terms(state, expr, bound):
     return expr.func(*new_args)
 
 
-def _rewrite_hoisting(state, expr, bound):
+def _rewrite_hoisting(
+    state: _HoistState, expr: sp.Basic, bound: set[sp.Idx] | None
+) -> sp.Basic:
     """Rewrite ``expr``; ``bound`` is None outside every summation."""
     if isinstance(expr, sp.Sum):
         inner = {limit[0] for limit in expr.limits}
@@ -189,10 +210,12 @@ def _rewrite_hoisting(state, expr, bound):
     )
 
 
-def _rewrite_sum_definitions(state, sum_definitions):
+def _rewrite_sum_definitions(
+    state: _HoistState, sum_definitions: list[TempDef]
+) -> list[TempDef]:
     """Hoist from the body of every looped definition, inserting the new
     temporaries right before it."""
-    rewritten = []
+    rewritten: list[TempDef] = []
     for definition in sum_definitions:
         if definition.limits:
             bound = {limit[0] for limit in definition.limits}
@@ -206,8 +229,12 @@ def _rewrite_sum_definitions(state, sum_definitions):
 
 
 def _hoist_invariants(
-    expressions, namer, arrays, sum_definitions=(), reserved=()
-):
+    expressions: Iterable[sp.Expr],
+    namer: _Namer,
+    arrays: dict[str, int],
+    sum_definitions: Iterable[TempDef] = (),
+    reserved: Iterable[object] = (),
+) -> tuple[list[sp.Expr], list[TempDef], list[TempDef]]:
     """Move loop-invariant costly sub-expressions out of summation loops.
 
     Inside ``Sum(body, (a, ...), (b, ...))`` a sub-expression of ``body``
@@ -252,7 +279,7 @@ def _hoist_invariants(
     return exprs, hoisted, _rewrite_sum_definitions(state, sum_definitions)
 
 
-def _collect_terms(expr):
+def _collect_terms(expr: sp.Expr) -> sp.Expr:
     """Group the terms of a sum by their index-dependent factors.
 
     ``a*x(i) + b*x(i)*y(j) + c*x(i) + d`` becomes
@@ -261,7 +288,7 @@ def _collect_terms(expr):
     """
     if not isinstance(expr, sp.Add):
         return expr
-    groups = {}
+    groups: dict[sp.Expr, list[sp.Expr]] = {}
     for term in expr.args:
         factors = term.args if isinstance(term, sp.Mul) else (term,)
         coef = [f for f in factors if not f.atoms(sp.Idx)]
@@ -278,7 +305,7 @@ def _collect_terms(expr):
     )
 
 
-def _pair_term(term, free):
+def _pair_term(term: sp.Expr, free: frozenset[sp.Idx]) -> bool:
     """Whether a factor of ``term`` depends on every index of ``free`` (or is
     a ``Piecewise``, as the Kronecker deltas)."""
     return any(
@@ -287,7 +314,9 @@ def _pair_term(term, free):
     )
 
 
-def _distribute(expr, free, limit=2000):
+def _distribute(
+    expr: sp.Expr, free: Iterable[sp.Idx], limit: int = 2000
+) -> list[sp.Expr] | None:
     """Terms of ``expr`` with products distributed over the sums that have a
     term over some but not all of the indices ``free`` (a rank-2 residual).
     Scalar sums, pair sums such as ``1 - k(i, j)`` (every term scalar or over
@@ -295,7 +324,7 @@ def _distribute(expr, free, limit=2000):
     ``limit`` terms."""
     free = frozenset(free)
     if isinstance(expr, sp.Add):
-        terms = []
+        terms: list[sp.Expr] = []
         for arg in expr.args:
             sub = _distribute(arg, free, limit)
             if sub is None:
@@ -321,7 +350,9 @@ def _distribute(expr, free, limit=2000):
     return [expr]
 
 
-def _split_separable(terms, free):
+def _split_separable(
+    terms: Iterable[sp.Expr], free: Sequence[sp.Idx]
+) -> tuple[list[_SeparableTerm], list[sp.Expr]]:
     """Split ``terms`` into separable ``(S, F, G)`` triples and the rest.
 
     ``S`` is the product of the scalar factors, ``F`` of the factors over
@@ -329,9 +360,12 @@ def _split_separable(terms, free):
     or one lacking ``F`` or ``G``, goes to the rest unchanged.
     """
     first, second = free
-    separable, rest = [], []
+    separable: list[_SeparableTerm] = []
+    rest: list[sp.Expr] = []
     for term in terms:
-        scalar, over_first, over_second = [], [], []
+        scalar: list[sp.Expr] = []
+        over_first: list[sp.Expr] = []
+        over_second: list[sp.Expr] = []
         pair = _pair_term(term, frozenset(free))
         for factor in sp.Mul.make_args(term):
             indices = factor.atoms(sp.Idx)
@@ -356,7 +390,7 @@ def _split_separable(terms, free):
     return separable, rest
 
 
-def _separable_cost(separable):
+def _separable_cost(separable: Iterable[_SeparableTerm]) -> int:
     """Cost per element of the separable terms, after the scalar
     coefficients are hoisted: the products inside F and G, the scalar
     factor, F*G and the sum."""
@@ -369,13 +403,15 @@ def _separable_cost(separable):
     )
 
 
-def _group_by_side(separable, side, second):
+def _group_by_side(
+    separable: Iterable[_SeparableTerm], side: sp.Idx, second: sp.Idx
+) -> tuple[int, dict[sp.Expr, list[sp.Expr]]]:
     """Group the separable terms by the factor over the other index.
 
     Returns ``(cost, groups)``: the cost per element is one product and one
     sum per group (a compound key is computed once as a vector).
     """
-    groups = {}
+    groups: dict[sp.Expr, list[sp.Expr]] = {}
     for scalar, over_first, over_second in separable:
         if side == second:
             key, coef = over_second, scalar * over_first
@@ -385,13 +421,20 @@ def _group_by_side(separable, side, second):
     return 2 * len(groups), groups
 
 
-def _grouped_definitions(groups, side, other, namer, arrays):
+def _grouped_definitions(
+    groups: dict[sp.Expr, list[sp.Expr]],
+    side: sp.Idx,
+    other: sp.Idx,
+    namer: _Namer,
+    arrays: dict[str, int],
+) -> tuple[list[sp.Expr], list[TempDef]]:
     """Terms ``coef * key`` of the groups, with the vectors they need.
 
     Returns ``(terms, definitions)``; a coefficient that is already a
     vector over ``other`` is used as it is.
     """
-    terms, definitions = [], []
+    terms: list[sp.Expr] = []
+    definitions: list[TempDef] = []
     for key in sorted(groups, key=sp.default_sort_key):
         body = sp.Add(*groups[key])
         if isinstance(body, sp.Indexed) and body.indices == (other,):
@@ -411,7 +454,12 @@ def _grouped_definitions(groups, side, other, namer, arrays):
     return terms, definitions
 
 
-def _lowrank_bilinear(expr, free, namer, arrays):
+def _lowrank_bilinear(
+    expr: sp.Expr,
+    free: Sequence[sp.Idx],
+    namer: _Namer,
+    arrays: dict[str, int],
+) -> tuple[sp.Expr, list[TempDef]] | None:
     """Rank-k form of a rank-2 output ``H(p, q)``.
 
     Every term of the (distributed) residual is split into its scalar
@@ -449,7 +497,12 @@ def _lowrank_bilinear(expr, free, namer, arrays):
     return sp.Add(*rest, *new_terms), definitions
 
 
-def _loop_names_in_use(definitions, outputs, arrays, reserved):
+def _loop_names_in_use(
+    definitions: Iterable[TempDef],
+    outputs: Iterable[_Output],
+    arrays: Iterable[str],
+    reserved: Iterable[object],
+) -> set[str]:
     """Lower-cased names already used by the definitions and the outputs.
 
     Parameters
@@ -478,7 +531,12 @@ def _loop_names_in_use(definitions, outputs, arrays, reserved):
     return used
 
 
-def _loop_aux_slots(definitions, outputs, arrays, reserved):
+def _loop_aux_slots(
+    definitions: Iterable[TempDef],
+    outputs: Iterable[_Output],
+    arrays: Iterable[str],
+    reserved: Iterable[object],
+) -> list[sp.Idx]:
     """Auxiliary index slots whose names are not in use.
 
     Returns
@@ -489,7 +547,7 @@ def _loop_aux_slots(definitions, outputs, arrays, reserved):
     return [sp.Idx(name) for name in _AUX_INDEX_NAMES if name not in used]
 
 
-def _has_unhoistable_shape(sub):
+def _has_unhoistable_shape(sub: sp.Basic) -> bool:
     """Whether ``sub`` can never become a loop-invariant temporary."""
     if not isinstance(sub, sp.Expr) or sub.is_Atom or sub.is_Number:
         return True
@@ -500,7 +558,7 @@ def _has_unhoistable_shape(sub):
     return any(isinstance(x, _LoopStart) for x in sub.atoms(sp.Symbol))
 
 
-def _is_loop_candidate(sub, bound):
+def _is_loop_candidate(sub: sp.Basic, bound: set[sp.Idx]) -> bool:
     """Whether ``sub`` is worth a temporary hoisted out of the loops."""
     if _has_unhoistable_shape(sub):
         return False
@@ -533,20 +591,22 @@ class _LoopHoister:
         Temporaries created and not yet placed before a definition.
     """
 
-    def __init__(self, namer, arrays, slots):
+    def __init__(
+        self, namer: _Namer, arrays: dict[str, int], slots: list[sp.Idx]
+    ) -> None:
         self.namer = namer
         self.arrays = arrays
         self.slots = slots
-        self.temps = {}
-        self.pending = []
+        self.temps: dict[sp.Basic, sp.Basic] = {}
+        self.pending: list[TempDef] = []
 
-    def flush(self):
+    def flush(self) -> list[TempDef]:
         """Return the pending temporaries and clear the list."""
         flushed = list(self.pending)
         self.pending.clear()
         return flushed
 
-    def make(self, sub):
+    def make(self, sub: sp.Expr) -> sp.Basic:
         """Return the reference to the temporary holding ``sub``."""
         indices = _index_symbols(sub)
         mapping = {index: self.slots[pos] for pos, index in enumerate(indices)}
@@ -561,7 +621,7 @@ class _LoopHoister:
         target = self.temps[canon]
         return target if not indices else sp.Indexed(target.base, *indices)
 
-    def rewrite(self, sub, bound):
+    def rewrite(self, sub: sp.Basic, bound: set[sp.Idx]) -> sp.Basic:
         """Replace the hoistable parts of ``sub`` by temporaries."""
         if _is_loop_candidate(sub, bound):
             return self.make(sub)
@@ -575,10 +635,10 @@ class _LoopHoister:
             return self._rewrite_terms(sub, bound)
         return sub.func(*[self.rewrite(arg, bound) for arg in sub.args])
 
-    def _rewrite_terms(self, sub, bound):
+    def _rewrite_terms(self, sub: sp.Basic, bound: set[sp.Idx]) -> sp.Basic:
         """Rewrite a product or sum, grouping the arguments by indices."""
-        groups = {}
-        rest = []
+        groups: dict[frozenset[sp.Idx], list[sp.Basic]] = {}
+        rest: list[sp.Basic] = []
         for arg in sub.args:
             key = frozenset(_index_symbols(arg))
             if (
@@ -595,7 +655,12 @@ class _LoopHoister:
             new.extend(self._rewrite_group(sub.func, groups[key], bound))
         return sub.func(*new)
 
-    def _rewrite_group(self, func, members, bound):
+    def _rewrite_group(
+        self,
+        func: Callable[..., sp.Basic],
+        members: list[sp.Basic],
+        bound: set[sp.Idx],
+    ) -> list[sp.Basic]:
         """Rewrite the arguments of one index group; combine if possible."""
         combined = func(*members)
         if len(members) > 1 and _is_loop_candidate(combined, bound):
@@ -603,7 +668,13 @@ class _LoopHoister:
         return [self.rewrite(arg, bound) for arg in members]
 
 
-def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
+def _hoist_loop_invariants(
+    definitions: Iterable[TempDef],
+    outputs: Iterable[_Output],
+    namer: _Namer,
+    arrays: dict[str, int],
+    reserved: Iterable[object] = (),
+) -> tuple[list[TempDef], list[sp.Expr]]:
     """Move loop invariants out of the loops over free indices.
 
     :func:`_hoist_invariants` handles the summation loops.  The loops over
@@ -634,7 +705,7 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
     """
     slots = _loop_aux_slots(definitions, outputs, arrays, reserved)
     hoister = _LoopHoister(namer, arrays, slots)
-    new_definitions = []
+    new_definitions: list[TempDef] = []
     for definition in definitions:
         bound = set(definition.free) | {lim[0] for lim in definition.limits}
         if bound:
@@ -642,7 +713,7 @@ def _hoist_loop_invariants(definitions, outputs, namer, arrays, reserved=()):
             definition = definition.copy(body=hoister.rewrite(body, bound))
             new_definitions.extend(hoister.flush())
         new_definitions.append(definition)
-    new_outputs = []
+    new_outputs: list[sp.Expr] = []
     for expr, free in outputs:
         if free:
             expr = hoister.rewrite(_collect_terms(expr), set(free))
@@ -663,15 +734,15 @@ class _AffineMatch(NamedTuple):
     low: sp.Basic
     high: sp.Basic
     add: sp.Add
-    others: list
+    others: list[sp.Expr]
 
 
-def _alpha(body, index):
+def _alpha(body: sp.Basic, index: sp.Idx) -> sp.Basic:
     """``body`` with the loop ``index`` renamed to a common slot."""
     return body.xreplace({index: _AFFINE_SLOT})
 
 
-def _is_affine_shape(definition):
+def _is_affine_shape(definition: TempDef) -> bool:
     """Whether ``definition`` is a one-loop ``nc`` sum with a Mul body."""
     free = set(definition.free)
     if (
@@ -692,7 +763,7 @@ def _is_affine_shape(definition):
     )
 
 
-def _affine_match(definition):
+def _affine_match(definition: TempDef) -> _AffineMatch | None:
     """Split the body of ``definition`` as ``(const + var) * others``.
 
     Returns
@@ -719,14 +790,16 @@ def _affine_match(definition):
     return _AffineMatch(index, low, high, adds[0], others)
 
 
-def _split_terms(add, free):
+def _split_terms(
+    add: sp.Add, free: set[sp.Idx]
+) -> tuple[list[sp.Expr], list[sp.Expr]]:
     """``(const, var)`` terms of ``add`` by dependence on ``free``."""
     const = [a for a in add.args if not (a.atoms(sp.Idx) & free)]
     var = [a for a in add.args if a.atoms(sp.Idx) & free]
     return const, var
 
 
-def _would_split(definition):
+def _would_split(definition: TempDef) -> bool:
     """Whether ``definition`` would be split (no side effects)."""
     match = _affine_match(definition)
     if match is None:
@@ -747,15 +820,17 @@ def _would_split(definition):
         factors = [f for f in factors if f not in only] + [
             sp.Indexed(sp.IndexedBase("__vec"), match.index)
         ]
-    return sp.count_ops(sp.Mul(*factors)) < sp.count_ops(definition.body)
+    return bool(sp.count_ops(sp.Mul(*factors)) < sp.count_ops(definition.body))
 
 
-def _matrix_bases(expr):
+def _matrix_bases(expr: sp.Basic) -> set[str]:
     """Names of the bases of the rank-2 or higher arrays read by ``expr``."""
     return {str(x.base) for x in expr.atoms(sp.Indexed) if len(x.indices) >= 2}
 
 
-def _loop_shape(definition):
+def _loop_shape(
+    definition: TempDef,
+) -> tuple[int, tuple[tuple[sp.Basic, sp.Basic], ...]] | None:
     """Free count and limits of a sum, or ``None`` for other records."""
     if not definition.free or not definition.limits:
         return None
@@ -765,9 +840,11 @@ def _loop_shape(definition):
     )
 
 
-def _blocked_by_pairs(defs, outs):
+def _blocked_by_pairs(
+    defs: Iterable[TempDef], outs: Iterable[sp.Expr]
+) -> set[str]:
     """Names of the sums whose matrix a rank-2 output reads too."""
-    pair_bases = set()
+    pair_bases: set[str] = set()
     for expr in outs:
         if len(_free_indices(expr)) >= 2:
             pair_bases |= _matrix_bases(expr)
@@ -780,10 +857,10 @@ def _blocked_by_pairs(defs, outs):
     }
 
 
-def _blocked_by_runs(defs):
+def _blocked_by_runs(defs: list[TempDef]) -> set[str]:
     """Names of the sums of a run of equal loops that cannot all split."""
-    blocked = set()
-    run = []
+    blocked: set[str] = set()
+    run: list[TempDef] = []
     for definition in defs + [None]:
         if (
             definition is not None
@@ -803,7 +880,7 @@ def _blocked_by_runs(defs):
     return blocked
 
 
-def _close_blocked_matrices(sums, blocked):
+def _close_blocked_matrices(sums: list[TempDef], blocked: set[str]) -> None:
     """Block the sums that read a matrix read by a blocked sum (fixpoint)."""
     changed = True
     while changed:
@@ -822,7 +899,7 @@ def _close_blocked_matrices(sums, blocked):
                 changed = True
 
 
-def _blocked_sums(defs, outs):
+def _blocked_sums(defs: list[TempDef], outs: list[sp.Expr]) -> set[str]:
     """Names of the sums that must not be split.
 
     Sums over the same loops next to each other share one loop nest
@@ -865,12 +942,19 @@ class _AffineState:
         The working definitions.
     """
 
-    def __init__(self, definitions, namer, arrays):
+    def __init__(
+        self,
+        definitions: Iterable[TempDef],
+        namer: _Namer,
+        arrays: dict[str, int],
+    ) -> None:
         self.defs = list(definitions)
         self.namer = namer
         self.arrays = arrays
 
-    def vector_of(self, product, index, position):
+    def vector_of(
+        self, product: sp.Expr, index: sp.Idx, position: int
+    ) -> tuple[sp.Indexed, int]:
         """Indexed vector holding ``product`` (over ``index`` only).
 
         Returns
@@ -897,7 +981,9 @@ class _AffineState:
         )
         return sp.Indexed(target.base, index), position + 1
 
-    def vectorise(self, body, index, position):
+    def vectorise(
+        self, body: sp.Expr, index: sp.Idx, position: int
+    ) -> tuple[sp.Expr, int]:
         """Replace the factors over ``index`` only by one vector."""
         factors = sp.Mul.make_args(body)
         only = [
@@ -911,7 +997,9 @@ class _AffineState:
         rest = [f for f in factors if f not in only]
         return sp.Mul(*rest) * vec, position
 
-    def scalar_for(self, position, body, limit):
+    def scalar_for(
+        self, position: int, body: sp.Expr, limit: Limit
+    ) -> tuple[sp.Symbol, int]:
         """Scalar sum of ``body`` over ``limit``: reuse or create it.
 
         Returns
@@ -941,7 +1029,9 @@ class _AffineState:
         return scalar, position + 1
 
 
-def _reread(expr, name, scalar, coeff, sign):
+def _reread(
+    expr: sp.Expr, name: str, scalar: sp.Expr, coeff: sp.Expr, sign: int
+) -> sp.Expr:
     """Rewrite the reads of the split table ``name`` in ``expr``."""
     base = scalar if float(coeff) == 1.0 else coeff * scalar
     rep = {
@@ -952,7 +1042,9 @@ def _reread(expr, name, scalar, coeff, sign):
     return expr.xreplace(rep) if rep else expr
 
 
-def _split_at(state, k, outs):
+def _split_at(
+    state: _AffineState, k: int, outs: list[sp.Expr]
+) -> tuple[int, list[sp.Expr]]:
     """Try to split the definition at ``k``.
 
     Returns
@@ -999,7 +1091,12 @@ def _split_at(state, k, outs):
     return position + 1, outs
 
 
-def _split_affine(definitions, outputs, namer, arrays):
+def _split_affine(
+    definitions: Iterable[TempDef],
+    outputs: Iterable[sp.Expr],
+    namer: _Namer,
+    arrays: dict[str, int],
+) -> tuple[list[TempDef], list[sp.Expr]]:
     """Take the free-index-invariant part of a sum out of the loop nest.
 
     In ``t(k, l) = sum_m (1 - L(m, k, l)) n(m)`` (the O(N^3) nest of CMR,
@@ -1031,7 +1128,9 @@ def _split_affine(definitions, outputs, namer, arrays):
     return state.defs, outs
 
 
-def _split_factored(definition, limits):
+def _split_factored(
+    definition: TempDef, limits: Sequence[Limit]
+) -> tuple[sp.Expr, sp.Expr]:
     """``(outer factor, inner body)`` of a ``factored`` double reduction."""
     inner = {lim[0] for lim in limits[1:]}
     factors = sp.Mul.make_args(definition.body)
@@ -1045,7 +1144,9 @@ def _split_factored(definition, limits):
 # ---------------------------------------------------------------------------
 
 
-def _separate_sums(expr, max_terms=16, selective=False):
+def _separate_sums(
+    expr: sp.Expr, max_terms: int = 16, selective: bool = False
+) -> sp.Expr:
     """Distribute products over sums inside summation bodies and split.
 
     ``sum_k (r_i r_j r_k + s_i s_k) n_k`` becomes
@@ -1057,7 +1158,7 @@ def _separate_sums(expr, max_terms=16, selective=False):
     """
     from thermodiff.chain import factor_sums
 
-    def visit(sub):
+    def visit(sub: sp.Basic) -> sp.Basic:
         if isinstance(sub, sp.Sum):
             body = visit(sub.function)
             if body.has(sp.Piecewise):
@@ -1069,7 +1170,8 @@ def _separate_sums(expr, max_terms=16, selective=False):
                 isinstance(expanded, sp.Add)
                 and len(expanded.args) <= max_terms
             ):
-                split = factor_sums(
+                # thermodiff.chain is not typed yet
+                split = factor_sums(  # type: ignore[no-untyped-call]
                     sp.Add(*[sp.Sum(t, *sub.limits) for t in expanded.args])
                 )
                 if not selective or cost(split) < cost(original):
@@ -1081,9 +1183,9 @@ def _separate_sums(expr, max_terms=16, selective=False):
             return sub
         return sub.func(*[visit(arg) for arg in sub.args])
 
-    def cost(expr):
+    def cost(expr: sp.Basic) -> int:
         """Estimated work: sum over loop nests of nc**depth (nc = 10)."""
-        total = 0
+        total: int = 0
         for total_sum in expr.atoms(sp.Sum):
             depth = len(_free_indices(total_sum)) + len(total_sum.limits)
             total += 10**depth
