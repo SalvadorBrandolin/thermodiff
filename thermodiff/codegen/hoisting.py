@@ -9,10 +9,10 @@ from thermodiff.codegen.common import (
     _AUX_INDEX_NAMES,
     _LoopStart,
     _MAX_ARRAY_CSE_RANK,
+    _Namer,
     _free_indices,
     _index_symbols,
     _is_expensive,
-    _Namer,
     _new_shared_temp,
     _temp_name,
 )
@@ -147,8 +147,10 @@ def _hoisted_temporary(state: _HoistState, sub: sp.Expr) -> sp.Basic:
 def _rewrite_leaf(
     state: _HoistState, expr: sp.Basic, bound: set[sp.Idx]
 ) -> sp.Basic:
-    """Rewrite an expression without arguments, an ``Indexed`` or a
-    ``Piecewise`` (only a ``Piecewise`` that holds a sum is descended)."""
+    """Rewrite an expression without arguments, ``Indexed`` or ``Piecewise``.
+
+    Only a ``Piecewise`` that holds a sum is descended.
+    """
     if isinstance(expr, sp.Piecewise) and expr.has(sp.Sum):
         return expr.func(
             *[_rewrite_hoisting(state, arg, bound) for arg in expr.args]
@@ -159,8 +161,11 @@ def _rewrite_leaf(
 def _rewrite_terms(
     state: _HoistState, expr: sp.Basic, bound: set[sp.Idx]
 ) -> sp.Basic:
-    """Rewrite a product or sum, hoisting the groups of factors that share
-    the same indices (when the group is costly enough to be a candidate)."""
+    """Rewrite a product or sum, hoisting the groups of shared-index factors.
+
+    Groups of factors that share the same indices are hoisted when the group
+    is costly enough to be a candidate.
+    """
     groups: dict[frozenset[sp.Idx], list[sp.Basic]] = {}
     rest: list[sp.Basic] = []
     for arg in expr.args:
@@ -213,8 +218,10 @@ def _rewrite_hoisting(
 def _rewrite_sum_definitions(
     state: _HoistState, sum_definitions: list[TempDef]
 ) -> list[TempDef]:
-    """Hoist from the body of every looped definition, inserting the new
-    temporaries right before it."""
+    """Hoist from the body of every looped definition.
+
+    The new temporaries are inserted right before the definition.
+    """
     rewritten: list[TempDef] = []
     for definition in sum_definitions:
         if definition.limits:
@@ -306,8 +313,10 @@ def _collect_terms(expr: sp.Expr) -> sp.Expr:
 
 
 def _pair_term(term: sp.Expr, free: frozenset[sp.Idx]) -> bool:
-    """Whether a factor of ``term`` depends on every index of ``free`` (or is
-    a ``Piecewise``, as the Kronecker deltas)."""
+    """Whether a factor of ``term`` depends on every index of ``free``.
+
+    A ``Piecewise`` factor, as the Kronecker deltas, also counts.
+    """
     return any(
         f.has(sp.Piecewise) or free <= f.atoms(sp.Idx)
         for f in sp.Mul.make_args(term)
@@ -317,11 +326,13 @@ def _pair_term(term: sp.Expr, free: frozenset[sp.Idx]) -> bool:
 def _distribute(
     expr: sp.Expr, free: Iterable[sp.Idx], limit: int = 2000
 ) -> list[sp.Expr] | None:
-    """Terms of ``expr`` with products distributed over the sums that have a
-    term over some but not all of the indices ``free`` (a rank-2 residual).
-    Scalar sums, pair sums such as ``1 - k(i, j)`` (every term scalar or over
-    both indices) and function arguments stay as they are.  Returns None past
-    ``limit`` terms."""
+    """Terms of ``expr`` with products distributed over the sums.
+
+    Sums that have a term over some but not all of the indices ``free`` (a
+    rank-2 residual) are distributed.  Scalar sums, pair sums such as
+    ``1 - k(i, j)`` (every term scalar or over both indices) and function
+    arguments stay as they are.  Returns None past ``limit`` terms.
+    """
     free = frozenset(free)
     if isinstance(expr, sp.Add):
         terms: list[sp.Expr] = []
@@ -391,9 +402,11 @@ def _split_separable(
 
 
 def _separable_cost(separable: Iterable[_SeparableTerm]) -> int:
-    """Cost per element of the separable terms, after the scalar
-    coefficients are hoisted: the products inside F and G, the scalar
-    factor, F*G and the sum."""
+    """Cost per element of the separable terms.
+
+    Computed after the scalar coefficients are hoisted: the products inside
+    F and G, the scalar factor, F*G and the sum.
+    """
     return sum(
         sp.count_ops(over_first, visual=False)
         + sp.count_ops(over_second, visual=False)

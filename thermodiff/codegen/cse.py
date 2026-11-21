@@ -10,13 +10,13 @@ import sympy as sp
 from thermodiff.codegen.common import (
     _AUX_INDEX_NAMES,
     _MAX_ARRAY_CSE_RANK,
+    _Namer,
     _free_indices,
     _index_set,
     _is_expensive,
     _memoised_call,
     _new_shared_temp,
     _order_free,
-    _Namer,
     _sorted_indices,
 )
 from thermodiff.codegen.ir import TempDef
