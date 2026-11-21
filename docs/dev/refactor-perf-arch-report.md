@@ -26,7 +26,7 @@ change is declared below.
 ## 2. Performance
 
 Cold fresh processes, one generation each, `generation_s`; final = medians of the T8.6
-session (`docs/perf_log.md`, section "Summary" and "Final measurement").
+session (`docs/dev/perf_log.md`, section "Summary" and "Final measurement").
 
 | Case | Wave 0 baseline | Checkpoint 1 (`331ad50`) | Final (`5a61381`) | Final vs baseline |
 |---|---|---|---|---|

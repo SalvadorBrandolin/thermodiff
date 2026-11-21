@@ -6,6 +6,9 @@ Thermodiff is a lightweight Python package for symbolic differentiation and mani
 - Kronecker delta simplification
 - Automated thermodynamic derivative computation (`DiffPlz` class)
 - LaTeX output for equations
+- Fortran code generation of the model and its derivatives (`to_fortran`, the
+  `.model` language with `compile_model` and the `thermodiff-model` CLI), plus
+  yaeos wrappers around the generated kernels
 
 ## Key Commands
 
@@ -17,8 +20,11 @@ pip install -e . -r requirements-dev.txt
 
 ### Testing
 ```bash
-# Run all tests (pytest)
-pytest tests/
+# Run all tests (pytest); -n uses pytest-xdist (requirements-dev.txt)
+pytest tests/ -n 8
+
+# Fast set (~30 s): skip the `slow` tests (compile-and-run, large generations)
+pytest tests/ -n 8 -m "not slow"
 
 # Run with coverage (requires 90% minimum)
 pytest tests/ --cov=thermodiff --cov-report=term-missing
@@ -43,6 +49,9 @@ pydocstyle thermodiff --convention=numpy
 
 # Format (Black, line-length 79, target py310 to py313)
 black tests/ thermodiff/
+
+# Static types (strict mypy on thermodiff/codegen, config in pyproject.toml)
+mypy
 
 # Check manifest
 check-manifest
@@ -73,6 +82,9 @@ tox -e docstyle
 
 # Coverage
 tox -e coverage
+
+# Strict mypy on the code generator
+tox -e typecheck
 ```
 
 ## Package Structure
@@ -82,17 +94,34 @@ thermodiff/
 ├── chain.py             # Structured differentiation by the chain rule over summation nodes
 ├── derivatives.py       # Resolution of user supplied derivative selections
 ├── diffplz.py           # DiffPlz class (main feature)
-├── fortran.py           # Fortran code generation for thermodynamic models
+├── fortran.py           # Public facade: to_fortran (implementation in codegen/)
 ├── latex_utils.py       # LaTeX formatting utilities for DiffPlz
 ├── thermovars.py        # Predefined symbols (P, R, T, V, i, j, k, l, m, n, nc)
 ├── yaeos_model.py       # yaeos model wrappers for thermodiff-generated kernels
+├── codegen/             # Fortran code generator (strict mypy)
+│   ├── options.py       # CodegenOptions, enums, presets, resolve_codegen_options
+│   ├── pipeline.py      # to_fortran, _EmitState, the pass table _PASSES, declarations, assembly
+│   ├── ir.py            # Typed definition records: TempDef, FusedNest, ComponentFusedMap, ...
+│   ├── common.py        # Shared helpers: name sanitising, the namer, expression printing
+│   ├── resolve.py       # Placeholder and derivative resolution
+│   ├── symmetry.py      # Symmetric parameters, mirrored sums, canonical dummy indices
+│   ├── hoisting.py      # Loop-invariant hoisting, low-rank and affine splitting
+│   ├── cse.py           # Scalar and indexed common sub-expression elimination, shared sums
+│   ├── loops.py         # Loop fusion and table passes (gfortran/x86 oriented)
+│   └── render.py        # Definitions to Fortran statements
 ├── core/
 │   ├── __init__.py
 │   ├── easy_sums.py     # sum_components, sum_custom
 │   ├── idxfunction.py   # idx_function factory
 │   └── kronecker_handling.py  # handle_free_kronecker, handle_sum_kronecker
 ├── gui/                 # Optional Streamlit front-end for the .model language
-└── model/               # Front-end for the .model file format
+└── model/               # Front-end for the .model file format (parser, IR, emit, CLI)
+benchmarks/td_bench/     # Benchmark hooks: variant registry (e*/p*/v* keys), workloads
+tools/                   # Golden generation/check (golden.py, check_golden.py), profile_case.py
+tests/codegen/           # Pins of the code generator passes, function-size limits
+tests/data/              # Vendored .model files, scripts and measured kernels
+docs/source/             # Sphinx docs, including architecture.md (code generator design)
+docs/dev/                # Developer notes: perf log, refactor report, plans (not in the docs build)
 ```
 
 ## Important Conventions
@@ -102,10 +131,19 @@ thermodiff/
 - Tests are organized in classes matching tutorial examples
 - LaTeX output is tested against exact expected strings
 - Coverage threshold: 90% (enforced in `tox.ini`)
+- Markers: `slow` (≥ 3 s: Fortran compile-and-run or large generations) and
+  `thesis` (needs files outside the repository; registered, applied to no test)
+- Tests that compile generated Fortran need `gfortran` (`tests/fortran_tools.py`
+  finds it; honours `FC`). Prefer checking generated kernels numerically
+  (compile, run, compare with SymPy or the option-off kernel at `rel=1e-12`)
+  over asserting literal Fortran text; keep text asserts for structural facts
+  (a loop is or is not emitted, a declaration's intent or rank)
 
 ### Code Style
 - Black: line-length 79, target Python 3.10 to 3.13
-- Flake8 with plugins: black, builtins, import-order, pep8-naming
+- Flake8 with plugins: black, builtins, import-order, pep8-naming (`E203` is
+  ignored in `tox.ini` for Black compatibility; nothing else). Import order is
+  the plugin's default style: stdlib, then one group per third-party package
 - Docstrings: NumPy convention (validated by pydocstyle)
 
 ### SymPy Patterns Used
@@ -173,8 +211,149 @@ When requested to implement or analyze a thermodynamic model specified in LaTeX,
     - [ge_models.f90](https://github.com/ipqa-research/yaeos/blob/main/src/models/excess_gibbs/ge_models.f90)
     - [uniquac.f90](https://github.com/ipqa-research/yaeos/blob/main/src/models/excess_gibbs/uniquac.f90)
 
+## Developing the Code Generator
+
+The full design is in `docs/source/architecture.md` (pipeline diagram, module
+map, options and presets, the table of passes in execution order, definition
+records, invariants, how to add a pass). Read it before changing
+`thermodiff/codegen/` or `thermodiff/chain.py`. Summary:
+
+```
+.model text -> model/parser.py -> model/ir.py -> model/emit.py (DiffPlz)
+  -> fortran.to_fortran -> codegen/pipeline.py: 35 passes over one _EmitState
+  (resolve, CSE, sharing, hoisting, symmetry, loop fusion, render) -> Fortran text
+  (chain_rule on: chain.chain_rule_derivatives builds the structured derivatives first)
+```
+
+### Options and presets
+- `to_fortran(diff, options=CodegenOptions(...))`. The legacy keyword
+  arguments still work (`CodegenOptions.from_legacy`); new code should pass
+  `options`. `CodegenOptions.validate()` warns (`UserWarning`) and disables
+  options that would be inert in a combination; it raises only where the
+  old code failed.
+- Presets (`codegen/options.py`, `PRESET_SETTINGS`): `"minimal"` (legacy
+  output), `"standard"` (= bench variant e8: sum sharing, CSE, symmetry,
+  invariant hoisting, chain rule) and `"fastest"` (= p33: adds the
+  gfortran/x86 loop passes; slower generation, last-bit rounding differences).
+  `compile_model`, `emit_module`, the CLI (`--preset`) and the GUI default to
+  `"standard"`; **`to_fortran` called directly keeps the neutral (minimal)
+  defaults**. Tests pin standard == e8 and fastest == p33.
+- Kernels are fastest when specialised per output set
+  (`optional_derivatives=False`, one subroutine per workload) and dispatched
+  by a `present()` mask in the yaeos wrapper; most loop passes are disabled
+  under `optional_derivatives=True`.
+
+### Rules for changing the generator
+1. **Generated Fortran must not change unless the change says so.** Check
+   with the golden tiers:
+   ```bash
+   # once, on a clean main: write the external golden (../golden_ext, or $THERMODIFF_GOLDEN_EXT)
+   PYTHONHASHSEED=0 python tools/golden.py --tier complete -j 8
+   # after each change
+   PYTHONHASHSEED=0 python tools/check_golden.py --tier fast -j 8      # 112 cases, ~15 s
+   PYTHONHASHSEED=0 python tools/check_golden.py --tier complete -j 8  # 581 cases, ~10 min
+   ```
+   The fast tier also reads the external golden, so generate it first. An
+   intended output change must be declared, validated numerically (compile
+   and compare) and the golden regenerated in its own commit.
+2. **Pins first.** Before refactoring a pass, add tests that pin its current
+   result (see `tests/codegen/`), then change it.
+3. **Order and identity matter.** Passes draw temporary names from one namer
+   in table order (changing the order or number of draws renames
+   temporaries); some code relies on object identity, in-place mutation and
+   list identity. Definition records are mutable with value equality on
+   purpose (`codegen/ir.py`).
+4. **No global state.** Caches are per call and passed explicitly; never a
+   module-level `functools.lru_cache` on SymPy expressions.
+   `tests/test_reentrancy.py` checks interleaved calls.
+5. **Limits** (enforced by `tests/codegen/test_function_lengths.py`): every
+   function in `codegen/` and `chain.py` has ≤ 50 code lines and McCabe
+   complexity ≤ 10.
+6. **Types.** `codegen/` is strict mypy (`mypy`, `tox -e typecheck`). Do not
+   add `from __future__ import annotations` (some signatures are read at
+   runtime). Annotations are evaluated at import on Python 3.10-3.13 (only
+   3.14 defers them): a name imported under `TYPE_CHECKING` must be quoted.
+   If you develop on 3.14, run the tests once on an older Python before
+   pushing.
+7. **Every transformation that can increase work needs an operation-count
+   guard** (e.g. `sep_sums="cost"`, `nest_cost`, `dummy_canon` with its
+   sharing criterion); always-on variants measured up to 6.7× slower kernels.
+
+### Adding a pass or an option
+Add the field to `CodegenOptions` (enum and `validate()` rule if needed), a
+keyword-only parameter of `_emit_code` (the public signature of `to_fortran`
+is built from it), the pass function with explicit state, its entry in
+`_PASSES` at the right position, pins and a golden check, and a row in the
+pass table of `docs/source/architecture.md`. Decide explicitly whether a
+preset should enable it (that is a declared output change).
+
+### Performance work
+- Measure generation time with the protocol in `docs/dev/perf_log.md`
+  (cold fresh processes, `benchmarks.td_bench.generate_workload`, `taskset`
+  away from cores used by other benchmarks); profile with
+  `tools/profile_case.py` (cProfile, cold, for locating hotspots only).
+- Reference: pcsaft e3 w6 went 192.7 s → 57.7 s in the `refactor/perf-arch`
+  work (`docs/dev/refactor-perf-arch-report.md`). Measure kernel run time on a
+  quiet, dedicated core: heavy load on other cores distorts the numbers.
+- gfortran puts automatic arrays on the heap unless `-fstack-arrays`; large
+  temporaries then cost malloc/free and page faults on every call.
+
+## Future Work
+
+### Third derivatives
+Plan: `docs/dev/third-derivatives-plan.md` (proposal, nothing implemented;
+ends with open questions for the maintainer). Key points:
+- yaeos does not use a third-derivative tensor; its critical-point solver
+  takes finite differences of the smallest eigenvalue
+  (`src/equilibria/critical.f90`). The exact replacement is the cubic form
+  C(w) = Σ Ar_ijl w_i w_j w_l (T,V basis), plus a few contracted mixed terms
+  for an analytic Jacobian.
+- Recommended design: a directional variable s with n → n + s·w, so
+  C(w) = ∂³Ar/∂s³ and the existing chain rule and passes apply with outputs
+  of rank ≤ 2. The full packed N³ tensor (i ≤ j ≤ l) is a secondary option.
+- The structured chain rule extends exactly (third-order formula checked
+  symbolically in the plan); for quadratic mixing rules the result is low
+  rank, O(N²) for the contraction.
+- Hazards in today's code: `chain._rate_based_value` returns the
+  second-order formula for every order ≥ 2; `DiffPlz(derivatives=None)`
+  computes every attribute in `DERIVATIVE_ATTRIBUTES`, so third-order
+  attributes need their own tuple. `sym_rank3` is about rank-3 *parameters*,
+  not output symmetry.
+- Validate with high-precision references (mpmath), finite differences of
+  the second-derivative kernels and permutation symmetry.
+
+### Other target languages (C, C++, Julia, Rust, ...)
+Not implemented; this is the suggested route, based on where the Fortran
+specifics live today.
+- **Language-neutral already:** the model front end, `DiffPlz`, `chain.py`
+  and the symbolic passes (`resolve`, `symmetry`, `hoisting`, `cse`, and most
+  of `loops`) work on SymPy expressions and the typed records of
+  `codegen/ir.py`.
+- **Fortran-specific:** expression printing (`common._print_expr` uses SymPy
+  `fcode`, `_FCODE_SETTINGS`); statement rendering (`render.py`: `do`/`end
+  do`, `if`, accumulators; `symmetry._render_symv`); declarations and
+  assembly in `pipeline.py` (`_input_declarations`, `_array_declarations`,
+  `_assemble_text`, `intent`, `optional`/`present()` guards); the module
+  wrapper in `model/emit.py`; `yaeos_model.py` (yaeos only).
+- **Semantics baked in:** 1-based inclusive loops over `nc`, column-major
+  arrays (`table_layout`, `col_major`, `contiguous_args` assume it),
+  case-insensitive identifiers (`_sanitize` and the clash renaming), optional
+  arguments, and the gfortran/x86 tuning of the low-level options
+  (`keep_libm_tables`, `fuse_libm_guard`, `split_acc`, `array_pad`).
+- **Suggested design:** a backend object (expression printer: SymPy has
+  `ccode`, `cxxcode`, `julia_code`, `rust_code`; statement emitters for
+  loop/if/assign/accumulate/declare; naming rules; index base; memory
+  layout) chosen by a `CodegenOptions` field, default `"fortran"`. Move
+  `render.py` and the text parts of `pipeline.py` behind it so Fortran output
+  stays byte-identical (golden), mark which options are portable versus
+  backend-specific (gate the latter in `validate()`), and keep one golden per
+  backend. C is the easiest first target (compile with gcc, compare
+  numerically against the Fortran kernels and SymPy).
+
 ## CI/CD
-- GitHub Actions runs: `py310` (with style, docstyle, check-manifest, coverage, docs), `py311`, `py312`, `py313`
+- GitHub Actions runs on Linux, macOS and Windows: `py310` (with style, docstyle, check-manifest, coverage, docs, typecheck), `py311`, `py312`, `py313`
+- The Linux job is pinned to `ubuntu-24.04` because `fortran-lang/setup-fortran` has no gcc `latest` for ubuntu-26.04 yet; revisit when it does
+- Tests must be path-portable (Windows runners use different drives for the checkout and the temp directory): use `pathlib`, not string concatenation of paths
 - Coverage must pass 90% threshold
 - Workflows are in `.github/workflows/` (`ci.yml`, `docs.yml`, `release.yml`); `tox.ini` defines the matrix via `[gh-actions]`
 
@@ -185,7 +364,10 @@ When requested to implement or analyze a thermodynamic model specified in LaTeX,
 4. **Predefined symbols** in `thermovars.py`: `P, R, T, V` (thermo vars) and `i, j, k, l, m, n, nc` (indices)
 5. **Internal functions** must be passed to `DiffPlz` for proper LaTeX substitution (`clean_plz`, `latex_readable_plz`)
 6. **Kronecker handling** is automatic via `handle_free_kronecker` / `handle_sum_kronecker` in core
-7. **Running code** Always work on a virtual environment, prefer the environment "thermodiff" of virtualenv 
+7. **Running code** Always work on a virtual environment, prefer the environment "thermodiff" of virtualenv
+8. **Determinism** — generated code does not depend on `PYTHONHASHSEED`, but use `PYTHONHASHSEED=0` for golden runs and reproducible manifests
+9. **Editable install and worktrees** — if `thermodiff` is installed editable from another checkout, prefix commands with `PYTHONPATH=$PWD` and check `python -c "import thermodiff; print(thermodiff.__file__)"`
+10. **Developer notes** go in `docs/dev/`, not in the repository root
 
 ## Quick Verification
 ```bash

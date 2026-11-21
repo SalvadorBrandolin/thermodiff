@@ -443,5 +443,5 @@ the installed package.  `tools/profile_case.py <model> <variant>
 [--workload W] [--top N] [--out file.prof] [--warm]` profiles the
 generation of one case with `cProfile`, in a fresh child process by default
 so that the SymPy cache starts empty.  The measurement protocol and the
-recorded timings are in `docs/perf_log.md`; profiles are used to find
+recorded timings are in `docs/dev/perf_log.md`; profiles are used to find
 hotspots only, never as timings.
