@@ -275,6 +275,9 @@ class CodegenOptions:
     canonical_placeholders: bool = True
     work_array: bool = False
     max_nc: int | None = None
+    #: Kind of every real.  Literals only change their kind suffix: the
+    #: ~17 digits printed for floats and ``pi`` are not extended, so with a
+    #: quad kind those constants keep double-precision accuracy.
     real_kind: str = DEFAULT_REAL_KIND
     kind_module: str | None = None
 

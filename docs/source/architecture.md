@@ -231,7 +231,11 @@ derivative selection, names, `integer_args`, `module_symbols`,
   no module, so `validate()` drops `kind_module` then).  The conversion is
   one text pass at the end of `_assemble_text`
   (`common.apply_real_kind`), so the passes and the default output are
-  untouched.  CLI: `--real-kind`, `--kind-module`, `--work-array`,
+  untouched.  Literals only change their kind suffix: the ~17 digits that
+  SymPy prints for floats and `pi` are not extended, so with a quad kind
+  those constants keep double-precision accuracy (exact integers and
+  rationals are fine).  A kind name equal to a model symbol raises
+  `ValueError`.  CLI: `--real-kind`, `--kind-module`, `--work-array`,
   `--max-nc`.
 
 Presets are the `Preset` enum, with the settings in `PRESET_SETTINGS`:

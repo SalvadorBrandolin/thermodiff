@@ -2881,6 +2881,11 @@ def to_fortran(
         name of a kind constant (``"pr"``) emits ``real(<kind>)`` for the
         dummies, temporaries, work arrays and results, and literals as
         ``1.0_<kind>`` (``1.5e-10_<kind>``).  The arithmetic is the same.
+        The digits of a literal are those that SymPy prints (about 17
+        significant ones for floats and ``pi``): with a quad kind these
+        constants keep double-precision accuracy.  Write exact values
+        (integers, rationals) or pass them as inputs when that matters.
+        The kind constant must not be the name of a model symbol.
     kind_module : str, optional
         Module that exports the kind constant ``real_kind``: the
         subroutine gets ``use <kind_module>, only: <real_kind>`` (so
