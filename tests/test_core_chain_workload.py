@@ -376,3 +376,58 @@ def sum_nc():
     """Return an expression with a composition sum (a kernel with nc)."""
     index = td.k
     return td.sum_components(td.n[index], index)
+
+
+def dispatch_table(source):
+    """Return ``({mask: callee}, default_callee)`` of the dispatcher.
+
+    The callee of a branch is the first procedure it calls (a branch with
+    a shape guard calls the fallback in its ``else``).
+    """
+    text = procedure_texts(source)["fused"]
+    head, *branches = re.split(r"^\s*case ", text, flags=re.M)
+    table = {}
+    default = None
+    for branch in branches:
+        callee = re.search(r"call (\w+)\(", branch).group(1)
+        if branch.startswith("default"):
+            default = callee
+        else:
+            table[int(re.match(r"\((\d+)\)", branch).group(1))] = callee
+    return table, default
+
+
+def mask_bits(source):
+    """Return ``{dummy: bit}`` read from the dispatcher's mask lines."""
+    pattern = r"if \(present\((\w+)\)\) present_mask_ = present_mask_ \+ (\d+)"
+    return {
+        name: int(bit)
+        for name, bit in re.findall(pattern, procedure_texts(source)["fused"])
+    }
+
+
+def output_dummies(text):
+    """Return the ``intent(out)`` dummies of a kernel text."""
+    return re.findall(r"intent\(out\) :: (\w+)", text)
+
+
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_every_branch_calls_its_own_fused_kernel(case):
+    source = generate(case)
+    texts = procedure_texts(source)
+    bits = mask_bits(source)
+    table, default = dispatch_table(source)
+    assert default == "fused_fallback"
+    workloads = CASES[case]["workloads"]
+    assert len(table) == len(workloads)
+    for position in range(1, len(workloads) + 1):
+        kernel = f"fused_w{position}"
+        expected = sum(bits[name] for name in output_dummies(texts[kernel]))
+        assert table[expected] == kernel
+
+
+def test_branch_masks_are_unique_and_fit_the_signature():
+    source = generate("mixed")
+    table, _ = dispatch_table(source)
+    assert len(set(table)) == len(table)
+    assert max(table) < 1 << len(mask_bits(source))
