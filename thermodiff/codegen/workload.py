@@ -654,6 +654,7 @@ def output_bits(fallback: KernelInterface) -> dict[str, int]:
         arg.lower()
         for arg in fallback.args
         if fallback.dummies[arg.lower()].is_optional
+        and fallback.dummies[arg.lower()].is_output
     ]
     if len(optional) > MAX_MASK_OUTPUTS:
         raise ValueError(f"too many optional outputs ({len(optional)})")

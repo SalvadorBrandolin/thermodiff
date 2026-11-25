@@ -39,6 +39,9 @@ from thermodiff.codegen.core_chain import (  # noqa: F401
     scalar_chain_inputs,
     scalar_chain_routine,
 )
+from thermodiff.codegen.core_chain_workload import (  # noqa: F401
+    scalar_chain_workload_module,
+)
 from thermodiff.codegen.cse import (  # noqa: F401
     _best_indexed_candidate,
     _best_scalar_candidate,
@@ -66,4 +69,8 @@ from thermodiff.codegen.symmetry import (  # noqa: F401
 )
 from thermodiff.codegen.workload import workload_module
 
-__all__ = ["to_fortran", "workload_module"]
+__all__ = [
+    "scalar_chain_workload_module",
+    "to_fortran",
+    "workload_module",
+]
