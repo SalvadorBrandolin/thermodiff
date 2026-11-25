@@ -36,6 +36,7 @@ from thermodiff.codegen.common import (  # noqa: F401
 )
 from thermodiff.codegen.core_chain import (  # noqa: F401
     scalar_chain_core_derivatives,
+    scalar_chain_inputs,
     scalar_chain_routine,
 )
 from thermodiff.codegen.cse import (  # noqa: F401

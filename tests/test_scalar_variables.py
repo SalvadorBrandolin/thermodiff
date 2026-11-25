@@ -27,6 +27,7 @@ from thermodiff import (
     l,
     n,
     scalar_chain_core_derivatives,
+    scalar_chain_inputs,
     scalar_chain_routine,
     sum_components,
     to_fortran,
@@ -1003,3 +1004,38 @@ class TestTotalMolesDeclaration:
             ["B", "S"], total_moles=["S"], derivatives=["dn", "dndn"]
         )
         assert "dSdn" not in source and "dBdn" in source
+
+
+class TestScalarChainInputs:
+    """``scalar_chain_inputs`` lists the arguments of the routine."""
+
+    CHAIN = {"linear": ["B"], "total_moles": ["S"]}
+    SCALARS = ["B", "D", "S"]
+    DEPENDS = {"D": ["T"]}
+
+    @pytest.mark.parametrize(
+        "derivatives",
+        ["all", ["dn"], ["dndn"], ["dT"], ["dV2"], ["dndT", "dTdV"]],
+    )
+    def test_equals_the_dummies_of_the_routine(self, derivatives):
+        names = scalar_chain_inputs(
+            self.SCALARS, self.DEPENDS, derivatives=derivatives, **self.CHAIN
+        )
+        source = scalar_chain_routine(
+            self.SCALARS, self.DEPENDS, derivatives=derivatives, **self.CHAIN
+        )
+        dummies = chain_dummies(source)
+        outputs = [n for n in dummies if n.startswith("dar")]
+        assert names == dummies[1 : len(dummies) - len(outputs)]
+
+    def test_outputs_need_only_their_inputs(self):
+        names = scalar_chain_inputs(
+            self.SCALARS, self.DEPENDS, derivatives=["dV2"], **self.CHAIN
+        )
+        assert names == ["dfdV2"]
+
+    def test_zero_derivatives_are_not_inputs(self):
+        names = scalar_chain_inputs(
+            self.SCALARS, self.DEPENDS, zero=["dV"], derivatives=["dV"]
+        )
+        assert names == []

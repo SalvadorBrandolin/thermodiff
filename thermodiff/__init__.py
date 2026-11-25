@@ -28,6 +28,7 @@ from thermodiff.derivatives import resolve_derivatives
 from thermodiff.diffplz import DiffPlz
 from thermodiff.fortran import (
     scalar_chain_core_derivatives,
+    scalar_chain_inputs,
     scalar_chain_routine,
     to_fortran,
     workload_module,
@@ -51,6 +52,7 @@ __all__ = [
     "workload_module",
     "scalar_chain_routine",
     "scalar_chain_core_derivatives",
+    "scalar_chain_inputs",
     # yaeos ArModel/GeModel wrappers of generated kernels:
     "yaeos_model_module",
     "kernel_interface",

@@ -155,7 +155,11 @@ by the tests.
   loops are generated directly (Hessian on the lower triangle plus mirror,
   O(m) work per element through the per-column vector `y_r,j`), and the
   numeric tests compare it with the full-composition kernel.
-  `scalar_chain_core_derivatives` lists what to request from the core.  Not
+  `scalar_chain_core_derivatives` lists what to request from the core and
+  `scalar_chain_inputs` the arguments an output set needs.  Core derivatives
+  that vanish identically are dropped (`core=` finds them symbolically,
+  `zero=` names them) and `total_moles=` scalars have no inputs; `Ar` and the
+  pure core derivatives are passed through from the core.  Not
   to be confused with the `scalar_chain` option, which is about a different
   step of the pipeline.
 

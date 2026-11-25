@@ -51,7 +51,11 @@ from thermodiff.thermovars import T, V
 if TYPE_CHECKING:
     from thermodiff.diffplz import DiffPlz
 
-__all__ = ["scalar_chain_routine", "scalar_chain_core_derivatives"]
+__all__ = [
+    "scalar_chain_routine",
+    "scalar_chain_core_derivatives",
+    "scalar_chain_inputs",
+]
 
 #: Factor that stands for the composition ``n`` in a derivative.
 COMPOSITION = "n"
@@ -663,9 +667,38 @@ def scalar_chain_routine(
     * if ``X`` depends on ``T``: ``dXdT``, ``dXdT2`` and ``dXdndT(nc)``
       (``dXdTdV`` if it also depends on ``V``); likewise for ``V``.
 
-    Only the inputs the requested outputs need are arguments.  Use
+    Only the inputs the requested outputs need are arguments (table below;
+    :func:`scalar_chain_inputs` returns them for a given output set).  Use
     :func:`scalar_chain_core_derivatives` for the derivatives to request
-    from the core kernel.  Outputs have the usual names with prefix
+    from the core kernel.
+
+    ``Ar`` itself is ``f``, and every derivative of the core that does not
+    involve the composition or a ``T``/``V`` dependence of a scalar is
+    passed through from the core, not computed here: ``f`` is not an output
+    and a caller can take ``dfdV`` and ``dfdV2`` directly when no scalar
+    depends on ``V`` (the routine would only copy them to ``dardV`` and
+    ``dardV2`` if asked).
+
+    ======================  ==============================================
+    Output                  Inputs (``W`` = ``T``/``V``, ``r`` = scalar)
+    ======================  ==============================================
+    ``dardW``               ``dfdW``; ``dfdr``, ``drdW`` (``r`` on ``W``)
+    ``dardWdW'``            ``dfdWdW'``; ``drdW``, ``drdW'``,
+                            ``dfdrdW``, ``dfdrdW'``, ``dfdrds`` (``r``
+                            on ``W`` or ``W'``); ``dfdr``, ``drdWdW'``
+                            (``r`` on both)
+    ``dardn``               ``dfdr``, ``drdn`` for every ``r``
+    ``dardndW``             ``dfdrdW``, ``dfdrds``, ``drdn`` for every
+                            ``r``, ``drdW`` (``r`` on ``W``); ``dfdr``,
+                            ``drdndW`` (``r`` on ``W``)
+    ``dardndn``             ``dfdrds``, ``drdn``; ``dfdr``, ``drdndn``
+                            (``r`` not ``linear``)
+    ======================  ==============================================
+
+    Inputs that are structurally zero (``core=``, ``zero=``) and the
+    gradient of a ``total_moles`` scalar are not arguments.
+
+    Outputs have the usual names with prefix
     ``d<name>``: ``dardT``, ``dardV``, ``dardT2``, ``dardTdV``, ``dardV2``,
     ``dardn``, ``dardndT``, ``dardndV``, ``dardndn``.  The Hessian does
     ``O(m)`` work per element on the lower triangle and mirrors it.
@@ -785,3 +818,52 @@ def scalar_chain_core_derivatives(
     prefix = f"d{core_name}"
     ordered = sorted(inputs.core, key=lambda item: inputs.core[item])
     return [item[len(prefix) :] for item in ordered]
+
+
+def scalar_chain_inputs(
+    scalars: Sequence[str],
+    depends_on: Mapping[str, Iterable[str]] | None = None,
+    *,
+    linear: Iterable[str] = (),
+    total_moles: Iterable[str] = (),
+    core: "DiffPlz | None" = None,
+    zero: Iterable[str] | None = None,
+    thermo: Sequence[str] = THERMO_VARIABLES,
+    derivatives: object = "all",
+    core_name: str = "f",
+    name: str = "ar",
+) -> list[str]:
+    """Return the input arguments that an output set needs.
+
+    The names are those of the dummy arguments of
+    :func:`scalar_chain_routine` for the same declarations, without ``nc``
+    and in the order of the routine: the derivatives of the core
+    (``dfdB``, ``dfdBdT`` ...) and then those of the scalars (``dBdn``,
+    ``dDdT`` ...).  A caller that builds one routine with
+    ``optional_derivatives=True`` uses it, once per output, to decide which
+    outputs it can ask for given the inputs it has.
+
+    Parameters
+    ----------
+    scalars, depends_on, linear, total_moles, core, zero, thermo, derivatives
+    core_name, name
+        As in :func:`scalar_chain_routine`.
+
+    Returns
+    -------
+    list of str
+        The input names.
+    """
+    model = _build_model(
+        scalars,
+        depends_on or {},
+        linear,
+        core_name,
+        name,
+        _zero_factors(scalars, core, zero),
+        total_moles,
+    )
+    requested = _requested_factors(derivatives, model, thermo)
+    _, inputs = _assemble(model, requested, CodegenOptions(), "unused")
+    ordered = sorted(inputs.core, key=lambda item: inputs.core[item])
+    return [*ordered, *inputs.scalar]
