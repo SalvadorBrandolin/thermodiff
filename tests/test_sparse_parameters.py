@@ -237,9 +237,8 @@ def _driver(
         if ranks[arg] == 0:
             declare.append(f"real({kind}) :: {arg}")
         else:
-            declare.append(
-                f"real({kind}), allocatable :: {arg}({','.join(':' * ranks[arg])})"
-            )
+            dims = ",".join(":" * ranks[arg])
+            declare.append(f"real({kind}), allocatable :: {arg}({dims})")
             body.append(f"allocate({arg}({_extents(arg, ranks[arg], False)}))")
         body.append(f"read(u,*) {arg}")
     body.append("close(u)")
