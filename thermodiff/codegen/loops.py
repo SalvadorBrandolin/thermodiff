@@ -1638,6 +1638,7 @@ _PLAIN_SCALAR_FLAGS = frozenset(
     {"target", "free", "limits", "body", "mirror", "factored", "acc"}
 )
 _ELEMENT_SLOT = sp.Idx("__elem")
+_PAIR_SLOTS = (_ELEMENT_SLOT, sp.Idx("__elem_col"))
 
 
 def _is_plain_scalar(definition: TempDef) -> bool:
@@ -1704,8 +1705,43 @@ def _canonical_scalar(
     return value
 
 
+def _pair_libm_indices(sub: sp.Basic) -> tuple[sp.Idx, sp.Idx] | None:
+    """Return the indices of a libm call over one rank-2 array element.
+
+    Parameters
+    ----------
+    sub : sympy.Basic
+        Expression to test.
+
+    Returns
+    -------
+    tuple or None
+        ``(row, column)`` when ``sub`` is a one-argument function of
+        ``table[row, column]`` with two distinct indices (``log(t24[l, k])``),
+        otherwise ``None``.
+    """
+    if not (isinstance(sub, sp.Function) and len(sub.args) == 1):
+        return None
+    element = sub.args[0]
+    if not isinstance(element, sp.Indexed) or len(element.indices) != 2:
+        return None
+    row, column = element.indices
+    if (
+        isinstance(row, sp.Idx)
+        and isinstance(column, sp.Idx)
+        and row != column
+    ):
+        return row, column
+    return None
+
+
 def _is_shareable_candidate(sub: sp.Basic) -> bool:
-    """Whether ``sub`` is a rank-1 libm sub-expression worth sharing."""
+    """Whether ``sub`` is a libm sub-expression worth sharing.
+
+    A rank-1 candidate calls libm and depends on one index.  A rank-2
+    candidate is a function of one element of a rank-2 array (see
+    :func:`_pair_libm_indices`); it becomes a table read by both nests.
+    """
     if not isinstance(sub, sp.Expr) or sub.is_Atom:
         return False
     if isinstance(sub, (sp.Indexed, sp.Sum, sp.Tuple)) or sub.has(sp.Sum):
@@ -1714,7 +1750,17 @@ def _is_shareable_candidate(sub: sp.Basic) -> bool:
         return False
     if any(isinstance(x, _LoopStart) for x in sub.atoms(sp.Symbol)):
         return False
+    if _pair_libm_indices(sub) is not None:
+        return True
     return len(sub.atoms(sp.Idx)) == 1 and _calls_libm(sub)
+
+
+def _element_indices(sub: sp.Expr) -> tuple[sp.Idx, ...]:
+    """Return the indices of a shareable candidate, in table order."""
+    pair = _pair_libm_indices(sub)
+    if pair is not None:
+        return pair
+    return tuple(sub.atoms(sp.Idx))
 
 
 def _occurrence_key(
@@ -1723,14 +1769,15 @@ def _occurrence_key(
     memo: dict[sp.Basic, sp.Expr],
     max_ops: int,
 ) -> sp.Expr:
-    """Return ``sub`` with its index as a slot and scalars expanded."""
-    (index,) = sub.atoms(sp.Idx)
+    """Return ``sub`` with its indices as slots and scalars expanded."""
+    indices = _element_indices(sub)
     replacements = {
         symbol: _canonical_scalar(symbol, scalar_def, memo, max_ops)
         for symbol in sub.free_symbols
         if symbol in scalar_def
     }
-    return sub.xreplace({index: _ELEMENT_SLOT}).xreplace(replacements)
+    slots = dict(zip(indices, _PAIR_SLOTS))
+    return sub.xreplace(slots).xreplace(replacements)
 
 
 def _is_editable(definition: TempDef) -> bool:
@@ -1815,6 +1862,43 @@ def _collect_occurrences(
     return found
 
 
+def _covers_full_range(sub: sp.Expr, definition: TempDef | None) -> bool:
+    """Whether the site of ``sub`` runs both of its indices over the table.
+
+    A table shared by two readers costs one evaluation per element; a reader
+    that loops over a sub-range would evaluate fewer.  The occurrence is
+    accepted when each index is free in the reading definition or summed from
+    1, and for an output expression (``definition`` is ``None``).
+    """
+    if definition is None:
+        return True
+    lower = {index: low for index, low, _high in definition.limits}
+    return all(
+        index in definition.free or lower.get(index) == 1
+        for index in _element_indices(sub)
+    )
+
+
+def _site_occurrences(
+    key: sp.Expr,
+    occurrences: list[tuple[int, sp.Expr]],
+    defs: Sequence[TempDef],
+) -> list[tuple[int, sp.Expr]]:
+    """Return the occurrences of ``key`` that may read a shared table.
+
+    Rank-1 keys keep every occurrence.  The occurrences of a rank-2 key
+    (see :func:`_pair_libm_indices`) are limited to the sites that cover the
+    whole table, see :func:`_covers_full_range`.
+    """
+    if not key.has(_PAIR_SLOTS[1]):
+        return occurrences
+    return [
+        (pos, sub)
+        for pos, sub in occurrences
+        if _covers_full_range(sub, defs[pos] if pos < len(defs) else None)
+    ]
+
+
 def _best_occurrences(
     found: dict[sp.Expr, list[tuple[int, sp.Expr]]],
     defs: Sequence[TempDef],
@@ -1827,15 +1911,16 @@ def _best_occurrences(
     """
     best, best_rank = None, None
     for key in sorted(found, key=sp.default_sort_key):
+        sites = _site_occurrences(key, found[key], defs)
         n_sites = len(
-            {pos for pos, _ in found[key] if not _is_component_map(defs, pos)}
+            {pos for pos, _ in sites if not _is_component_map(defs, pos)}
         )
         if n_sites < 2:
             continue
         rank = (n_sites, sp.count_ops(key))
         if best_rank is None or rank > best_rank:
-            best, best_rank = key, rank
-    return None if best is None else found[best]
+            best, best_rank = sites, rank
+    return best
 
 
 def _scalar_merges(
@@ -1902,14 +1987,16 @@ def _share_occurrences(
         Records the vector.
     """
     first_pos, rep_sub = occurrences[0]
-    (index0,) = rep_sub.atoms(sp.Idx)
+    rep_indices = list(_element_indices(rep_sub))
     merge = _scalar_merges(occurrences, state)
-    target = _new_shared_temp(namer, [index0], arrays)
-    vector = TempDef(target=target, free=[index0], limits=[], body=rep_sub)
+    target = _new_shared_temp(namer, rep_indices, arrays)
+    vector = TempDef(target=target, free=rep_indices, limits=[], body=rep_sub)
     replacements: dict[int, dict[sp.Expr, sp.Indexed]] = {}
     for pos, sub in occurrences:
-        (index,) = sub.atoms(sp.Idx)
-        replacements.setdefault(pos, {})[sub] = sp.Indexed(target.base, index)
+        indices = _element_indices(sub)
+        replacements.setdefault(pos, {})[sub] = sp.Indexed(
+            target.base, *indices
+        )
         state.touched |= {x for x in sub.free_symbols if x in state.scalar_def}
     for pos, mapping in replacements.items():
         state.sites[pos] = state.sites[pos].xreplace(mapping)
@@ -1996,6 +2083,10 @@ def _share_elementwise(
     reader, and every occurrence reads it.  Scalar temporaries that only
     differ in spelling inside the shared occurrences are merged into the one
     defined first; the ones left unread are dropped.
+
+    A libm call over one element of a rank-2 temporary (``log(t24[l, k])``
+    read as ``t24[i, k]`` elsewhere) is shared the same way, as a rank-2
+    table, when at least two sites read it over the whole table.
 
     Returns ``(definitions, outputs)``.
     """
