@@ -441,7 +441,16 @@ def _make_pair_function(body, first, second, context):
 
 
 def _make_function(body, indices, context):
-    """Abstract ``body`` as a component or a pair function of ``indices``."""
+    """Abstract ``body`` as a component or a pair function of ``indices``.
+
+    A body that is already a placeholder function (``tau(l, k, T)``) is kept:
+    it and its derivatives are inputs of the kernel, and an array that
+    copies it would only alias them.
+    """
+    from thermodiff.codegen.resolve import _is_placeholder
+
+    if _is_placeholder(body):
+        return body
     indices = sorted(indices, key=str)
     if len(indices) == 1:
         slot = context.scheme.component_slot

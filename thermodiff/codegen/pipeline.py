@@ -948,7 +948,9 @@ def _component_definitions(state: _EmitState) -> None:
     if state.structured is not None:
         for comp in state.structured.get("_component_defs", ()):
             comp_name, comp_body, comp_rank, comp_sym = comp
-            comp_body = comp_body.xreplace({nc: sp.Symbol("nc")})
+            comp_body = state.resolver.resolve(comp_body).xreplace(
+                {nc: sp.Symbol("nc")}
+            )
             if opts.param_symmetry and state.symmetric_params:
                 comp_body = _canonical_symmetric(
                     comp_body, state.symmetric_params, opts.sym_rank3
