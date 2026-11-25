@@ -766,7 +766,9 @@ def _new_state(
         stats=stats,
         count_scalar=count_scalar,
         resolver=_PlaceholderResolver(
-            strict=opts.strict, canonical=opts.canonical_placeholders
+            strict=opts.strict,
+            canonical=opts.canonical_placeholders,
+            symmetric_names=ctx.symmetric_params,
         ),
         namer=_Namer(),
         selected=list(ctx.selected),

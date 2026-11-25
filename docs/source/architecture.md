@@ -183,6 +183,12 @@ derivative selection, names, `integer_args`, `module_symbols`,
   (`dBdi`, `dBdj`, `dBdidj`).  The generated names take part in the
   case-clash check of Fortran identifiers (a parameter `DBDN` next to
   `dBdn` raises `ValueError`).
+* Symmetric placeholders: `idx_function("a", symmetric=(0, 1))` or
+  `symmetric_params=("a",)` declare `a(k, l, T) == a(l, k, T)`.  The
+  placeholder and its canonical derivatives without extra indices (`a`,
+  `dadT`, `dadTdT`) become symmetric parameters; derivatives over `n`
+  (`dadn(k, l, i)`) are not.  As with `symmetric_params`, the caller must
+  pass symmetric arrays.
 * `from_legacy(**kwargs)` and `to_legacy()` convert to and from the keyword
   form; `from_preset(preset, **overrides)` and `replace(**changes)` build
   variants.

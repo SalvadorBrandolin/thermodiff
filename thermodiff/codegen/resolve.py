@@ -29,11 +29,21 @@ class _PlaceholderResolver:
         Name placeholder derivatives by the differentiation variables, not
         by the index labels (``dBdn(i)`` and ``dBdn(j)`` instead of
         ``dBdi(i)`` and ``dBdj(j)``), see :func:`_canonical_suffix`.
+    symmetric_names : iterable of str
+        Placeholders declared symmetric in their first two indices
+        (``symmetric_params``); the placeholder and its derivatives without
+        extra indices are recorded in :attr:`symmetric`.
     """
 
-    def __init__(self, strict: bool = False, canonical: bool = False) -> None:
+    def __init__(
+        self,
+        strict: bool = False,
+        canonical: bool = False,
+        symmetric_names: Iterable[str] = (),
+    ) -> None:
         self.strict = strict
         self.canonical = canonical
+        self.symmetric_names = frozenset(symmetric_names)
         #: name -> rank (0 for scalars)
         self.ranks: dict[str, int] = {}
         #: canonical second derivatives over two indexed variables of a
@@ -112,7 +122,9 @@ class _PlaceholderResolver:
             dims = []
 
         if self.canonical:
-            return self._canonical_var(base, dims, deriv.variables)
+            return self._canonical_var(
+                base, dims, deriv.variables, self._inherits(inner, dims)
+            )
         suffix = ""
         for var in deriv.variables:
             if isinstance(var, sp.Indexed):
@@ -124,26 +136,52 @@ class _PlaceholderResolver:
 
         return self._build("d" + base + suffix, dims)
 
+    def _inherits(self, inner: sp.Basic, dims: list[str]) -> bool:
+        """Return whether derivatives of ``inner`` keep its symmetry."""
+        return _is_placeholder(inner) and self._is_symmetric_placeholder(
+            inner, dims
+        )
+
     def _canonical_var(
-        self, base: str, dims: list[str], variables: tuple[sp.Basic, ...]
+        self,
+        base: str,
+        dims: list[str],
+        variables: tuple[sp.Basic, ...],
+        symmetric_inner: bool = False,
     ) -> sp.Expr:
         """Build a derivative variable named by its variables (canonical).
 
         The scalar variables come first, sorted by name, then one ``d<x>``
         per indexed variable ``x[i]``; the array subscripts are the
         placeholder's own indices followed by the derivative indices, in
-        the order of ``variables``.
+        the order of ``variables``.  A derivative without indexed variables
+        of a symmetric placeholder (``symmetric_inner``) stays symmetric.
         """
         suffix, labels = _canonical_suffix(variables)
         name = "d" + base + suffix
-        if not dims and len(labels) == 2:
+        if (not dims and len(labels) == 2) or (symmetric_inner and not labels):
             self.symmetric.add(name)
         return self._build(name, dims + labels)
 
     def _function_var(self, func: sp.Function) -> sp.Expr:
         base = _sanitize(func.func.__name__)
         dims = self._index_dims(func)
+        if self._is_symmetric_placeholder(func, dims):
+            self.symmetric.add(base)
         return self._build(base, dims)
+
+    def _is_symmetric_placeholder(
+        self, func: sp.Function, dims: list[str]
+    ) -> bool:
+        """Return whether ``func`` is a rank-2 symmetric placeholder.
+
+        Declared with ``symmetric_params`` or ``idx_function(symmetric=)``.
+        """
+        declared = (
+            _sanitize(func.func.__name__) in self.symmetric_names
+            or getattr(func.func, "symmetric_args", None) is not None
+        )
+        return declared and len(dims) == 2
 
 
 def _canonical_suffix(
