@@ -25,12 +25,20 @@ class _PlaceholderResolver:
     strict : bool
         When ``True``, raise a ``ValueError`` if any placeholder is found
         instead of exposing it as an argument.
+    canonical : bool
+        Name placeholder derivatives by the differentiation variables, not
+        by the index labels (``dBdn(i)`` and ``dBdn(j)`` instead of
+        ``dBdi(i)`` and ``dBdj(j)``), see :func:`_canonical_suffix`.
     """
 
-    def __init__(self, strict: bool = False) -> None:
+    def __init__(self, strict: bool = False, canonical: bool = False) -> None:
         self.strict = strict
+        self.canonical = canonical
         #: name -> rank (0 for scalars)
         self.ranks: dict[str, int] = {}
+        #: canonical second derivatives over two indexed variables of a
+        #: placeholder without own indices: symmetric in their subscripts
+        self.symmetric: set[str] = set()
 
     def resolve(self, expr: sp.Expr) -> sp.Expr:
         """Return ``expr`` with placeholders replaced by plain variables."""
@@ -103,6 +111,8 @@ class _PlaceholderResolver:
             base = _sanitize(str(inner))
             dims = []
 
+        if self.canonical:
+            return self._canonical_var(base, dims, deriv.variables)
         suffix = ""
         for var in deriv.variables:
             if isinstance(var, sp.Indexed):
@@ -114,10 +124,45 @@ class _PlaceholderResolver:
 
         return self._build("d" + base + suffix, dims)
 
+    def _canonical_var(
+        self, base: str, dims: list[str], variables: tuple[sp.Basic, ...]
+    ) -> sp.Expr:
+        """Build a derivative variable named by its variables (canonical).
+
+        The scalar variables come first, sorted by name, then one ``d<x>``
+        per indexed variable ``x[i]``; the array subscripts are the
+        placeholder's own indices followed by the derivative indices, in
+        the order of ``variables``.
+        """
+        suffix, labels = _canonical_suffix(variables)
+        name = "d" + base + suffix
+        if not dims and len(labels) == 2:
+            self.symmetric.add(name)
+        return self._build(name, dims + labels)
+
     def _function_var(self, func: sp.Function) -> sp.Expr:
         base = _sanitize(func.func.__name__)
         dims = self._index_dims(func)
         return self._build(base, dims)
+
+
+def _canonical_suffix(
+    variables: tuple[sp.Basic, ...],
+) -> tuple[str, list[str]]:
+    """Return the canonical name suffix and the subscripts of a derivative.
+
+    ``(T, n[i])`` and ``(n[i], T)`` both give ``("dTdn", ["i"])``;
+    ``(n[i], n[j])`` gives ``("dndn", ["i", "j"])``.
+    """
+    scalars = sorted(
+        _sanitize(str(var))
+        for var in variables
+        if not isinstance(var, sp.Indexed)
+    )
+    indexed = [var for var in variables if isinstance(var, sp.Indexed)]
+    suffix = "".join("d" + name for name in scalars)
+    suffix += "".join("d" + _sanitize(str(var.base)) for var in indexed)
+    return suffix, [str(var.indices[0]) for var in indexed]
 
 
 def _derivative_function_atoms(

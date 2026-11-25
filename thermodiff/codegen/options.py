@@ -224,6 +224,7 @@ class CodegenOptions:
     scalar_chain: ScalarChainMode = ScalarChainMode.OFF
     split_affine: bool = False
     split_acc: int | None = None
+    canonical_placeholders: bool = True
 
     def __post_init__(self) -> None:
         """Coerce every field to its canonical type."""

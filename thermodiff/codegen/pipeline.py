@@ -738,7 +738,9 @@ def _new_state(
         structured=structured,
         stats=stats,
         count_scalar=count_scalar,
-        resolver=_PlaceholderResolver(strict=opts.strict),
+        resolver=_PlaceholderResolver(
+            strict=opts.strict, canonical=opts.canonical_placeholders
+        ),
         namer=_Namer(),
         selected=list(ctx.selected),
         integer_args=list(ctx.integer_args),
@@ -837,6 +839,9 @@ def _resolve_outputs(ctx: _EmitContext, state: _EmitState) -> None:
     state.outputs = outputs
     if state.scalar_chain_active:
         _scalar_chain_outputs(state)
+    state.symmetric_params = state.symmetric_params + tuple(
+        sorted(set(resolver.symmetric) - set(state.symmetric_params))
+    )
 
 
 def _stage_outputs(state: _EmitState) -> None:
@@ -2323,6 +2328,7 @@ def _emit_code(
     scalar_chain: ScalarChainMode | bool | str = False,
     split_affine: bool = False,
     split_acc: int | bool = False,
+    canonical_placeholders: bool = True,
 ) -> str:
     """Emit the subroutine from a precomputed chain-rule structure.
 
@@ -2663,6 +2669,19 @@ def to_fortran(
         without ``-ffast-math`` (reportes/brechas/ronda3-cmr-o3.md).  Changes
         the summation order.  Only without ``optional_derivatives``.  Off by
         default.
+    canonical_placeholders : bool, optional
+        Name the derivatives of placeholder functions by their
+        differentiation variables instead of their index labels: the
+        gradient of ``B(n)`` is one argument ``dBdn(:)`` read as
+        ``dBdn(i)`` and ``dBdn(j)`` (instead of two arguments ``dBdi`` and
+        ``dBdj`` with the same data), its Hessian is ``dBdndn(:, :)``
+        (declared symmetric, so ``dBdndn(j, i)`` is read as
+        ``dBdndn(i, j)`` under ``param_symmetry``) and mixed derivatives
+        put the scalar variables first (``dDdTdn`` for both orders of
+        ``T`` and ``n_i``).  The common sub-expression and symmetry passes
+        then see that the copies are equal.  ``False`` restores the index-label
+        names (``dBdi``, ``dBdj``, ``dBdidj``).  On by default (and in every
+        preset); the legacy keyword defaults of ``to_fortran`` keep it on too.
 
     Returns
     -------

@@ -153,6 +153,15 @@ derivative selection, names, `integer_args`, `module_symbols`,
   `SepSumsMode` (`False | True | "cost"`), `LowrankHessMode`
   (`False | True | "sym"`) and `CseBackend` (`"thermodiff"` | `"sympy"`).
   `split_acc` is `None` or `2`.
+* `canonical_placeholders` (default `True`, in every preset) names the
+  derivatives of placeholder functions by their variables: the gradient of
+  `B(n)` is one argument `dBdn(:)` read as `dBdn(i)` and `dBdn(j)`, its
+  Hessian is `dBdndn(:, :)` (registered as a symmetric parameter), and mixed
+  derivatives put the scalar variables first, sorted by name (`dDdTdn` for
+  `T` and `n_i` in either order).  `False` restores the index-label names
+  (`dBdi`, `dBdj`, `dBdidj`).  The generated names take part in the
+  case-clash check of Fortran identifiers (a parameter `DBDN` next to
+  `dBdn` raises `ValueError`).
 * `from_legacy(**kwargs)` and `to_legacy()` convert to and from the keyword
   form; `from_preset(preset, **overrides)` and `replace(**changes)` build
   variants.

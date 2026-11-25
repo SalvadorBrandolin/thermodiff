@@ -94,8 +94,8 @@ program drive
    use kernels
    implicit none
    integer, parameter :: nc = 3
-   real(8) :: n(nc), a(nc), dadT(nc), phi(nc), dphidi(nc, nc)
-   real(8) :: dphidj(nc, nc), dphididj(nc, nc, nc)
+   real(8) :: n(nc), a(nc), dadT(nc), phi(nc), dphidn(nc, nc)
+   real(8) :: dphidndn(nc, nc, nc)
    real(8) :: f, dfdT, dfdn(nc), dfdndn(nc, nc)
    integer :: p, q, r
    n = [0.3d0, 0.5d0, 0.9d0]
@@ -104,14 +104,13 @@ program drive
    phi = [1.5d0, 0.8d0, 2.1d0]
    do p = 1, nc
       do q = 1, nc
-         dphidi(p, q) = 0.1d0 * p - 0.05d0 * q
-         dphidj(p, q) = 0.3d0 * q + 0.02d0 * p
+         dphidn(p, q) = 0.1d0 * p - 0.05d0 * q
          do r = 1, nc
-            dphididj(p, q, r) = 0.01d0 * (p + 2 * q - r)
+            dphidndn(p, q, r) = 0.01d0 * (p + 2 * q - r)
          end do
       end do
    end do
-   call {name}(nc, n, a, dadT, dphidi, dphididj, dphidj, phi, &
+   call {name}(nc, n, a, dadT, dphidn, dphidndn, phi, &
                f, dfdT, dfdn, dfdndn)
    print "(*(es24.16))", f, dfdT, dfdn, dfdndn
 end program drive
