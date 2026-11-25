@@ -20,15 +20,17 @@ import sympy as sp
 
 from thermodiff import (
     DiffPlz,
-    workload_module,
     T,
     V,
     idx_function,
     k,
     l,
     n,
+    scalar_chain_core_derivatives,
+    scalar_chain_routine,
     sum_components,
     to_fortran,
+    workload_module,
 )
 from thermodiff.codegen.options import CodegenOptions
 from thermodiff.codegen.resolve import expression_argument_placeholders
@@ -565,3 +567,299 @@ def test_vector_placeholder_arguments_do_not_warn(preset):
             derivatives=["dn", "dndn", "dT", "dndT"],
             options=CodegenOptions.from_preset(preset),
         )
+
+
+# ---------------------------------------------------------------------------
+# Chain-rule assembly routine (scalar_chain_routine)
+# ---------------------------------------------------------------------------
+
+CHAIN_SCALARS = ("X1", "X2", "X3", "X4")
+#: Dependence of each scalar on T and V besides n (X1 is linear in n).
+CHAIN_DEPENDS = {"X2": ["T"], "X3": ["V"], "X4": ["T", "V"]}
+CHAIN_LINEAR = ("X1", "X4")
+CHAIN_SYMBOLS = sp.symbols(" ".join(CHAIN_SCALARS))
+COMPONENTS = sp.symbols("n1:4")
+
+
+def chain_mixing(mole_numbers):
+    """Return the scalars as expressions of the mole numbers, ``T``, ``V``."""
+    total = sum(mole_numbers)
+    covolume = sum(c * x for c, x in zip(COVOLUMES, mole_numbers))
+    attraction = sum(
+        ATTRACTIONS[p, q] * mole_numbers[p] * mole_numbers[q]
+        for p in range(NC)
+        for q in range(NC)
+    )
+    weighted = sum(c * x for c, x in zip(VOLUME_PARAMETERS, mole_numbers))
+    return [
+        covolume,
+        attraction * sp.exp(-T / 4),
+        total**2 / V,
+        weighted * T * V,
+    ]
+
+
+def chain_core(x1, x2, x3, x4):
+    """Return a core with explicit ``T`` and ``V`` dependence."""
+    return (
+        x4 * sp.log(1 + x1 / V)
+        + x2 * x3 / (1 + x1)
+        - x1 * x2 / (T * V)
+        + sp.sqrt(x4) * x3 * T
+    )
+
+
+def chain_scalar_inputs(name):
+    """Return the numeric derivative inputs of the scalars at the point."""
+    point = dict(zip(COMPONENTS, COMPOSITION)) | {T: POINT["T"], V: POINT["V"]}
+
+    def number(expression):
+        return float(expression.subs(point))
+
+    values = {}
+    for scalar, expression in zip(CHAIN_SCALARS, chain_mixing(COMPONENTS)):
+        grad = [sp.diff(expression, c) for c in COMPONENTS]
+        values[f"d{scalar}dn"] = np.array([number(g) for g in grad])
+        values[f"d{scalar}dndn"] = np.array(
+            [[number(sp.diff(g, c)) for c in COMPONENTS] for g in grad]
+        )
+        for thermo in (T, V):
+            first = sp.diff(expression, thermo)
+            tag = f"d{scalar}d{thermo}"
+            values[tag] = number(first)
+            values[f"d{scalar}dn" + f"d{thermo}"] = np.array(
+                [number(sp.diff(g, thermo)) for g in grad]
+            )
+            for other in (T, V):
+                key = f"d{scalar}d{thermo}d{other}"
+                if thermo == other:
+                    key = f"d{scalar}d{thermo}2"
+                values[key] = number(sp.diff(first, other))
+    return values[name]
+
+
+def chain_mixing_indexed():
+    """Return the mixing rules written with ``sum_components``."""
+    attraction = sum_components(
+        sum_components(ATTRACTION[k, l] * n[k] * n[l], l), k
+    )
+    weighted = sum_components(VOLUME_PARAMETER[k] * n[k], k)
+    return [
+        sum_components(COVOLUME[k] * n[k], k),
+        attraction * sp.exp(-T / 4),
+        sum_components(n[k], k) ** 2 / V,
+        weighted * T * V,
+    ]
+
+
+CHAIN_OUTPUT_SHAPES = {
+    "dardT": (),
+    "dardV": (),
+    "dardT2": (),
+    "dardV2": (),
+    "dardTdV": (),
+    "dardn": (NC,),
+    "dardndT": (NC,),
+    "dardndV": (NC,),
+    "dardndn": (NC, NC),
+}
+CHAIN_ALL = ["dT", "dV", "dT2", "dV2", "dTdV", "dn", "dndT", "dndV", "dndn"]
+
+
+def chain_dummies(source):
+    """Return the dummy argument names of the first subroutine."""
+    header = source.split("(", 1)[1].split(")", 1)[0]
+    return [name.strip() for name in header.split(",")]
+
+
+def run_chain(derivatives, optional, tmp_path):
+    """Run the scalar core and the chain routine; return the outputs."""
+    chain_args = (CHAIN_SCALARS, CHAIN_DEPENDS)
+    chain_kwargs = {"linear": CHAIN_LINEAR, "derivatives": derivatives}
+    core_names = scalar_chain_core_derivatives(*chain_args, **chain_kwargs)
+    core = DiffPlz(
+        chain_core(*CHAIN_SYMBOLS),
+        indexes=[k],
+        name="f",
+        variables=list(CHAIN_SYMBOLS),
+    )
+    point = {T: POINT["T"], V: POINT["V"]} | dict(zip(COMPONENTS, COMPOSITION))
+    scalar_values = {
+        name: float(expression.subs(point))
+        for name, expression in zip(CHAIN_SCALARS, chain_mixing(COMPONENTS))
+    }
+    core_values = run_kernel(
+        generate(core, core_names, "standard"),
+        "f_derivs",
+        scalar_values | {"V": POINT["V"], "T": POINT["T"]},
+        {"f": ()} | {"df" + name: () for name in core_names},
+        tmp_path / "core",
+    )
+    options = CodegenOptions(optional_derivatives=optional)
+    source = scalar_chain_routine(*chain_args, options=options, **chain_kwargs)
+    dummies = chain_dummies(source)
+    inputs = {"nc": NC}
+    for name in dummies[1:]:
+        if name not in CHAIN_OUTPUT_SHAPES:
+            inputs[name] = core_values.get(name, None)
+            if inputs[name] is None:
+                inputs[name] = chain_scalar_inputs(name)
+    outputs = {
+        name: shape
+        for name, shape in CHAIN_OUTPUT_SHAPES.items()
+        if name in dummies
+    }
+    return run_kernel(
+        source,
+        "ar_chain",
+        inputs,
+        outputs,
+        tmp_path / "chain",
+        CHECKED_FLAGS,
+    )
+
+
+@pytest.mark.skipif(GFORTRAN is None, reason="gfortran is not available")
+class TestScalarChainRoutine:
+    """Core kernel plus chain routine equal the full-composition kernel."""
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def full(cls, tmp_path_factory):
+        """Outputs of the kernel written in the mole numbers."""
+        diff = DiffPlz(
+            chain_core(*chain_mixing_indexed()),
+            indexes=[k, l],
+            name="ar",
+        )
+        return run_kernel(
+            generate(diff, CHAIN_ALL, "standard"),
+            "ar_derivs",
+            {
+                "nc": NC,
+                "V": POINT["V"],
+                "T": POINT["T"],
+                "n": COMPOSITION,
+                "b": COVOLUMES,
+                "a": ATTRACTIONS,
+                "c": VOLUME_PARAMETERS,
+            },
+            {"ar": ()} | CHAIN_OUTPUT_SHAPES,
+            tmp_path_factory.mktemp("full"),
+        )
+
+    @pytest.mark.parametrize("optional", [False, True])
+    def test_all_outputs(self, full, optional, tmp_path):
+        values = run_chain("all", optional, tmp_path)
+        assert set(values) == set(CHAIN_OUTPUT_SHAPES)
+        for name, value in values.items():
+            assert value == pytest.approx(full[name], rel=1e-11), name
+
+    @pytest.mark.parametrize(
+        "subset",
+        [["dn", "dndn"], ["dT2", "dTdV"], ["dndT", "dV", "dV2"], ["dndV"]],
+    )
+    def test_optional_subset(self, full, subset, tmp_path):
+        values = run_chain(subset, True, tmp_path)
+        assert len(values) == len(subset)
+        for name, value in values.items():
+            assert value == pytest.approx(full[name], rel=1e-11), name
+
+
+class TestScalarChainDeclarations:
+    """Names, inputs and validation of the routine."""
+
+    def test_core_derivatives_are_those_the_routine_reads(self):
+        names = scalar_chain_core_derivatives(
+            ["B", "D"], {"D": ["T"]}, linear=["B"], derivatives=["dn"]
+        )
+        assert names == ["dB", "dD"]
+        source = scalar_chain_routine(
+            ["B", "D"], {"D": ["T"]}, linear=["B"], derivatives=["dn"]
+        )
+        assert chain_dummies(source) == [
+            "nc",
+            "dfdB",
+            "dfdD",
+            "dBdn",
+            "dDdn",
+            "dardn",
+        ]
+
+    def test_linear_scalars_have_no_hessian_input(self):
+        source = scalar_chain_routine(
+            ["B", "D"], linear=["B"], derivatives=["dndn"]
+        )
+        assert "dDdndn" in source and "dBdndn" not in source
+
+    def test_real_kind_and_module(self):
+        options = CodegenOptions(real_kind="pr", kind_module="my_kinds")
+        source = scalar_chain_routine(
+            ["B"], derivatives=["dn"], options=options
+        )
+        assert "use my_kinds, only: pr" in source
+        assert "real(8)" not in source and "real(pr)" in source
+
+    def test_unknown_dependence_is_rejected(self):
+        with pytest.raises(ValueError, match="only"):
+            scalar_chain_routine(["B"], {"B": ["P"]})
+        with pytest.raises(ValueError, match="unknown scalars"):
+            scalar_chain_routine(["B"], {"D": ["T"]})
+
+    def test_case_clash_is_rejected(self):
+        with pytest.raises(ValueError, match="case-insensitive"):
+            scalar_chain_routine(["B", "b"], derivatives=["dn"])
+
+
+@pytest.mark.skipif(GFORTRAN is None, reason="gfortran is not available")
+@pytest.mark.parametrize("preset", PRESETS)
+def test_cubic_core_with_the_chain_routine(preset, tmp_path):
+    """The generated assembly replaces the NumPy one of the cubic example."""
+    derivatives = ["dT", "dV", "dn", "dndn", "dndT", "dndV"]
+    chain = {"linear": ["B", "D1", "nT"], "derivatives": derivatives}
+    names = scalar_chain_core_derivatives(["B", "D", "D1", "nT"], {}, **chain)
+    point = {
+        "B": COVOLUMES @ COMPOSITION,
+        "D": COMPOSITION @ ATTRACTIONS @ COMPOSITION,
+        "D1": VOLUME_PARAMETERS @ COMPOSITION,
+        "nT": COMPOSITION.sum(),
+        "V": POINT["V"],
+        "T": POINT["T"],
+    }
+    core = run_kernel(
+        generate(scalar_core_diff(), names, preset),
+        "f_derivs",
+        point,
+        {"f": ()} | {"df" + name: () for name in names},
+        tmp_path / "core",
+    )
+    inputs = {
+        "nc": NC,
+        "dBdn": COVOLUMES,
+        "dDdn": 2 * ATTRACTIONS @ COMPOSITION,
+        "dDdndn": 2 * ATTRACTIONS,
+        "dD1dn": VOLUME_PARAMETERS,
+        "dnTdn": np.ones(NC),
+    }
+    source = scalar_chain_routine(
+        ["B", "D", "D1", "nT"], {}, subroutine_name="ar_chain", **chain
+    )
+    outputs = {
+        name: shape
+        for name, shape in CHAIN_OUTPUT_SHAPES.items()
+        if name in chain_dummies(source)
+    }
+    wanted = {
+        name: value
+        for name, value in (core | inputs).items()
+        if name in chain_dummies(source)
+    }
+    assembled = run_kernel(
+        source, "ar_chain", wanted, outputs, tmp_path / "chain", CHECKED_FLAGS
+    )
+    gradient, hessian, mixed = assemble_from_scalar_core(core)
+    assert assembled["dardn"] == pytest.approx(gradient, rel=1e-11)
+    assert assembled["dardndn"] == pytest.approx(hessian, rel=1e-11)
+    assert assembled["dardndT"] == pytest.approx(mixed["T"], rel=1e-11)
+    assert assembled["dardndV"] == pytest.approx(mixed["V"], rel=1e-11)
+    assert assembled["dardT"] == pytest.approx(core["dfdT"], rel=1e-11)
