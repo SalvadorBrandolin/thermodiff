@@ -1,5 +1,6 @@
 """Placeholder resolution for the Fortran code generator."""
 
+import warnings
 from collections.abc import Iterable
 from typing import NamedTuple, TYPE_CHECKING
 
@@ -7,6 +8,7 @@ import sympy as sp
 
 from thermodiff.codegen.common import (
     _DERIV_ORDER,
+    _emission_order,
     _is_placeholder,
     _sanitize,
 )
@@ -49,6 +51,8 @@ class _PlaceholderResolver:
         #: canonical second derivatives over two indexed variables of a
         #: placeholder without own indices: symmetric in their subscripts
         self.symmetric: set[str] = set()
+        #: placeholders already reported by :func:`_warn_expression_args`
+        self._reported: set[str] = set()
 
     def resolve(self, expr: sp.Expr) -> sp.Expr:
         """Return ``expr`` with placeholders replaced by plain variables."""
@@ -84,6 +88,13 @@ class _PlaceholderResolver:
         replacements = {func: self._function_var(func) for func in bare}
         return resolved.xreplace(replacements)
 
+    def _check_arguments(self, func: sp.Function) -> None:
+        """Warn once per placeholder whose arguments include expressions."""
+        key = str(func)
+        if key not in self._reported:
+            self._reported.add(key)
+            _warn_expression_args(func)
+
     def _index_dims(self, func: sp.Function) -> list[str]:
         """Return the index labels used as array dimensions by ``func``."""
         dims: list[str] = []
@@ -115,6 +126,7 @@ class _PlaceholderResolver:
     def _derivative_var(self, deriv: sp.Derivative) -> sp.Expr:
         inner = deriv.expr
         if _is_placeholder(inner):
+            self._check_arguments(inner)
             base = _sanitize(inner.func.__name__)
             dims = self._index_dims(inner)
         else:
@@ -164,6 +176,7 @@ class _PlaceholderResolver:
         return self._build(name, dims + labels)
 
     def _function_var(self, func: sp.Function) -> sp.Expr:
+        self._check_arguments(func)
         base = _sanitize(func.func.__name__)
         dims = self._index_dims(func)
         if self._is_symmetric_placeholder(func, dims):
@@ -182,6 +195,40 @@ class _PlaceholderResolver:
             or getattr(func.func, "symmetric_args", None) is not None
         )
         return declared and len(dims) == 2
+
+
+def _warn_expression_args(func: sp.Function) -> None:
+    """Warn when a placeholder takes an expression as an argument.
+
+    The generator treats a placeholder as a function of the variables its
+    arguments contain, and asks the caller for its derivatives with respect
+    to those variables (total derivatives); it does not apply the chain
+    rule through an argument such as ``delta(n, V)``.
+
+    Parameters
+    ----------
+    func : sympy.Function
+        The placeholder call.
+    """
+    expression_args = [
+        arg
+        for arg in func.args
+        if not isinstance(arg, (sp.Symbol, sp.Idx, sp.Indexed))
+    ]
+    if not expression_args:
+        return
+    warnings.warn(
+        f"placeholder '{func.func.__name__}' has the expression argument(s) "
+        + ", ".join(str(arg) for arg in expression_args)
+        + ": it is treated as a function of the variables they contain, "
+        "so the caller must supply its total derivatives with respect to "
+        "those variables (the chain rule through the arguments is not "
+        "applied). To differentiate through them, give the arguments as "
+        "scalar variables (DiffPlz(..., variables=[...])) and assemble "
+        "the result; see the scalar core recipe in the documentation.",
+        UserWarning,
+        stacklevel=2,
+    )
 
 
 def _canonical_suffix(
@@ -298,16 +345,17 @@ def _select_derivatives(
         if candidates is None:
             candidates = _DERIV_ORDER
         selected = []
-        for attr in _DERIV_ORDER:
-            if attr not in candidates:
-                continue
+        for attr in _emission_order(candidates):
             value = getattr(diff, attr, None)
             if value is None or value == 0:
                 continue
             selected.append(attr)
         return selected
-    resolved = resolve_derivatives(derivatives)
-    selected = [attr for attr in _DERIV_ORDER if attr in resolved]
+    resolved = resolve_derivatives(
+        derivatives,
+        scalar_variables=[str(var) for var in getattr(diff, "variables", ())],
+    )
+    selected = _emission_order(resolved)
     missing = [attr for attr in selected if getattr(diff, attr, None) is None]
     if missing:
         raise ValueError(

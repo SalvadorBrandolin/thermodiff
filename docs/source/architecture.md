@@ -370,6 +370,26 @@ base handler covers `TempDef` and tests the annotations in a fixed order
 `OuterFusedNest`, `ComponentFusedMap` and `FusedNest` have registered
 handlers.  A new record type needs a new registered handler.
 
+## Extra scalar variables
+
+`DiffPlz(..., variables=[B, D])` adds derivatives with respect to scalar
+symbols (`dB`, `dB2`, `dBdD`, `dBdT`, `dndB` ...).  The vocabulary and the
+parsing live in `derivatives.py` (`scalar_derivative_specs`,
+`resolve_derivatives(scalar_variables=...)`); their attributes carry the
+prefix `var_` (`var_dBdD`) so that they never clash with the thermodynamic
+ones and are stored in `DiffPlz.scalar_derivatives`.  In the generator
+they are ordinary outputs: `common._deriv_suffix` gives the output name
+and `common._emission_order` puts them after the thermodynamic ones.  The
+chain-rule step (`chain.py`) only sees the thermodynamic attributes; the
+scalar ones always come from the plain `DiffPlz` derivatives, and their
+placeholders resolve as usual.  The recipe for models written as a scalar
+core is in the Fortran page of the documentation.  Without `variables`
+nothing changes (golden byte-identical).
+
+`resolve._PlaceholderResolver` warns (once per placeholder) when a
+placeholder has an expression argument, since the caller then has to
+supply total derivatives.
+
 ## Invariants
 
 Every change to the generator must respect these rules.

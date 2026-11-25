@@ -8,7 +8,7 @@ import sympy as sp
 from sympy.printing.fortran import fcode
 
 from thermodiff.codegen.common import (
-    _DERIV_ORDER,
+    _emission_order,
     _FCODE_SETTINGS,
     _INDENT,
     _Namer,
@@ -729,8 +729,8 @@ def _guard(attributes: Collection[str], out_names: Mapping[str, str]) -> str:
         names.append(out_names["value"])
     names.extend(
         out_names[attr]
-        for attr in _DERIV_ORDER
-        if attr in attributes and attr in out_names
+        for attr in _emission_order(out_names)
+        if attr in attributes and attr != "value"
     )
     return " .or. ".join(f"present({name})" for name in names)
 

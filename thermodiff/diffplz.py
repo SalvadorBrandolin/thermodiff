@@ -16,6 +16,7 @@ Use the class as.
     sol = td.DiffPlz(expression, internal_functions, indexes, name="f")
 """
 
+from collections.abc import Iterable
 from typing import List
 
 import sympy as sp
@@ -24,7 +25,12 @@ from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
-from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES, resolve_derivatives
+from thermodiff.derivatives import (
+    DERIVATIVE_ATTRIBUTES,
+    RESERVED_VARIABLE_NAMES,
+    resolve_derivatives,
+    scalar_derivative_specs,
+)
 from thermodiff.latex_utils import (
     clean_latex_string,
     finalize_latex_dict,
@@ -97,6 +103,48 @@ def _rename_reserved_indices(
     return expression.xreplace(mapping), renamed, mapping
 
 
+#: Symbols of the thermodynamic variables that can be differentiated.
+_THERMO_SYMBOLS = {"T": T, "V": V, "P": P}
+
+
+def _check_variables(variables: Iterable[sp.Symbol] | None) -> list[sp.Symbol]:
+    """Validate the extra scalar differentiation variables.
+
+    Parameters
+    ----------
+    variables : iterable of sympy.Symbol or None
+        The variables declared by the user.
+
+    Returns
+    -------
+    list of sympy.Symbol
+        The variables, in declaration order (empty for ``None``).
+
+    Raises
+    ------
+    ValueError
+        If an item is not a plain symbol, is repeated, or has a name
+        reserved for a thermodynamic variable (``T``, ``V``, ``P``,
+        ``n``, in any case).
+    """
+    checked: list[sp.Symbol] = []
+    for variable in variables or ():
+        name = str(variable)
+        if not isinstance(variable, sp.Symbol) or isinstance(variable, sp.Idx):
+            raise ValueError(
+                f"variables must be plain symbols, got {variable!r}"
+            )
+        if name.lower() in RESERVED_VARIABLE_NAMES:
+            raise ValueError(
+                f"{name!r} is a thermodynamic variable (T, V, P, n); "
+                "choose another name for the scalar variable"
+            )
+        if variable in checked:
+            raise ValueError(f"variable {name!r} is declared twice")
+        checked.append(variable)
+    return checked
+
+
 class DiffPlz:
     """Class to obtaine all the derivatives of a thermodynamic expression.
 
@@ -151,6 +199,17 @@ class DiffPlz:
         the attributes that were not requested are set to ``None``.  The
         names understood by
         :func:`thermodiff.derivatives.resolve_derivatives` are accepted.
+    variables : list of sympy.Symbol, optional
+        Extra scalar variables to differentiate with respect to, besides
+        ``T``, ``V``, ``P`` and ``n[i]``; by default none, and nothing
+        changes.  Typical use is a model written with a few mixture level
+        scalars (``B``, ``D``, ``D1`` of a cubic) so that the derivatives
+        with respect to them can be assembled by the caller with the chain
+        rule.  Their derivatives are named ``dB``, ``dB2``, ``dBdD``,
+        ``dBdT``, ``dndB`` ... (see :mod:`thermodiff.derivatives`), are
+        selected with ``derivatives=`` like the others, and are stored in
+        :attr:`scalar_derivatives`.  With ``derivatives=None`` all of them
+        are computed.
 
     Attributes
     ----------
@@ -198,7 +257,15 @@ class DiffPlz:
         List of symbols (variables) that appear in the expression.
     derivatives : list of str or None
         The derivative attributes that were selected for computation, or
-        ``None`` when every derivative was computed.
+        ``None`` when every derivative was computed (always a list when
+        ``variables`` are declared).
+    variables : list of sympy.Symbol
+        The extra scalar differentiation variables (empty by default).
+    scalar_derivatives : dict
+        Derivatives with respect to the extra variables that were
+        computed, ``attribute -> expression``; the attribute is
+        ``"var_"`` followed by the name (``"var_dBdD"``).  Also readable
+        as an attribute of the instance.
 
     Notes
     -----
@@ -218,8 +285,12 @@ class DiffPlz:
         indexes: List[sp.Idx] | None = None,  # noqa E741)
         name: str = "f",
         derivatives=None,
+        variables: Iterable[sp.Symbol] | None = None,
     ):
         self.name = name
+        self.variables = _check_variables(variables)
+        names = [str(variable) for variable in self.variables]
+        self._scalar_specs = scalar_derivative_specs(names)
         indexes = indexes if indexes is not None else [k, l, m]
         expression, indexes, mapping = _rename_reserved_indices(
             expression, indexes
@@ -233,15 +304,22 @@ class DiffPlz:
         self._cache = {}
 
         if derivatives is None:
-            self.derivatives = None
-            selected = list(DERIVATIVE_ATTRIBUTES)
+            selected = list(DERIVATIVE_ATTRIBUTES) + list(self._scalar_specs)
+            self.derivatives = list(selected) if self.variables else None
         else:
-            selected = resolve_derivatives(derivatives)
+            selected = resolve_derivatives(derivatives, scalar_variables=names)
             self.derivatives = list(selected)
 
         for attribute in DERIVATIVE_ATTRIBUTES:
             value = self._compute(attribute) if attribute in selected else None
             setattr(self, attribute, value)
+        self.scalar_derivatives = {
+            attribute: self._compute(attribute)
+            for attribute in self._scalar_specs
+            if attribute in selected
+        }
+        for attribute in self._scalar_specs:
+            setattr(self, attribute, self.scalar_derivatives.get(attribute))
 
         # Arguments
         self.arguments = self._detect_arguments()
@@ -263,7 +341,9 @@ class DiffPlz:
             return self._cache[attribute]
 
         expression = self.expression
-        if attribute == "dt":
+        if attribute in self._scalar_specs:
+            value = self._compute_scalar(self._scalar_specs[attribute])
+        elif attribute == "dt":
             value = sp.diff(expression, T)
         elif attribute == "dv":
             value = sp.diff(expression, V)
@@ -295,6 +375,39 @@ class DiffPlz:
             raise ValueError(f"Unknown derivative attribute {attribute!r}")
 
         self._cache[attribute] = value
+        return value
+
+    def _compute_scalar(self, factors: tuple[str, ...]) -> sp.Expr:
+        """Differentiate the expression with respect to ``factors``.
+
+        The composition derivative, if any, is applied last, as for
+        ``dtdni``; the partial results are cached.
+
+        Parameters
+        ----------
+        factors : tuple of str
+            Variables of the derivative in canonical order: ``"n"``, the
+            names of the extra variables, ``"T"``, ``"V"``, ``"P"``.
+
+        Returns
+        -------
+        sympy expression
+            The derivative.
+        """
+        symbols = {str(variable): variable for variable in self.variables}
+        symbols.update(_THERMO_SYMBOLS)
+        ordered = [f for f in factors if f != "n"] + [
+            f for f in factors if f == "n"
+        ]
+        value = self.expression
+        for position, factor in enumerate(ordered):
+            key = ("scalar",) + tuple(ordered[: position + 1])
+            if key not in self._cache:
+                if factor == "n":
+                    self._cache[key] = self.diff_ni(value, i)
+                else:
+                    self._cache[key] = sp.diff(value, symbols[factor])
+            value = self._cache[key]
         return value
 
     def diff_ni(self, expression: sp.Expr, index: sp.Idx) -> sp.Expr:

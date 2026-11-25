@@ -18,7 +18,8 @@ from thermodiff.codegen import (
     SepSumsMode,
 )
 from thermodiff.codegen.common import (
-    _DERIV_SUFFIX,
+    _DERIV_ORDER,
+    _deriv_suffix,
     _INDENT,
     _LoopStart,
     _Namer,
@@ -249,7 +250,7 @@ def _case_renames(
         If two names that cannot be renamed differ only in case.
     """
     candidates, indices, thermo = _expression_names(diff.expression)
-    outputs = {base} | {"d" + base + _DERIV_SUFFIX[attr] for attr in selected}
+    outputs = {base} | {"d" + base + _deriv_suffix(attr) for attr in selected}
     fixed = external | outputs | indices | thermo
     return _case_clash_renames(
         fixed, (candidates | set(symmetric_params)) - external
@@ -340,7 +341,7 @@ def _chain_structure(
     )
     structure: Structure = chain_rule_derivatives(  # type: ignore[no-untyped-call]  # noqa: E501
         ctx.diff.expression,
-        list(ctx.selected),
+        [attr for attr in ctx.selected if attr in _DERIV_ORDER],
         ctx.diff.indexes,
         symmetric_params=ctx.symmetric_params,
         split_sqrt=opts.split_sqrt,
@@ -788,7 +789,7 @@ def _derivative(
     ctx: _EmitContext, structured: Structure | None, attr: str
 ) -> sp.Expr:
     """Return the derivative ``attr`` from the structure or the instance."""
-    if structured is not None:
+    if structured is not None and attr in structured:
         return structured[attr]
     return getattr(ctx.diff, attr)
 
@@ -861,7 +862,7 @@ def _resolve_outputs(ctx: _EmitContext, state: _EmitState) -> None:
         outputs.append(
             (
                 attr,
-                "d" + ctx.base + _DERIV_SUFFIX[attr],
+                "d" + ctx.base + _deriv_suffix(attr),
                 resolver.resolve(_derivative(ctx, structured, attr)),
             )
         )

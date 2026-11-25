@@ -10,7 +10,11 @@ from sympy.core.function import DefinedFunction
 from sympy.printing.fortran import fcode
 
 from thermodiff.codegen.options import DEFAULT_REAL_KIND
-from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES
+from thermodiff.derivatives import (
+    DERIVATIVE_ATTRIBUTES,
+    SCALAR_PREFIX,
+    scalar_suffix,
+)
 from thermodiff.thermovars import i, j, nc
 
 #: Mapping of ``DiffPlz`` derivative attributes to the suffix used in the
@@ -32,8 +36,41 @@ _DERIV_SUFFIX = {
     "dpdni": "dndP",
 }
 
-#: Order in which the derivatives are emitted.
+#: Order in which the derivatives are emitted (those with respect to the
+#: extra scalar variables of the ``DiffPlz`` follow, in their own order).
 _DERIV_ORDER = list(DERIVATIVE_ATTRIBUTES)
+
+
+def _deriv_suffix(attribute: str) -> str:
+    """Return the output name suffix of a derivative attribute.
+
+    Parameters
+    ----------
+    attribute : str
+        A ``DiffPlz`` derivative attribute, including the ones with
+        respect to the extra scalar variables (``"var_dB"``).
+
+    Returns
+    -------
+    str
+        ``"dT"`` for ``"dt"``, ``"dB"`` for ``"var_dB"`` ...
+    """
+    if attribute.startswith(SCALAR_PREFIX):
+        return scalar_suffix(attribute)
+    return _DERIV_SUFFIX[attribute]
+
+
+def _emission_order(attributes: Iterable[str]) -> list[str]:
+    """Sort derivative attributes in emission order.
+
+    The thermodynamic derivatives come first, in ``_DERIV_ORDER``; the
+    others keep the order in which they are given.
+    """
+    given = list(attributes)
+    return [a for a in _DERIV_ORDER if a in given] + [
+        a for a in given if a not in _DERIV_ORDER
+    ]
+
 
 #: Settings passed to :func:`sympy.printing.fortran.fcode`.
 _FCODE_SETTINGS = {
