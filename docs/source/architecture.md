@@ -260,7 +260,7 @@ Presets are the `Preset` enum, with the settings in `PRESET_SETTINGS`:
 | Preset | Meaning |
 | ------ | ------- |
 | `minimal` | The legacy defaults: the output of earlier versions. |
-| `standard` | The default of `compile_model`: chain rule, symmetry, nesting and sum sharing (`_STANDARD_ENABLED`). |
+| `standard` | The default of `compile_model`: chain rule (with `chain_factor_sums`), symmetry, nesting and sum sharing (`_STANDARD_ENABLED`). |
 | `fastest` | Opt-in: the fastest generated code, slower generation and different last-bit rounding (`_FASTEST_ENABLED` plus the modes `lowrank_hess=ON`, `scalar_chain=ESTIMATE`, `sep_sums=COST`, `split_acc=2`). |
 
 `to_fortran` itself resolves its options in this order.  The base is
@@ -330,7 +330,7 @@ This table is the content of `_PASSES`.  Gates written as "`flag`, not
 | 6 | `array_cse` | `array_cse` | Share the common sub-expressions into arrays (S13). | `cse` |
 | 7 | `mirror_array_temps` | `param_symmetry` | Flag the symmetric array temporaries as mirrored (S14). | `symmetry` |
 | 8 | `reserved_names` | always | Collect the names that temporaries must not take (S15). | `pipeline`, `resolve` |
-| 9 | `fuse_temps` | `fuse_temps` | Fuse the temporaries that are read once (S16); with `chain_factor_sums` (needs `chain_rule`), then move the free-index factors out of the reductions (`_factor_free_indices`). | `loops` |
+| 9 | `fuse_temps` | `fuse_temps` | Fuse the temporaries that are read once (S16); with `chain_factor_sums` (needs `chain_rule`; on in `standard` and `fastest`), then move the free-index factors out of the reductions (`_factor_free_indices`). | `loops` |
 | 10 | `hoist_array_temps` | `hoist_invariants` | Hoist the loop invariants of the array temporaries (S17). | `hoisting` |
 | 11 | `share_sum_temps` | always | Share the summations, or pass the expressions through (S18). | `cse` |
 | 12 | `hoist_sum_temps` | `hoist_invariants` | Hoist the loop invariants of the shared sums (S18b). | `hoisting` |

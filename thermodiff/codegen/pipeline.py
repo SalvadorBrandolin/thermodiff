@@ -2737,7 +2737,8 @@ def to_fortran(
         structured derivatives (``sum_k qs(i)*qs(j)*w(k)*tau(i,k)*tau(j,k)``
         becomes ``qs(i)*qs(j)*sum_k w(k)*tau(i,k)*tau(j,k)``), as the plain
         path does.  Fewer multiplications in the inner loops; last-bit rounding
-        differences.  Off by default.
+        differences.  Off by default here; on in the ``"standard"`` and
+        ``"fastest"`` presets.
     sum_transpose : bool, optional
         With ``sum_free_alpha``: reuse a rank-2 summation that is the
         transpose of another one.  Off by default.

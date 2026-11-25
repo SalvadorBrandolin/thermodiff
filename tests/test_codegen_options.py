@@ -406,8 +406,8 @@ class TestPresets:
 
     def test_setting_counts(self):
         assert len(PRESET_SETTINGS[Preset.MINIMAL]) == 0
-        assert len(PRESET_SETTINGS[Preset.STANDARD]) == 13
-        assert len(PRESET_SETTINGS[Preset.FASTEST]) == 43
+        assert len(PRESET_SETTINGS[Preset.STANDARD]) == 14
+        assert len(PRESET_SETTINGS[Preset.FASTEST]) == 44
 
     def test_standard_without_optional_derivatives_is_clean(self):
         options = CodegenOptions.from_preset("standard")

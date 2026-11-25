@@ -236,8 +236,9 @@ records, invariants, how to add a pass). Read it before changing
   old code failed.
 - Presets (`codegen/options.py`, `PRESET_SETTINGS`): `"minimal"` (legacy
   output), `"standard"` (= bench variant e8: sum sharing, CSE, symmetry,
-  invariant hoisting, chain rule) and `"fastest"` (= p33: adds the
-  gfortran/x86 loop passes; slower generation, last-bit rounding differences).
+  invariant hoisting, chain rule, `chain_factor_sums`) and `"fastest"`
+  (= p33: adds the gfortran/x86 loop passes; slower generation, last-bit
+  rounding differences).
   `compile_model`, `emit_module`, the CLI (`--preset`) and the GUI default to
   `"standard"`; **`to_fortran` called directly keeps the neutral (minimal)
   defaults**. Tests pin standard == e8 and fastest == p33.
