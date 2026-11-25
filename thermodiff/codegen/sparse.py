@@ -218,6 +218,8 @@ def _expressions(definition: TempDef) -> list[sp.Basic]:
             found.append(item)
         elif isinstance(item, TempDef):
             stack.extend(vars(item).values())
+        elif isinstance(item, Mapping):
+            stack.extend(item.values())
         elif isinstance(item, (list, tuple)):
             stack.extend(item)
     return found

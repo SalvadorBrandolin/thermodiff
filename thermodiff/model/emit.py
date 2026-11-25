@@ -10,14 +10,20 @@ module only takes care of the things that are specific to a whole model:
   statements requested in the ``.model`` file.
 """
 
+from typing import Any
+
 import sympy as sp
 
-from thermodiff.codegen.options import resolve_codegen_options
+from thermodiff.codegen.options import (
+    CodegenOptions,
+    resolve_codegen_options,
+)
 from thermodiff.codegen.workload import workload_procedures, wrap_module
 from thermodiff.derivatives import resolve_derivatives
 from thermodiff.diffplz import DiffPlz
 from thermodiff.fortran import _sanitize, to_fortran
 from thermodiff.model.errors import ModelError
+from thermodiff.model.ir import ModelIR
 
 __all__ = ["build_diff", "emit_module", "select_derivatives"]
 
@@ -175,7 +181,11 @@ def _workload_code(
         raise ModelError(str(error)) from error
 
 
-def _declare_sparse(ir, options, overrides):
+def _declare_sparse(
+    ir: ModelIR,
+    options: CodegenOptions | None,
+    overrides: dict[str, Any],
+) -> None:
     """Add the parameters declared ``sparse`` to ``sparse_parameters``.
 
     Parameters
@@ -187,8 +197,7 @@ def _declare_sparse(ir, options, overrides):
     overrides : dict
         Option overrides of the caller; updated in place.
     """
-    declared = tuple(getattr(ir, "sparse", ()))
-    if not declared:
+    if not ir.sparse:
         return
     given = overrides.get("sparse_parameters")
     if given is None and options is not None:
@@ -196,7 +205,7 @@ def _declare_sparse(ir, options, overrides):
     if isinstance(given, str):
         given = (given,)
     overrides["sparse_parameters"] = tuple(
-        dict.fromkeys((*declared, *(given or ())))
+        dict.fromkeys((*ir.sparse, *(given or ())))
     )
 
 

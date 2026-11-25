@@ -636,6 +636,12 @@ def _sparse_test(guard: SparseGuard) -> str:
     return f"{_print_expr(guard.factor)} /= 0.0d0"
 
 
+def _summand(expr: sp.Basic) -> str:
+    """Print ``expr`` so that it can follow ``+`` (no ``+ -x``)."""
+    text = _print_expr(expr)
+    return f"({text})" if text.startswith("-") else text
+
+
 def _render_guarded_reduction(
     definition: SparseNest, free_depth: int
 ) -> list[str]:
@@ -651,12 +657,9 @@ def _render_guarded_reduction(
         depth += 1
     accumulate = _INDENT * depth + f"{target_s} = {target_s} + "
     if guard.rest != 0:
-        rest_s = _print_expr(guard.rest)
-        if rest_s.startswith("-"):
-            rest_s = f"({rest_s})"
-        lines.append(accumulate + rest_s)
+        lines.append(accumulate + _summand(guard.rest))
     lines.append(_INDENT * depth + f"if ({_sparse_test(guard)}) then")
-    lines.append(_INDENT + accumulate + _print_expr(guard.guarded))
+    lines.append(_INDENT + accumulate + _summand(guard.guarded))
     lines.append(_INDENT * depth + "end if")
     for _ in definition.limits:
         depth -= 1
