@@ -175,6 +175,48 @@ array of rank two or more, input or output, has exactly the declared extents
 in all dimensions but the last; otherwise it calls the fallback, which is
 always correct.
 
+Fused workloads of a scalar core
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A scalar core (``DiffPlz(..., variables=[...])``) normally takes two calls:
+the core kernel and the chain-rule routine
+(:func:`thermodiff.scalar_chain_routine`).
+:func:`thermodiff.scalar_chain_workload_module` emits instead one subroutine
+per workload, given as a selection of *chain* outputs::
+
+    td.scalar_chain_workload_module(
+        core, ["B", "D", "E", "S"], [["dv", "dni"], ["dt", "dv", "dni"]],
+        {"D": ["T"]}, total_moles=("S",), preset="fastest",
+        module_symbols=["R"], uses=["consts, only: R"],
+        subroutine_name="ar_fused",
+    )
+
+Each kernel computes exactly the core derivatives its outputs need (as
+local scalars, with the code ``to_fortran`` generates for that set) and then
+the chain assembly, with no optional arguments and no ``present()`` tests.
+The dispatcher ``ar_fused(nc, <core inputs>, f, <scalar derivatives>,
+<outputs>)`` has optional ``f``, scalar derivatives and outputs, and selects
+the kernel by the ``present()`` mask of the outputs and ``f``; ``f`` (the
+function value) belongs to every kernel's output set.  Any other
+combination goes to ``ar_fused_fallback``: all the core derivatives of the
+union, then the chain with optional outputs.  That fallback needs the
+inputs of the chain routine (see its documentation: the total partials are
+computed when any second-order ``T``/``V`` output is present), and a
+workload kernel needs only its own.  ``preset``/``options``, ``real_kind``,
+``kind_module`` and ``module_symbols`` behave as in
+:func:`thermodiff.workload_module`; ``fixed_nc`` is not supported.
+
+The dispatcher costs a few nanoseconds (the mask and forwarding); a caller
+that knows the output set can call ``ar_fused_w<k>`` directly.  Measured
+(cubic core, nc 2 to 50): the fused kernel is within 4 percent of the direct
+core and chain calls for the ``[dv, dni]`` set and about 10 percent faster
+for a Jacobian set, and 0.8 to 1.0 times a dispatched core followed by an
+optional chain.
+
+.. automodule:: thermodiff.codegen.core_chain_workload
+   :members: scalar_chain_workload_module, scalar_chain_workload_procedures
+   :show-inheritance:
+
 .. automodule:: thermodiff.codegen.workload
    :members: workload_module, workload_procedures
    :show-inheritance:

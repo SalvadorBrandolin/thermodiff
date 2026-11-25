@@ -163,6 +163,16 @@ by the tests.
   to be confused with the `scalar_chain` option, which is about a different
   step of the pipeline.
 
+`core_chain_workload.py`
+: Fused workload kernels of a scalar core (opt-in, W21).
+  `scalar_chain_workload_module` composes, per workload (a set of chain
+  outputs), the `to_fortran` kernel of exactly the core derivatives the
+  workload needs and the statements of `core_chain.chain_fragments` into one
+  subroutine (`fuse_kernel`: the core derivative outputs become locals, no
+  optional argument, no `present()`), and reuses the dispatcher of
+  `workload.py`.  The fallback is the full core plus the chain with optional
+  outputs.  It changes no existing entry point.
+
 `workload.py`
 : The workload mode (issue #11, #15), built on top of `to_fortran` without
   touching the pipeline: one `to_fortran` call per output set

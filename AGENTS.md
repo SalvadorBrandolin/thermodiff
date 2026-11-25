@@ -110,6 +110,7 @@ thermodiff/
 │   ├── loops.py         # Loop fusion and table passes (gfortran/x86 oriented)
 │   ├── extents.py       # Index ranges of extra dimensions (ng, ...): extents and loop bounds
 │   ├── storage.py       # Temporaries storage: work_array, max_nc declarations
+│   ├── core_chain_workload.py  # scalar_chain_workload_module: fused core + chain kernels per workload
 │   ├── workload.py      # workload_module: fixed-output kernels + present() dispatcher, fixed_nc copies
 │   └── render.py        # Definitions to Fortran statements
 ├── core/
