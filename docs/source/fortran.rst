@@ -206,6 +206,21 @@ workload kernel needs only its own.  ``preset``/``options``, ``real_kind``,
 ``kind_module`` and ``module_symbols`` behave as in
 :func:`thermodiff.workload_module`; ``fixed_nc`` is not supported.
 
+Caller contracts:
+
+* ``f`` must be present to reach a fast kernel.  Every workload kernel
+  computes the function value, so ``f`` is a bit of its output set; a call
+  without ``f`` does not match any workload and goes to the (slower)
+  fallback.  Lifting this would need a kernel variant without ``f`` or a
+  scratch output, which costs more than it saves, so it is a documented
+  rule instead.
+* Every input of the selected workload (the scalar derivatives it reads)
+  must be present.  The mask counts outputs only, so a missing input is not
+  detected: the dispatcher would pass an absent optional actual argument to
+  a non-optional dummy, which is undefined behaviour.  A mask that also
+  counted the inputs would not help: the fallback reads the same inputs, so
+  a call that lacks one is wrong on every path.
+
 The dispatcher costs a few nanoseconds (the mask and forwarding); a caller
 that knows the output set can call ``ar_fused_w<k>`` directly.  Measured
 (cubic core, nc 2 to 50): the fused kernel is within 4 percent of the direct
