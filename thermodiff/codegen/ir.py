@@ -43,6 +43,30 @@ _BASE_KEYS: Mapping[str, str] = {
 
 
 @dataclass(eq=True)
+class SparseGuard:
+    """Zero test of a sparse parameter element around a definition.
+
+    Attributes
+    ----------
+    factor : sympy.Indexed
+        The element ``v(a, b)`` tested with ``/= 0``.
+    table : bool
+        ``True``: the whole assignment of the table entry is skipped where
+        the element is zero (its readers never read the entry).  ``False``:
+        only the terms of the reduction body that carry the element are
+        skipped.
+    rest, guarded : sympy.Basic or None
+        For ``table=False``: the part of the body accumulated always and the
+        part accumulated under the test (``body = rest + guarded``).
+    """
+
+    factor: sp.Basic
+    table: bool
+    rest: sp.Basic | None = None
+    guarded: sp.Basic | None = None
+
+
+@dataclass(eq=True)
 class TempDef:
     """One temporary: ``target`` = ``body`` over ``free`` and ``limits``.
 
@@ -210,4 +234,24 @@ class SiblingNest(TempDef):
         "accs": "accs",
         "split_acc": "accumulators",
         "accs2": "accs2",
+    }
+
+
+@dataclass(eq=True, kw_only=True)
+class SparseNest(TempDef):
+    """Plain loop nest guarded by the zero test of a sparse parameter.
+
+    Replaces the plain definition it guards (``body`` is unchanged).
+
+    Attributes
+    ----------
+    guard : SparseGuard
+        The zero test and, for a term guard, the split of the body.
+    """
+
+    guard: SparseGuard
+
+    _KEY_TO_ATTR: ClassVar[Mapping[str, str]] = {
+        **_BASE_KEYS,
+        "sparse": "guard",
     }
