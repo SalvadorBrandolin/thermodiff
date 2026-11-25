@@ -281,6 +281,12 @@ def _check(code, nc, ng, expected, with_dt):
         )
 
 
+_MODELS = {
+    "group_sum": (GROUP_SUM, _reference_group_sum),
+    "group_table": (GROUP_TABLE, _reference_group_table),
+    "group_mixed": (GROUP_MIXED, _reference_group_mixed),
+}
+
 CASES = list(
     itertools.product(
         PRESETS,
@@ -297,11 +303,7 @@ def test_model_with_extra_dimension(preset, optional, sizes, model):
     """Kernels over ``ng`` match SymPy for both orders of size."""
     nc, ng = sizes
     values = _parameters(nc, ng)
-    text, reference = {
-        "group_sum": (GROUP_SUM, _reference_group_sum),
-        "group_table": (GROUP_TABLE, _reference_group_table),
-        "group_mixed": (GROUP_MIXED, _reference_group_mixed),
-    }[model]
+    text, reference = _MODELS[model]
     with_dt = model != "group_sum"
     derivatives = "dn,dndn" + (",dT" if with_dt else "")
     with warnings.catch_warnings():
@@ -312,6 +314,40 @@ def test_model_with_extra_dimension(preset, optional, sizes, model):
             preset=preset,
             optional_derivatives=optional,
         )
+    moles, function = reference(nc, ng, values)
+    expected = _expected(moles, function, values, with_dt)
+    _check(code, nc, ng, expected, with_dt)
+
+
+STORAGE_OPTIONS = {
+    "work_array": {"work_array": True},
+    "max_nc": {"max_nc": 8},
+}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("storage", sorted(STORAGE_OPTIONS))
+@pytest.mark.parametrize("preset", PRESETS)
+@pytest.mark.parametrize("sizes", SIZES)
+@pytest.mark.parametrize("model", ["group_sum", "group_table", "group_mixed"])
+def test_storage_options_keep_extra_extents(storage, preset, sizes, model):
+    """``work_array`` sizes temporaries by their extents; ``max_nc`` only
+    fixes the ``nc`` ones and leaves ``ng`` automatic."""
+    nc, ng = sizes
+    with_dt = model != "group_sum"
+    values = _parameters(nc, ng)
+    text, reference = _MODELS[model]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        code = compile_model(
+            text,
+            derivatives="dn,dndn" + (",dT" if with_dt else ""),
+            preset=preset,
+            optional_derivatives=False,
+            **STORAGE_OPTIONS[storage],
+        )
+    if storage == "work_array":
+        assert "work_(" in code
     moles, function = reference(nc, ng, values)
     expected = _expected(moles, function, values, with_dt)
     _check(code, nc, ng, expected, with_dt)
@@ -343,3 +379,19 @@ def test_python_api_dimension_is_integer(preset, optional, sizes):
     assert "_S" not in code
     moles, function = _reference_group_sum(nc, ng, values)
     _check(code, nc, ng, _expected(moles, function, values, False), False)
+
+
+def test_storage_declarations_follow_shapes():
+    """``max_nc`` fixes only the ``nc`` extents; the work array sums them."""
+    from thermodiff.codegen.storage import (
+        array_declarations,
+        work_array_kernel,
+    )
+
+    shapes = {"t1": ("ng",), "t2": ("nc", "ng"), "t3": ("nc", "nc")}
+    fixed = " ".join(array_declarations(shapes, 0, 8))
+    assert "t1(ng)" in fixed
+    assert "t2(8, ng)" in fixed
+    assert "t3(8, 8)" in fixed
+    lines = work_array_kernel("k", ["nc", "ng"], [], [], [], shapes, 0)
+    assert "work_(ng + nc*nc + nc*ng)" in "\n".join(lines)
