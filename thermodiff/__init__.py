@@ -36,8 +36,6 @@ __all__ = [
     "sum_custom",
     # Index Base function:
     "idx_function",
-    # install in colab function
-    "install_in_colab",
     # Kronecker handling functions:
     "handle_free_kronecker",
     "handle_sum_kronecker",
