@@ -50,7 +50,7 @@ def _used_names(expression: sp.Expr, indexes: List[sp.Idx]) -> set[str]:
 
 def _rename_reserved_indices(
     expression: sp.Expr, indexes: List[sp.Idx]
-) -> tuple[sp.Expr, List[sp.Idx]]:
+) -> tuple[sp.Expr, List[sp.Idx], dict[sp.Idx, sp.Idx]]:
     """Rename summation indices that clash with the reserved ``i``/``j``.
 
     Parameters
@@ -67,6 +67,9 @@ def _rename_reserved_indices(
         ones.
     indexes : list of sp.Idx
         The indices with the same renaming applied.
+    mapping : dict
+        The applied renaming (empty if nothing clashed), to be applied
+        to any other object that mentions the bound indices.
 
     Raises
     ------
@@ -87,12 +90,11 @@ def _rename_reserved_indices(
     for idx in clashing:
         name = next(c for c in _FRESH_INDEX_NAMES if c not in used)
         used.add(name)
-        mapping[idx] = sp.Idx(name)
+        mapping[idx] = sp.symbols(name, cls=sp.Idx)
     if not mapping:
-        return expression, indexes
-    return expression.xreplace(mapping), [
-        mapping.get(index, index) for index in indexes
-    ]
+        return expression, indexes, mapping
+    renamed = [mapping.get(index, index) for index in indexes]
+    return expression.xreplace(mapping), renamed, mapping
 
 
 class DiffPlz:
@@ -204,8 +206,9 @@ class DiffPlz:
     respect to ``n[i]`` and ``n[j]``. A summation that binds ``i`` or ``j``
     is accepted: its bound index is renamed to a fresh one (``k``, ``l``,
     ... not used in the expression), and ``expression`` and ``indexes``
-    hold the renamed versions. Using ``i`` or ``j`` as a free index of the
-    expression raises :class:`ValueError`.
+    hold the renamed versions, and so do ``internal_functions``. Using
+    ``i`` or ``j`` as a free index of the expression raises
+    :class:`ValueError`.
     """
 
     def __init__(
@@ -218,11 +221,14 @@ class DiffPlz:
     ):
         self.name = name
         indexes = indexes if indexes is not None else [k, l, m]
-        expression, indexes = _rename_reserved_indices(expression, indexes)
-        self.expression = expression
-        self.internal_functions = (
-            internal_functions if internal_functions is not None else []
+        expression, indexes, mapping = _rename_reserved_indices(
+            expression, indexes
         )
+        self.expression = expression
+        self.internal_functions = [
+            function.xreplace(mapping) if mapping else function
+            for function in (internal_functions or [])
+        ]
         self.indexes = indexes
         self._cache = {}
 
