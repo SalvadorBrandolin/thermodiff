@@ -116,9 +116,13 @@ for ``B(n)``, ``B``, ``dBdn(:)`` and ``dBdndn(:, :)``; for ``D(n, T)``,
 Only the ones the selected derivatives need are arguments.  The names of
 the arguments of a compiled model are listed in the subroutine signature.
 
-The ``symmetric`` attribute of parameters is accepted by the parser in a
-placeholder declaration (``tau nc nc symmetric (T)``) but is rejected for
-now: symmetric placeholders are future work.
+A placeholder with two index arguments of the same dimension can be
+declared ``symmetric`` (``a nc nc symmetric (T)``, e.g. a combining rule
+``a_kl(T) = a_lk(T)``).  The symmetry then also applies to its derivative
+inputs (``dadT``, ``dadTdT``), so the generator uses one sum where it would
+otherwise compute the transposed one.  As for symmetric parameters, the
+caller must pass symmetric arrays.  This is the ``.model`` spelling of
+``symmetric_params=["a"]`` or ``idx_function("a", symmetric=(0, 1))``.
 
 Expressions
 -----------

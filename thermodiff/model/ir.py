@@ -88,6 +88,9 @@ class Placeholder:
         never compare equal.
     line : int
         Line number of the declaration.
+    symmetric : bool
+        Whether the placeholder is symmetric in its two index arguments
+        (``tau nc nc symmetric (T)``).
     """
 
     base: str
@@ -96,6 +99,7 @@ class Placeholder:
     arguments: tuple
     function_class: type
     line: int
+    symmetric: bool = False
 
     def apply(self, indices):
         """Return the placeholder applied to ``indices`` and its variables.
@@ -390,13 +394,7 @@ def _register_parameter(declaration, resolver, filename):
 def _build_placeholder(raw, resolver, dimensions, declared, filename):
     """Turn a raw ``functions`` declaration into a :class:`Placeholder`."""
     base, _letters, dims = split_decl_name(raw.name, raw.dims)
-    if raw.attributes:
-        raise ModelError(
-            f"attribute {raw.attributes[0]!r} is not supported yet for "
-            f"placeholder {base!r}",
-            raw.line,
-            filename,
-        )
+    symmetric = _placeholder_symmetry(raw, base, dims, filename)
     if base in resolver.scalars or base in resolver.bases or base in FUNCTIONS:
         raise ModelError(
             f"{base!r} is declared more than once", raw.line, filename
@@ -425,9 +423,32 @@ def _build_placeholder(raw, resolver, dimensions, declared, filename):
         len(dims),
         dims,
         arguments,
-        idx_function(base),
+        idx_function(base, symmetric=(0, 1) if symmetric else None),
         raw.line,
+        symmetric,
     )
+
+
+def _placeholder_symmetry(raw, base, dims, filename):
+    """Return whether a placeholder declaration is ``symmetric``."""
+    for attribute in raw.attributes:
+        if attribute != "symmetric":
+            raise ModelError(
+                f"attribute {attribute!r} is not supported for placeholder "
+                f"{base!r}",
+                raw.line,
+                filename,
+            )
+    if "symmetric" not in raw.attributes:
+        return False
+    if len(dims) != 2 or dims[0] != dims[1]:
+        raise ModelError(
+            f"symmetric placeholder {base!r} must have two index arguments "
+            "with the same dimension",
+            raw.line,
+            filename,
+        )
+    return True
 
 
 def _placeholder_argument(raw, name, resolver, declared, base, filename):
@@ -732,7 +753,8 @@ def build_ir(raw, filename=None):
         function=function,
         indexes=list(resolver.pool.values()),
         warnings=warnings,
-        symmetric=[d.base for d in parameters if d.symmetric],
+        symmetric=[d.base for d in parameters if d.symmetric]
+        + [p.base for p in placeholders if p.symmetric],
     )
 
 

@@ -142,9 +142,20 @@ class TestParsing:
         raw = read_sections(model_text("m", ["tau nc nc symmetric (T)"], "V"))
         assert raw.functions[0].attributes == ("symmetric",)
 
-    def test_symmetric_is_not_supported_yet(self):
-        text = model_text("m", ["tau nc nc symmetric (T)"], "sum_k tau_kk")
-        with pytest.raises(ModelError, match="not supported yet"):
+    def test_symmetric_placeholder_is_registered(self):
+        text = model_text("m", ["a nc nc symmetric (T)"], "sum_k a_kk")
+        ir = build_ir(read_sections(text))
+        assert ir.placeholders[0].symmetric
+        assert ir.symmetric == ["a"]
+
+    def test_symmetric_needs_a_square_pair(self):
+        text = model_text("m", ["b nc symmetric (T)"], "sum_k b_k")
+        with pytest.raises(ModelError, match="two index arguments"):
+            build_ir(read_sections(text))
+
+    def test_positive_is_not_supported(self):
+        text = model_text("m", ["a nc nc positive (T)"], "sum_k a_kk")
+        with pytest.raises(ModelError, match="'positive' is not supported"):
             build_ir(read_sections(text))
 
     def test_subscripted_declaration_name(self):
@@ -222,3 +233,34 @@ class TestErrors:
     def test_missing_subscripts(self):
         message = compile_error(["tau nc nc (T)"], "tau")
         assert "'tau' requires 2 subscript(s)" in message
+
+
+def symmetric_diff():
+    """Return the Python-API ``DiffPlz`` of the symmetric quadratic rule."""
+    a = idx_function("a", symmetric=(0, 1))(k, l, T)
+    return DiffPlz(
+        sum_components(sum_components(n[k] * n[l] * a, l), k),
+        internal_functions=[a],
+        indexes=[k, l],
+        name="f",
+    )
+
+
+@pytest.mark.parametrize("preset", PRESETS)
+def test_symmetric_kernel_equals_python_api(preset):
+    """``symmetric`` gives the kernel of ``symmetric_params=["a"]`` (#14)."""
+    text = model_text(
+        "symq", ["a nc nc symmetric (T)"], "sum_k sum_l n_k * n_l * a_kl"
+    )
+    derivatives = resolve_derivatives(["all"], {"n", "T", "V"})
+    expected = to_fortran(
+        symmetric_diff(),
+        derivatives=derivatives,
+        name="f",
+        subroutine_name="symq_derivs",
+        integer_args=[],
+        module_symbols=[],
+        symmetric_params=("a",),
+        options=resolve_codegen_options(preset, None),
+    )
+    assert model_kernel(text, preset) == expected.strip()
