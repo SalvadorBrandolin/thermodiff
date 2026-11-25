@@ -223,8 +223,25 @@ def _read_header(lines: list[str]) -> tuple[str, list[str], int, int]:
     return match.group(1), _split_top_level(inside), start, end
 
 
-def _parse_declaration(line: str) -> list[Dummy]:
-    """Parse a type declaration line into one record per declared name."""
+def parse_declaration(line: str) -> list[Dummy]:
+    """Parse a type declaration line into one record per declared name.
+
+    Parameters
+    ----------
+    line : str
+        One source line.
+
+    Returns
+    -------
+    list of Dummy
+        One record per declared name; empty if ``line`` is not a ``real``
+        or ``integer`` declaration.
+
+    Raises
+    ------
+    ValueError
+        If an item of the declaration cannot be parsed.
+    """
     match = _DECL.match(line)
     if not match:
         return []
@@ -275,7 +292,7 @@ def parse_kernel(source: str) -> KernelInterface:
     for index in range(header_end, len(lines)):
         if _CONTAINS.match(lines[index]):
             break
-        found = _parse_declaration(lines[index])
+        found = parse_declaration(lines[index])
         mine = [dummy for dummy in found if dummy.name.lower() in wanted]
         if mine and len(mine) != len(found):
             raise ValueError(f"{name}: dummy and local on one line")
@@ -547,8 +564,24 @@ def specialise_kernel(
 
 
 @dataclasses.dataclass
-class _Specialised:
-    """A fixed-output kernel and the data of its dispatcher branch."""
+class Specialised:
+    """A fixed-output kernel and the data of its dispatcher branch.
+
+    Attributes
+    ----------
+    name : str
+        Name of the kernel.
+    iface : KernelInterface
+        Interface of the generated kernel.
+    mask : int
+        Sum of the mask bits of its outputs.
+    copies : dict
+        Fixed component count to the name of its copy.
+    guard : list of str
+        Conditions under which the explicit-shape kernel is safe.
+    nc_dummy : str
+        Dummy that takes the place of ``nc`` in a fixed-nc copy.
+    """
 
     name: str
     iface: KernelInterface
@@ -583,7 +616,7 @@ def _guard_lines(conditions: Sequence[str], indent: str) -> list[str]:
 
 
 def _kernel_calls(
-    kernel: _Specialised, fixed_nc: Sequence[int], inner: str
+    kernel: Specialised, fixed_nc: Sequence[int], inner: str
 ) -> list[str]:
     """Return the calls of ``kernel`` and of its fixed-``nc`` copies."""
     if not (kernel.copies and kernel.iface.has_nc):
@@ -607,7 +640,7 @@ def _kernel_calls(
 
 
 def _dispatch_branch(
-    kernel: _Specialised,
+    kernel: Specialised,
     fixed_nc: Sequence[int],
     fallback: KernelInterface,
     fallback_name: str,
@@ -686,7 +719,7 @@ def build_dispatcher(
     name: str,
     fallback: KernelInterface,
     fallback_name: str,
-    kernels: Sequence[_Specialised],
+    kernels: Sequence[Specialised],
     fixed_nc: Sequence[int],
     reserved: Iterable[str] = (),
 ) -> str:
@@ -737,12 +770,32 @@ def _normalise_fixed_nc(fixed_nc: Iterable[int] | None) -> list[int]:
     return sizes
 
 
-def _resolve_pair(
+def resolve_option_pair(
     preset: Preset | str | None,
     options: CodegenOptions | None,
     overrides: Mapping[str, Any],
 ) -> tuple[CodegenOptions, CodegenOptions]:
-    """Return the options of the fixed-output kernels and the fallback."""
+    """Return the options of the fixed-output kernels and the fallback.
+
+    Parameters
+    ----------
+    preset : Preset or str or None
+        Preset name.
+    options : CodegenOptions or None
+        Explicit options.
+    overrides : mapping
+        Option overrides; ``optional_derivatives`` must not be among them.
+
+    Returns
+    -------
+    tuple of CodegenOptions
+        The options of the fixed-output kernels and of the fallback.
+
+    Raises
+    ------
+    ValueError
+        If ``optional_derivatives`` is overridden.
+    """
     for forbidden in ("optional_derivatives",):
         if overrides.get(forbidden) is not None:
             raise ValueError(
@@ -761,12 +814,33 @@ def _resolve_pair(
     return fixed, fallback
 
 
-def _check_against_fallback(
+def check_against_fallback(
     kernel: KernelInterface,
     fallback: KernelInterface,
     bits: Mapping[str, int],
 ) -> int:
-    """Return the mask of ``kernel`` after checking it fits the fallback."""
+    """Return the mask of ``kernel`` after checking it fits the fallback.
+
+    Parameters
+    ----------
+    kernel : KernelInterface
+        A fixed-output kernel.
+    fallback : KernelInterface
+        The optional kernel; its dummies must cover the kernel's.
+    bits : mapping
+        Mask bit of each optional output (:func:`output_bits`).
+
+    Returns
+    -------
+    int
+        Sum of the bits of the kernel's outputs.
+
+    Raises
+    ------
+    ValueError
+        If the kernel has a dummy the fallback lacks or an output that is
+        not an optional output of the fallback.
+    """
     unknown = [
         arg for arg in kernel.args if arg.lower() not in fallback.dummies
     ]
@@ -804,7 +878,7 @@ def _fixed_kernel(
     position: int,
     fallback: KernelInterface,
     taken: Iterable[int],
-) -> tuple[_Specialised, list[str]]:
+) -> tuple[Specialised, list[str]]:
     """Generate one fixed-output kernel, its copies and dispatcher data."""
     kernel_name = f"{plan.base}_w{position}"
     text = to_fortran(
@@ -815,7 +889,7 @@ def _fixed_kernel(
         **plan.passed,
     )
     iface = parse_kernel(text)
-    mask = _check_against_fallback(iface, fallback, output_bits(fallback))
+    mask = check_against_fallback(iface, fallback, output_bits(fallback))
     if mask in taken:
         raise ValueError(
             f"workload {position} has the same output set as an earlier one"
@@ -835,7 +909,7 @@ def _fixed_kernel(
         ]
     guard = shape_guard(iface, plan.extents)
     return (
-        _Specialised(kernel_name, iface, mask, copies, guard, plan.nc_dummy),
+        Specialised(kernel_name, iface, mask, copies, guard, plan.nc_dummy),
         texts,
     )
 
@@ -926,7 +1000,9 @@ def workload_procedures(
         "stats",
     )
     passed = {k: kwargs.pop(k) for k in to_fortran_keys if k in kwargs}
-    fixed_options, fallback_options = _resolve_pair(preset, options, kwargs)
+    fixed_options, fallback_options = resolve_option_pair(
+        preset, options, kwargs
+    )
     sizes = _normalise_fixed_nc(fixed_nc)
     base = subroutine_name or getattr(diff, "name", None) or "f"
     fallback_name = f"{base}_fallback"
@@ -943,7 +1019,7 @@ def workload_procedures(
         sizes,
         unique_name(NC_DUMMY_NAME, [*fallback.args, *reserved]),
     )
-    kernels: list[_Specialised] = []
+    kernels: list[Specialised] = []
     texts: list[str] = []
     for position, workload in enumerate(workloads, start=1):
         kernel, kernel_texts = _fixed_kernel(

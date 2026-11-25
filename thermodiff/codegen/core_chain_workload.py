@@ -61,14 +61,14 @@ from thermodiff.codegen.workload import (
     KernelInterface,
     NC_DUMMY_NAME,
     NC_NAME,
-    _Specialised,
-    _check_against_fallback,
-    _parse_declaration,
-    _resolve_pair,
+    Specialised,
     build_dispatcher,
+    check_against_fallback,
     output_bits,
+    parse_declaration,
     parse_kernel,
     render_kernel,
+    resolve_option_pair,
     shape_guard,
     specialise_kernel,
     wrap_module,
@@ -101,7 +101,7 @@ def _declared_names(iface: KernelInterface) -> list[str]:
     """Return every name the kernel declares (dummies and locals)."""
     names: list[str] = []
     for line in iface.lines[iface.header_end :]:
-        names += [dummy.name for dummy in _parse_declaration(line)]
+        names += [dummy.name for dummy in parse_declaration(line)]
     return names
 
 
@@ -285,19 +285,19 @@ def _fused(
     )
 
 
-def _fixed_kernel(
+def _fused_workload_kernel(
     context: _Context,
     selection: Any,
     name: str,
     fallback: KernelInterface,
     taken: Iterable[int],
-) -> tuple[_Specialised, str]:
+) -> tuple[Specialised, str]:
     """Generate one fixed-output fused kernel and its dispatcher data."""
     iface = parse_kernel(_fused(context, selection, name, optional=False))
-    mask = _check_against_fallback(iface, fallback, output_bits(fallback))
+    mask = check_against_fallback(iface, fallback, output_bits(fallback))
     if mask in taken:
         raise ValueError(f"workload {selection!r} repeats an output set")
-    kernel = _Specialised(
+    kernel = Specialised(
         name, iface, mask, {}, shape_guard(iface, {}), NC_DUMMY_NAME
     )
     return kernel, specialise_kernel(iface, name=name, extents={})
@@ -362,7 +362,7 @@ def scalar_chain_workload_procedures(
         ``derivatives`` or names clash.
     """
     passed = {k: kwargs.pop(k) for k in _TO_FORTRAN_KEYS if k in kwargs}
-    fixed, _ = _resolve_pair(preset, options, kwargs)
+    fixed, _ = resolve_option_pair(preset, options, kwargs)
     chain_args = dict(
         scalars=scalars,
         depends_on=depends_on,
@@ -379,10 +379,10 @@ def scalar_chain_workload_procedures(
     fallback_name = f"{base}_fallback"
     fallback_text = _fused(context, derivatives, fallback_name, optional=True)
     fallback = parse_kernel(fallback_text)
-    kernels: list[_Specialised] = []
+    kernels: list[Specialised] = []
     texts: list[str] = []
     for position, selection in enumerate(workloads, start=1):
-        kernel, text = _fixed_kernel(
+        kernel, text = _fused_workload_kernel(
             context,
             selection,
             f"{base}_w{position}",
