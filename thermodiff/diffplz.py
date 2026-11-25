@@ -32,6 +32,68 @@ from thermodiff.latex_utils import (
 )
 from thermodiff.thermovars import P, T, V, i, j, k, l, m, n
 
+#: Indices reserved for the derivative variables ``n[i]`` and ``n[j]``.
+RESERVED_INDICES = (i, j)
+
+#: Candidate names for the fresh indices that replace a clashing bound one.
+_FRESH_INDEX_NAMES = tuple("klmpqrsuwxyzabcdeghov")
+
+
+def _used_names(expression: sp.Expr, indexes: List[sp.Idx]) -> set[str]:
+    """Return every symbol, index and base name in use."""
+    names = {str(symbol) for symbol in expression.free_symbols}
+    names.update(str(index) for index in indexes)
+    names.update(str(dummy) for dummy in expression.atoms(sp.Idx))
+    names.update(str(item.base) for item in expression.atoms(sp.Indexed))
+    return names
+
+
+def _rename_reserved_indices(
+    expression: sp.Expr, indexes: List[sp.Idx]
+) -> tuple[sp.Expr, List[sp.Idx]]:
+    """Rename summation indices that clash with the reserved ``i``/``j``.
+
+    Parameters
+    ----------
+    expression : sympy expression
+        The user expression.
+    indexes : list of sp.Idx
+        The user supplied free indices.
+
+    Returns
+    -------
+    expression : sympy expression
+        The expression with the clashing bound indices renamed to fresh
+        ones.
+    indexes : list of sp.Idx
+        The indices with the same renaming applied.
+
+    Raises
+    ------
+    ValueError
+        If ``i`` or ``j`` appears as a free index of the expression.
+    """
+    clashing = [idx for idx in RESERVED_INDICES if expression.has(idx)]
+    free = [idx for idx in clashing if idx in expression.free_symbols]
+    if free:
+        raise ValueError(
+            f"the indices {[str(idx) for idx in RESERVED_INDICES]} are "
+            "reserved for the derivatives with respect to n[i] and n[j]; "
+            f"{[str(idx) for idx in free]} appears as a free index of the "
+            "expression. Use k, l or m for free indices."
+        )
+    used = _used_names(expression, indexes)
+    mapping = {}
+    for idx in clashing:
+        name = next(c for c in _FRESH_INDEX_NAMES if c not in used)
+        used.add(name)
+        mapping[idx] = sp.Idx(name)
+    if not mapping:
+        return expression, indexes
+    return expression.xreplace(mapping), [
+        mapping.get(index, index) for index in indexes
+    ]
+
 
 class DiffPlz:
     """Class to obtaine all the derivatives of a thermodynamic expression.
@@ -135,6 +197,15 @@ class DiffPlz:
     derivatives : list of str or None
         The derivative attributes that were selected for computation, or
         ``None`` when every derivative was computed.
+
+    Notes
+    -----
+    The indices ``i`` and ``j`` are reserved for the derivatives with
+    respect to ``n[i]`` and ``n[j]``. A summation that binds ``i`` or ``j``
+    is accepted: its bound index is renamed to a fresh one (``k``, ``l``,
+    ... not used in the expression), and ``expression`` and ``indexes``
+    hold the renamed versions. Using ``i`` or ``j`` as a free index of the
+    expression raises :class:`ValueError`.
     """
 
     def __init__(
@@ -146,11 +217,13 @@ class DiffPlz:
         derivatives=None,
     ):
         self.name = name
+        indexes = indexes if indexes is not None else [k, l, m]
+        expression, indexes = _rename_reserved_indices(expression, indexes)
         self.expression = expression
         self.internal_functions = (
             internal_functions if internal_functions is not None else []
         )
-        self.indexes = indexes if indexes is not None else [k, l, m]
+        self.indexes = indexes
         self._cache = {}
 
         if derivatives is None:
