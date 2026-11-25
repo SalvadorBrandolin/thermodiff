@@ -404,14 +404,18 @@ def apply_sparse_guards(
     _decide_tables(definitions, scope)
     _apply_term_guards([d for d in definitions if _is_plain(d)], scope)
     for position, definition in enumerate(definitions):
-        table_guard = scope.table_guards.get(id(definition))
-        if table_guard is not None:
-            fill = id(definition) in scope.zero_fills
-            guard = SparseGuard(table_guard, table=True, zero_fill=fill)
-        else:
-            guard = scope.term_guards.get(id(definition))
+        guard = _guard_of(definition, scope)
         if guard is not None:
             definitions[position] = _guarded(definition, guard)
+
+
+def _guard_of(definition: TempDef, scope: _Scope) -> SparseGuard | None:
+    """Return the guard decided for ``definition``, if any."""
+    table_guard = scope.table_guards.get(id(definition))
+    if table_guard is None:
+        return scope.term_guards.get(id(definition))
+    fill = id(definition) in scope.zero_fills
+    return SparseGuard(table_guard, table=True, zero_fill=fill)
 
 
 def _guarded(definition: TempDef, guard: SparseGuard) -> SparseNest:
