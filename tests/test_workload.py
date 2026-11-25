@@ -16,6 +16,7 @@ import pytest
 
 from thermodiff.codegen.workload import (
     _split_top_level,
+    output_bits,
     parse_kernel,
     specialise_kernel,
     workload_module,
@@ -189,6 +190,29 @@ class TestHelpers:
         assert iface.dummies["a"].rank == 2
         assert iface.dummies["dfdn"].is_optional
         assert not iface.has_extra_dimensions
+
+    def test_output_bits_of_a_workload_fallback_are_pinned(self):
+        iface = parse_kernel(generate(preset="minimal"))
+        assert output_bits(iface) == {
+            "f": 1,
+            "dfdt": 2,
+            "dfdn": 4,
+            "dfdndn": 8,
+        }
+
+    def test_output_bits_skip_optional_inputs(self):
+        source = "\n".join(
+            [
+                "subroutine kern(nc, w, f, dfdn)",
+                "   implicit none",
+                "   integer, intent(in) :: nc",
+                "   real(8), optional, intent(in) :: w(nc)",
+                "   real(8), optional, intent(out) :: f",
+                "   real(8), optional, intent(out) :: dfdn(nc)",
+                "end subroutine kern",
+            ]
+        )
+        assert output_bits(parse_kernel(source)) == {"f": 1, "dfdn": 2}
 
     def test_extra_dimensions_are_forwarded_with_their_extents(self):
         source = "\n".join(
