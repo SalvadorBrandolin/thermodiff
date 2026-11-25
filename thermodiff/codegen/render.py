@@ -789,9 +789,12 @@ def _wrap_name_list(
 
 
 def _wrap_signature(
-    sub_name: str, arg_names: list[str], limit: int = 120
+    sub_name: str,
+    arg_names: list[str],
+    limit: int = 120,
+    keyword: str = "subroutine",
 ) -> list[str]:
-    """Return the subroutine statement, wrapped if necessary.
+    """Return the subroutine (or call) statement, wrapped if necessary.
 
     Parameters
     ----------
@@ -801,13 +804,15 @@ def _wrap_signature(
         Argument names.
     limit : int, optional
         Maximum line length.
+    keyword : str, optional
+        Leading keyword, ``"subroutine"`` or ``"call"``.
 
     Returns
     -------
     list of str
-        The (possibly continued) subroutine statement.
+        The (possibly continued) statement.
     """
-    head = f"subroutine {sub_name}("
+    head = f"{keyword} {sub_name}("
     if len(head) + len(", ".join(arg_names)) <= limit:
         return [head + ", ".join(arg_names) + ")"]
 

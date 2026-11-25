@@ -126,6 +126,19 @@ def _coerce_split_acc(value: Any) -> int | None:
     return int(value)
 
 
+def _coerce_max_nc(value: Any) -> int | None:
+    """Map ``max_nc`` to ``None`` (off) or a positive ``int``.
+
+    ``None`` and ``False`` mean off; anything else must be an integer
+    ``>= 1`` (``ValueError`` otherwise).
+    """
+    if value is None or value is False:
+        return None
+    if isinstance(value, bool) or int(value) != value or int(value) < 1:
+        raise ValueError(f"max_nc must be a positive integer, got {value!r}")
+    return int(value)
+
+
 def _coerce_optional_bool(value: Any) -> bool | None:
     """Keep ``None`` (inherit ``share``), otherwise ``bool(value)``."""
     return None if value is None else bool(value)
@@ -145,6 +158,7 @@ _COERCERS: Mapping[str, Callable[[Any], Any]] = MappingProxyType(
             ScalarChainMode, ScalarChainMode.ON, "scalar_chain"
         ),
         "split_acc": _coerce_split_acc,
+        "max_nc": _coerce_max_nc,
     }
 )
 
@@ -225,6 +239,8 @@ class CodegenOptions:
     split_affine: bool = False
     split_acc: int | None = None
     canonical_placeholders: bool = True
+    work_array: bool = False
+    max_nc: int | None = None
 
     def __post_init__(self) -> None:
         """Coerce every field to its canonical type."""
@@ -421,6 +437,8 @@ _RULES: tuple[_Rule, ...] = (
         ("sym_matvec", "sym_sum2", "sym_perm"),
     ),
     _Rule(lambda o: not o.fuse_outer, ("fuse_libm_guard",)),
+    # fixed-size temporaries need no allocation, a work array is moot
+    _Rule(lambda o: o.max_nc is not None, ("work_array",)),
 )
 
 # Of the ``scalar_chain`` values, only these are coerced to off today; ``ON``

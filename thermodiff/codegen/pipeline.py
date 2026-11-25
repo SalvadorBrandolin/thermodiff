@@ -78,6 +78,11 @@ from thermodiff.codegen.resolve import (
     _scan_atoms,
     _select_derivatives,
 )
+from thermodiff.codegen.storage import (
+    array_declarations,
+    max_nc_guard,
+    work_array_kernel,
+)
 from thermodiff.codegen.symmetry import (
     _canonical_symmetric,
     _fold_symmetric_sums,
@@ -2125,25 +2130,26 @@ def _argument_names(ctx: _EmitContext, state: _EmitState) -> list[str]:
     return arg_names
 
 
-def _array_declarations(state: _EmitState) -> list[str]:
-    """Return the declaration lines of the temporary arrays, by rank."""
-    arrays = state.arrays
-    array_pad = state.opts.array_pad
-    lines = []
-    for rank in sorted(set(arrays.values())):
-        dims = ", ".join(["nc"] * rank)
-        if array_pad and rank >= 2:
-            # padded leading dimension: avoids cache-set aliasing between the
-            # many (nc, nc) temporaries for some values of nc
-            dims = ", ".join([f"nc + {int(array_pad)}"] + ["nc"] * (rank - 1))
-        names = [
-            f"{name}({dims})"
-            for name in sorted(arrays)
-            if arrays[name] == rank
-        ]
-        for line in _wrap_name_list("real(8) :: ", names):
-            lines.append(_INDENT + line)
+def _local_declarations(state: _EmitState) -> list[str]:
+    """Return the declarations of the temporaries and loop indices."""
+    lines = [
+        _INDENT + line for line in _wrap_name_list("real(8) :: ", state.temps)
+    ]
+    max_nc = None if state.opts.work_array else state.opts.max_nc
+    lines.extend(
+        array_declarations(state.arrays, state.opts.array_pad, max_nc)
+    )
+    for line in _wrap_name_list("integer :: ", state.loop_indices):
+        lines.append(_INDENT + line)
     return lines
+
+
+def _body_lines(sub_name: str, state: _EmitState) -> list[str]:
+    """Return the body lines, indented once, with the ``max_nc`` guard."""
+    body = list(state.body)
+    if state.opts.max_nc is not None and state.arrays:
+        body[:0] = max_nc_guard(sub_name, state.opts.max_nc)
+    return [_INDENT + line if line else "" for line in body]
 
 
 def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
@@ -2161,24 +2167,26 @@ def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
     while sub_name in arg_names:
         sub_name += "_s"
 
-    lines = _wrap_signature(sub_name, arg_names)
-    lines.append(f"{_INDENT}implicit none")
-    for decl in state.inputs:
-        lines.append(_INDENT + decl)
-    for decl in state.output_decls:
-        lines.append(_INDENT + decl)
-
-    for line in _wrap_name_list("real(8) :: ", state.temps):
-        lines.append(_INDENT + line)
-    lines.extend(_array_declarations(state))
-    for line in _wrap_name_list("integer :: ", state.loop_indices):
-        lines.append(_INDENT + line)
-
-    lines.append("")
-    for line in state.body:
-        lines.append(_INDENT + line if line else "")
-
-    lines.append(f"end subroutine {sub_name}")
+    header = [_INDENT + decl for decl in state.inputs + state.output_decls]
+    body = _body_lines(sub_name, state)
+    if state.opts.work_array and state.arrays:
+        lines = work_array_kernel(
+            sub_name,
+            arg_names,
+            header,
+            _local_declarations(state),
+            body,
+            state.arrays,
+            state.opts.array_pad,
+        )
+    else:
+        lines = _wrap_signature(sub_name, arg_names)
+        lines.append(f"{_INDENT}implicit none")
+        lines.extend(header)
+        lines.extend(_local_declarations(state))
+        lines.append("")
+        lines.extend(body)
+        lines.append(f"end subroutine {sub_name}")
     lines.append("")
 
     state.text = "\n".join(lines)
@@ -2329,6 +2337,8 @@ def _emit_code(
     split_affine: bool = False,
     split_acc: int | bool = False,
     canonical_placeholders: bool = True,
+    work_array: bool = False,
+    max_nc: int | None = None,
 ) -> str:
     """Emit the subroutine from a precomputed chain-rule structure.
 
@@ -2682,6 +2692,25 @@ def to_fortran(
         then see that the copies are equal.  ``False`` restores the index-label
         names (``dBdi``, ``dBdj``, ``dBdidj``).  On by default (and in every
         preset); the legacy keyword defaults of ``to_fortran`` keep it on too.
+    work_array : bool, optional
+        Store every array temporary in one automatic array ``work_`` instead
+        of one automatic array each: the subroutine calls an internal
+        procedure ``<name>_body`` (the usual kernel) with one element of
+        ``work_`` per temporary, which it receives as an explicit-shape
+        array.  Without ``-fstack-arrays`` gfortran allocates automatic
+        arrays on the heap, so this turns one ``malloc``/``free`` pair per
+        temporary into one per call.  Same arithmetic.  Ignored with
+        ``max_nc``.  Off by default.
+    max_nc : int, optional
+        Give every array temporary the compile-time extent ``max_nc``
+        (``t(max_nc, max_nc)``, used up to ``nc``), so it lives on the stack
+        without ``-fstack-arrays``.  The kernel starts with
+        ``if (nc > max_nc) error stop``; callers with larger ``nc`` must
+        dispatch to another kernel.  A temporary above gfortran's
+        ``-fmax-stack-var-size`` default (65536 bytes: ``max_nc <= 90`` for
+        rank 2, ``<= 20`` for rank 3) is made static by gfortran (not thread
+        safe), so a ``UserWarning`` is emitted.  Same arithmetic.  ``None``
+        (the default) keeps ``nc``-sized temporaries.
 
     Returns
     -------

@@ -125,6 +125,16 @@ by the tests.
   of the definitions (`_dependency_order`), the optional-argument guards
   (`_guard`, `_guarded`) and the line wrapping of the signature.
 
+`storage.py`
+: Storage of the array temporaries, used by `assemble_text`: their
+  declarations (`nc`-sized automatic arrays by default, compile-time
+  extents with `max_nc` plus the `nc > max_nc` guard) and, with
+  `work_array`, the wrapper that carves every temporary out of one
+  `work_` array and calls the kernel body as an internal procedure
+  (issue #10: without `-fstack-arrays` each automatic array costs a
+  `malloc`/`free` per call).  Neither option is a pass; the default
+  output is unchanged.
+
 `pipeline.py`
 : The orchestration.  It defines `_EmitContext` (immutable inputs),
   `_EmitState` (mutable state of one emission), `Pass`, the `_PASSES`
@@ -171,6 +181,17 @@ derivative selection, names, `integer_args`, `module_symbols`,
   example, everything that needs `chain_rule` when it is off, or the passes
   that cannot run with `optional_derivatives`).  The only error is a
   `split_acc` other than 2 while `optional_derivatives` is off.
+
+* Storage of the array temporaries (issue #10), opt-in and enabled by no
+  preset.  `work_array=True` carves every temporary out of one `work_`
+  array (one allocation per call instead of one `malloc`/`free` per
+  temporary when gfortran runs without `-fstack-arrays`).  `max_nc=N` gives
+  them the compile-time extent `N` so they live on the stack, behind an
+  `if (nc > N) error stop` guard: a caller with a larger `nc` must
+  dispatch to another kernel (a bigger `max_nc` or the default).  A
+  temporary larger than gfortran's `-fmax-stack-var-size` (65536 bytes,
+  `max_nc <= 90` for a rank-2 `real(8)` array) becomes static and warns.
+  `max_nc` disables `work_array`.
 
 Presets are the `Preset` enum, with the settings in `PRESET_SETTINGS`:
 
