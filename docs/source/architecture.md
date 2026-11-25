@@ -136,6 +136,17 @@ by the tests.
   of the definitions (`_dependency_order`), the optional-argument guards
   (`_guard`, `_guarded`) and the line wrapping of the signature.
 
+`sparse.py`
+: Zero guards for sparse parameters (`sparse_parameters`).  On plain loop
+  nests it finds the terms of a reduction that carry an element `v(a, b)` of
+  a declared parameter (`split_by_factor`), the tables whose every read is
+  such a term at the same subscripts (their entries are skipped where
+  `v(a, b) = 0`, and never read) and the tables whose body is a multiple of
+  the element (set to zero there).  The guards are only emitted when the
+  skipped work calls a transcendental function, is a nested loop or enables
+  a table guard (the operation-count guard of rule 7).  Guarded definitions
+  are replaced by `SparseNest` records.
+
 `storage.py`
 : Storage of the array temporaries, used by `assemble_text`: their
   declarations (`nc`-sized automatic arrays by default, compile-time
@@ -214,6 +225,10 @@ derivative selection, names, `integer_args`, `module_symbols`,
   `SepSumsMode` (`False | True | "cost"`), `LowrankHessMode`
   (`False | True | "sym"`) and `CseBackend` (`"thermodiff"` | `"sympy"`).
   `split_acc` is `None` or `2`.
+* `sparse_parameters` (default `()`) is a tuple of parameter names, coerced
+  from a string or any iterable; names that are not array parameters of the
+  model are dropped with a `UserWarning` by the pass (the model is not known
+  to `validate()`).  Unlike the booleans it is not listed in `_RULES`.
 * `canonical_placeholders` (default `True`, in every preset) names the
   derivatives of placeholder functions by their variables: the gradient of
   `B(n)` is one argument `dBdn(:)` read as `dBdn(i)` and `dBdn(j)`, its
@@ -363,10 +378,16 @@ This table is the content of `_PASSES`.  Gates written as "`flag`, not
 | 29 | `component_maps` | `comp_fuse`, not `optional_derivatives` | Fuse the component maps (S34). | `loops` |
 | 30 | `outer_loops` | `fuse_outer`, not `optional_derivatives` | Fuse the outer loops (S35). | `loops` |
 | 31 | `split_accumulators` | `split_acc`, not `optional_derivatives` | Split the reductions into two accumulators (S36). | `loops` |
-| 32 | `collect_stats` | always | Fill `stats` with the operation counts (S37). | `pipeline` |
-| 33 | `render_bodies` | always | Render the definitions and the outputs (S38, S39). | `pipeline`, `render` |
-| 34 | `temp_declarations` | always | Collect the scalar temporaries and the loop indices (S40). | `pipeline` |
-| 35 | `assemble_text` | always | Assemble the Fortran source of the subroutine (S41). | `pipeline`, `render` |
+| 32 | `sparse_guards` | `sparse_parameters` not empty | Guard the work of sparse parameters behind `if (v(...) /= 0)` (S36a). | `sparse` |
+| 33 | `collect_stats` | always | Fill `stats` with the operation counts (S37). | `pipeline` |
+| 34 | `render_bodies` | always | Render the definitions and the outputs (S38, S39). | `pipeline`, `render` |
+| 35 | `temp_declarations` | always | Collect the scalar temporaries and the loop indices (S40). | `pipeline` |
+| 36 | `assemble_text` | always | Assemble the Fortran source of the subroutine (S41). | `pipeline`, `render` |
+
+`sparse_guards` is the only pass that no preset enables: it needs
+`sparse_parameters` (or a `sparse` attribute in a `.model`).  It runs last
+among the passes that rewrite definitions, so it only sees what the loop
+passes left as plain loop nests.
 
 `split_acc` is `None` or `2`; a gate built with `_gate("split_acc")` is on
 when it is `2`.  The `Implementation` column lists the modules whose
@@ -398,7 +419,7 @@ and keep their semantics: they are mutable, compare by value and are
 unhashable.  `present_keys()` reports the present annotations under the old
 key names and `copy(**changes)` returns a shallow copy.
 
-Four subclasses (keyword-only fields) wrap other definitions:
+Five subclasses (keyword-only fields) wrap other definitions:
 
 | Record | Added fields | Produced by |
 | ------ | ------------ | ----------- |
@@ -406,13 +427,14 @@ Four subclasses (keyword-only fields) wrap other definitions:
 | `ComponentFusedMap` | `steps`, `members` (`(target, body)` pairs) | `component_maps` |
 | `OuterFusedNest` | `members` (definition records), `outer` index | `outer_loops` |
 | `SiblingNest` | `sibling`, `accs`, `accumulators`, `accs2` | `fuse_siblings`, `split_accumulators` |
+| `SparseNest` | `guard` (`SparseGuard`: element, table or term guard) | `sparse_guards` |
 
 `render._render_definition` is a `functools.singledispatch` function.  The
 base handler covers `TempDef` and tests the annotations in a fixed order
 (`symv`, `colmajor`, `colsum`, `mirror_sum`, `mirror`, `factored`,
 `limits`) and falls back to the plain loop nest.  `SiblingNest`,
-`OuterFusedNest`, `ComponentFusedMap` and `FusedNest` have registered
-handlers.  A new record type needs a new registered handler.
+`OuterFusedNest`, `ComponentFusedMap`, `FusedNest` and `SparseNest` have
+registered handlers.  A new record type needs a new registered handler.
 
 ## Extra scalar variables
 
