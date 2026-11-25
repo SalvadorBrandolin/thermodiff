@@ -677,6 +677,10 @@ def _render_sparse_nest(definition: SparseNest) -> list[str]:
         lines.append(_INDENT * depth + f"if ({_sparse_test(guard)}) then")
         inner = "\n".join(_render_loop_nest(entry))
         lines.extend(_indent_lines(inner, depth + 1))
+        if guard.zero_fill:
+            target_s = _print_expr(definition.target)
+            lines.append(_INDENT * depth + "else")
+            lines.append(_INDENT * (depth + 1) + f"{target_s} = 0.0d0")
         lines.append(_INDENT * depth + "end if")
     else:
         lines.extend(_render_guarded_reduction(definition, depth))

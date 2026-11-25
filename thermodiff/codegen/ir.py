@@ -55,6 +55,9 @@ class SparseGuard:
         the element is zero (its readers never read the entry).  ``False``:
         only the terms of the reduction body that carry the element are
         skipped.
+    zero_fill : bool
+        With ``table``: the entry is set to zero where the element is zero
+        (its body is a multiple of the element) instead of left unset.
     rest, guarded : sympy.Basic or None
         For ``table=False``: the part of the body accumulated always and the
         part accumulated under the test (``body = rest + guarded``).
@@ -62,6 +65,7 @@ class SparseGuard:
 
     factor: sp.Basic
     table: bool
+    zero_fill: bool = False
     rest: sp.Basic | None = None
     guarded: sp.Basic | None = None
 

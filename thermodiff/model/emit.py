@@ -175,6 +175,31 @@ def _workload_code(
         raise ModelError(str(error)) from error
 
 
+def _declare_sparse(ir, options, overrides):
+    """Add the parameters declared ``sparse`` to ``sparse_parameters``.
+
+    Parameters
+    ----------
+    ir : ModelIR
+        Model whose ``sparse`` list holds the declared parameters.
+    options : CodegenOptions or None
+        Explicit options; their ``sparse_parameters`` are kept.
+    overrides : dict
+        Option overrides of the caller; updated in place.
+    """
+    declared = tuple(getattr(ir, "sparse", ()))
+    if not declared:
+        return
+    given = overrides.get("sparse_parameters")
+    if given is None and options is not None:
+        given = options.sparse_parameters
+    if isinstance(given, str):
+        given = (given,)
+    overrides["sparse_parameters"] = tuple(
+        dict.fromkeys((*declared, *(given or ())))
+    )
+
+
 def emit_module(
     ir,
     derivatives=None,
@@ -229,7 +254,7 @@ def emit_module(
         ``param_symmetry``, ``cse_backend``).  ``None`` means "not given".
         ``stats`` is forwarded to :func:`thermodiff.fortran.to_fortran`.
         The symmetric parameters declared in the model are always
-        forwarded.
+        forwarded; the ``sparse`` ones join ``sparse_parameters``.
 
     Returns
     -------
@@ -243,6 +268,7 @@ def emit_module(
         if derivatives is None:
             derivatives = select_derivatives(ir.declared_variables)
 
+    _declare_sparse(ir, options, overrides)
     stats = overrides.pop("stats", None)
     model = _sanitize(ir.model_name)
     subroutine = _sanitize(ir.model_name) + "_derivs"

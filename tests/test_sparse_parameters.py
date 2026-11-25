@@ -30,6 +30,7 @@ from thermodiff.codegen.options import CodegenOptions
 from thermodiff.codegen.sparse import split_by_factor
 from thermodiff.core.easy_sums import sum_custom
 from thermodiff.fortran import to_fortran
+from thermodiff.model import ModelError, compile_model
 
 REL_TOLERANCE = 1e-13
 SPARSE = ("v",)
@@ -121,7 +122,25 @@ def _weighted_logs() -> DiffPlz:
     )
 
 
-MODELS = {"unifac": _unifac, "weighted_logs": _weighted_logs}
+def _weighted_table() -> DiffPlz:
+    """Return a model whose table ``log(1 + th T)*v`` is a multiple of ``v``.
+
+    ``f = sum_k (sum_l n_l v_lk log(1 + th_lk T))**2``; the logarithm and the
+    sparse element form one pair table that every reader reads.
+    """
+    l, k = sp.Idx("l"), sp.Idx("k")
+    ng = sp.Symbol("ng", integer=True, positive=True)
+    w, c = sp.IndexedBase("v"), sp.IndexedBase("th")
+    weighted = sum_components(n[l] * w[l, k] * sp.log(1 + c[l, k] * T), l)
+    expr = sum_custom(weighted**2, k, 1, ng)
+    return DiffPlz(expr, indexes=[l, k], name="f")
+
+
+MODELS = {
+    "unifac": _unifac,
+    "weighted_logs": _weighted_logs,
+    "weighted_table": _weighted_table,
+}
 
 
 def _kernel(
@@ -359,10 +378,11 @@ class TestNumerics:
     @pytest.mark.slow
     @pytest.mark.parametrize("preset", ["standard", "fastest", "minimal"])
     @pytest.mark.parametrize("dense", [False, True])
-    def test_sparse_factor_in_sums_and_derivatives(self, preset, dense):
+    @pytest.mark.parametrize("model", ["weighted_logs", "weighted_table"])
+    def test_sparse_factor_in_sums_and_derivatives(self, model, preset, dense):
         data = _inputs(7, 9, dense)
         plain, guarded = _run_pair(
-            "weighted_logs",
+            model,
             data,
             {"preset": preset},
             "dT,dT2,dn,dndT,dndn",
@@ -477,3 +497,45 @@ class TestSplitByFactor:
     def test_the_factor_in_a_denominator_stays_in_the_rest(self):
         expr = self.X / self.ELEMENT
         assert split_by_factor(expr, self.ELEMENT) == (expr, 0)
+
+
+MODEL_TEXT = """model sp
+variables
+    n nc
+    T
+parameters
+    v nc ng {attribute}
+    w nc ng
+function
+    sum_k[1:ng] (sum_i n_i*v_ik*log(1 + w_ik*T))^2
+"""
+
+
+class TestModelLanguage:
+    """The ``sparse`` attribute of a parameter declaration."""
+
+    def _compile(self, attribute: str, **settings) -> str:
+        return compile_model(
+            MODEL_TEXT.format(attribute=attribute),
+            derivatives="dn,dndn",
+            optional_derivatives=False,
+            **settings,
+        )
+
+    def test_attribute_enables_the_guards(self):
+        assert "/= 0.0d0" in self._compile("sparse")
+        assert "/= 0.0d0" not in self._compile("")
+
+    def test_attribute_joins_the_keyword(self):
+        code = self._compile("sparse", sparse_parameters=("w",))
+        assert "v(" in "".join(_guard_conditions(code))
+
+    @pytest.mark.parametrize("section", ["variables", "scalar"])
+    def test_only_array_parameters_can_be_sparse(self, section):
+        text = MODEL_TEXT.format(attribute="")
+        if section == "variables":
+            text = text.replace("n nc", "n nc sparse")
+        else:
+            text = text.replace("    w nc ng", "    w nc ng\n    c sparse")
+        with pytest.raises(ModelError, match="sparse"):
+            compile_model(text, derivatives="dn")

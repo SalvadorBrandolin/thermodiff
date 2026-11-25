@@ -64,6 +64,7 @@ class Declaration:
     line: int
     symmetric: bool = False
     positive: bool = False
+    sparse: bool = False
 
 
 @dataclass
@@ -127,6 +128,7 @@ class ModelIR:
     indexes: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     symmetric: list = field(default_factory=list)
+    sparse: list = field(default_factory=list)
 
 
 def split_decl_name(token, dims):
@@ -300,8 +302,15 @@ def _build_declaration(raw, resolver, dimensions, filename, kind):
             raw.line,
             filename,
         )
+    sparse = "sparse" in getattr(raw, "attributes", ())
+    if sparse and (kind != "parameters" or rank < 1):
+        raise ModelError(
+            f"only array parameters can be declared sparse ({base!r})",
+            raw.line,
+            filename,
+        )
     declaration = Declaration(
-        base, rank, letters, dims, raw.line, symmetric, positive
+        base, rank, letters, dims, raw.line, symmetric, positive, sparse
     )
     if kind == "variables":
         _register_variable(declaration, resolver, filename)
@@ -755,6 +764,7 @@ def build_ir(raw, filename=None):
         warnings=warnings,
         symmetric=[d.base for d in parameters if d.symmetric]
         + [p.base for p in placeholders if p.symmetric],
+        sparse=[d.base for d in parameters if d.sparse],
     )
 
 

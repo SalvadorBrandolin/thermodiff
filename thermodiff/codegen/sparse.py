@@ -127,10 +127,15 @@ def _is_heavy(expr: sp.Basic) -> bool:
 
 
 def _is_plain(definition: TempDef) -> bool:
-    """Tell whether ``definition`` is an unannotated simple loop nest."""
+    """Tell whether ``definition`` is a simple loop nest.
+
+    Annotations that are present but false (``mirror=False``) do not change
+    how a definition is rendered.
+    """
+    annotations = definition.present_keys() - _PLAIN_KEYS
     return (
         type(definition) is TempDef
-        and definition.present_keys() <= _PLAIN_KEYS
+        and not any(getattr(definition, key) for key in annotations)
         and not definition.body.has(sp.Sum)
     )
 
@@ -196,6 +201,7 @@ class _Scope:
     ranks: Mapping[str, int]
     splits: dict[int, _TermSplit]
     table_guards: dict[int, sp.Indexed]
+    zero_fills: set[int]
     term_guards: dict[int, SparseGuard]
     outputs: set[sp.Basic]
     readers: dict[sp.Basic, list[TempDef]]
@@ -302,6 +308,30 @@ def _table_guard(table: TempDef, scope: _Scope) -> sp.Indexed | None:
     return None
 
 
+def _zero_fill_guard(
+    table: TempDef, ranks: Mapping[str, int]
+) -> sp.Indexed | None:
+    """Return the element of a table whose body is a multiple of it.
+
+    Such an entry is zero where the element is, whoever reads it: the guard
+    computes the costly factor only where the element is not zero and sets
+    the entry to zero elsewhere (``mat(l, k) = log(...)*v(l, k)``).
+    """
+    target = table.target
+    if not (
+        _is_plain(table)
+        and not table.limits
+        and isinstance(target, sp.Indexed)
+        and _is_heavy(table.body)
+    ):
+        return None
+    for atom in _sparse_atoms(table.body, ranks, set(table.free)):
+        rest, guarded = split_by_factor(table.body, atom)
+        if rest == 0 and set(atom.indices) == set(table.free):
+            return atom
+    return None
+
+
 def _keeps_term_guard(split: _TermSplit, guarded_bases: set[sp.Basic]) -> bool:
     """Apply the operation-count guard to a term split."""
     if _is_heavy(split.guarded):
@@ -309,25 +339,12 @@ def _keeps_term_guard(split: _TermSplit, guarded_bases: set[sp.Basic]) -> bool:
     return bool(split.guarded.atoms(sp.IndexedBase) & guarded_bases)
 
 
-def apply_sparse_guards(
-    definitions: list[TempDef],
+def _build_scope(
+    definitions: Sequence[TempDef],
     outputs: Iterable[sp.Basic],
     ranks: Mapping[str, int],
-) -> None:
-    """Set the ``sparse`` guard of the definitions that profit from one.
-
-    Parameters
-    ----------
-    definitions : sequence of TempDef
-        Ordered definitions of the kernel; the guarded plain definitions
-        are replaced in place by :class:`~thermodiff.codegen.ir.SparseNest`.
-    outputs : iterable of sympy.Basic
-        Residual expressions of the outputs.
-    ranks : mapping
-        Rank of every sparse array parameter, by name.
-    """
-    if not ranks:
-        return
+) -> _Scope:
+    """Collect the term splits, the readers and the sparse bases."""
     plain = [d for d in definitions if _is_plain(d)]
     splits = {id(d): _term_split(d, ranks) for d in plain}
     readers: dict[sp.Basic, list[TempDef]] = {}
@@ -340,24 +357,57 @@ def apply_sparse_guards(
         for atom in d.body.atoms(sp.Indexed)
         if str(atom.base) in ranks
     }
-    scope = _Scope(
+    return _Scope(
         ranks,
         {key: split for key, split in splits.items() if split is not None},
         {},
+        set(),
         {},
         {base for out in outputs for base in out.atoms(sp.IndexedBase)},
         readers,
         bases,
     )
+
+
+def _decide_tables(definitions: Sequence[TempDef], scope: _Scope) -> None:
+    """Decide the table guards, consumers first."""
     for table in reversed(definitions):
         guard = _table_guard(table, scope)
+        if guard is None:
+            guard = _zero_fill_guard(table, scope.ranks)
+            if guard is not None:
+                scope.zero_fills.add(id(table))
         if guard is not None:
             scope.table_guards[id(table)] = guard
-    _apply_term_guards(plain, scope)
+
+
+def apply_sparse_guards(
+    definitions: list[TempDef],
+    outputs: Iterable[sp.Basic],
+    ranks: Mapping[str, int],
+) -> None:
+    """Guard the definitions that profit from a sparse parameter.
+
+    Parameters
+    ----------
+    definitions : list of TempDef
+        Ordered definitions of the kernel; the guarded plain definitions
+        are replaced in place by :class:`~thermodiff.codegen.ir.SparseNest`.
+    outputs : iterable of sympy.Basic
+        Residual expressions of the outputs.
+    ranks : mapping
+        Rank of every sparse array parameter, by name.
+    """
+    if not ranks:
+        return
+    scope = _build_scope(definitions, outputs, ranks)
+    _decide_tables(definitions, scope)
+    _apply_term_guards([d for d in definitions if _is_plain(d)], scope)
     for position, definition in enumerate(definitions):
         table_guard = scope.table_guards.get(id(definition))
         if table_guard is not None:
-            guard = SparseGuard(table_guard, True)
+            fill = id(definition) in scope.zero_fills
+            guard = SparseGuard(table_guard, table=True, zero_fill=fill)
         else:
             guard = scope.term_guards.get(id(definition))
         if guard is not None:
@@ -386,5 +436,8 @@ def _apply_term_guards(plain: Sequence[TempDef], scope: _Scope) -> None:
             continue
         if _keeps_term_guard(split, guarded_bases):
             scope.term_guards[id(definition)] = SparseGuard(
-                split.factor, False, split.rest, split.guarded
+                split.factor,
+                table=False,
+                rest=split.rest,
+                guarded=split.guarded,
             )
