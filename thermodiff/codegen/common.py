@@ -431,7 +431,7 @@ class _ThermodiffFCodePrinter(FCodePrinter):  # type: ignore[misc]
         """Print the number ``value`` as a real literal."""
         return str(self._print(sp.Float(value)))
 
-    def _print_Heaviside(self, expr: sp.Heaviside) -> str:
+    def _print_Heaviside(self, expr: sp.Heaviside) -> str:  # noqa: N802
         """Print ``Heaviside(x, H0)`` with real branches.
 
         The value at ``x == 0`` is ``H0`` (SymPy's default is ``1/2``,
@@ -444,7 +444,7 @@ class _ThermodiffFCodePrinter(FCodePrinter):  # type: ignore[misc]
         test = f"{argument} == {zero}"
         return f"(merge({zero}, {inner}{test}), {argument} < {zero}))"
 
-    def _print_DiracDelta(self, expr: sp.DiracDelta) -> str:
+    def _print_DiracDelta(self, expr: sp.DiracDelta) -> str:  # noqa: N802
         """Print ``DiracDelta`` as zero.
 
         Its only support is the kink of a non-smooth function, where the
@@ -453,20 +453,20 @@ class _ThermodiffFCodePrinter(FCodePrinter):  # type: ignore[misc]
         """
         return self._real(sp.S.Zero)
 
-    def _print_MinMax(self, expr: sp.Expr, name: str) -> str:
+    def _print_min_max(self, expr: sp.Expr, name: str) -> str:
         """Print ``Max``/``Min`` with real literals among real operands."""
         args = list(expr.args)
         if not all(arg.is_integer for arg in args):
             args = [sp.Float(arg) if arg.is_Integer else arg for arg in args]
         return f"{name}({', '.join(str(self._print(a)) for a in args)})"
 
-    def _print_Max(self, expr: sp.Max) -> str:
+    def _print_Max(self, expr: sp.Max) -> str:  # noqa: N802
         """Print ``Max``."""
-        return self._print_MinMax(expr, "max")
+        return self._print_min_max(expr, "max")
 
-    def _print_Min(self, expr: sp.Min) -> str:
+    def _print_Min(self, expr: sp.Min) -> str:  # noqa: N802
         """Print ``Min``."""
-        return self._print_MinMax(expr, "min")
+        return self._print_min_max(expr, "min")
 
 
 def fortran_code(expr: sp.Expr, assign_to: str | None = None) -> str:

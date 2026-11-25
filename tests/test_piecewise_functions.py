@@ -7,11 +7,11 @@ compile and match SymPy away from the kink; at the kink itself the value
 of ``Heaviside`` is ``1/2``, SymPy's own convention.
 """
 
+from fortran_tools import DEBUG_FREE_FORM_FLAGS, GFORTRAN, compile_and_run
+
 import pytest
 
 import sympy as sp
-
-from fortran_tools import DEBUG_FREE_FORM_FLAGS, GFORTRAN, compile_and_run
 
 from thermodiff.codegen.common import fortran_code
 from thermodiff.model import compile_model

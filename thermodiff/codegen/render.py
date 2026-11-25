@@ -11,10 +11,10 @@ from thermodiff.codegen.common import (
     _Namer,
     _emission_order,
     _free_indices,
-    fortran_code,
     _indent_lines,
     _print_expr,
     _temp_name,
+    fortran_code,
 )
 from thermodiff.codegen.extents import index_extent
 from thermodiff.codegen.hoisting import _split_factored

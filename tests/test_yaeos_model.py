@@ -9,6 +9,7 @@ the right kernel and outputs, and the default branch).
 import re
 
 from fortran_tools import GFORTRAN, compile_and_run
+
 import pytest
 
 from thermodiff.yaeos_model import kernel_interface, yaeos_model_module
