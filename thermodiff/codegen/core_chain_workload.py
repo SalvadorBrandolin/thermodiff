@@ -285,6 +285,24 @@ def _fused(
     )
 
 
+def dispatcher_name(name: str, subroutine_name: str | None) -> str:
+    """Return the public name of the dispatcher.
+
+    Parameters
+    ----------
+    name : str
+        Prefix of the total derivatives (``ar``).
+    subroutine_name : str or None
+        Name given by the caller.
+
+    Returns
+    -------
+    str
+        ``subroutine_name`` or, by default, ``<name>_fused``.
+    """
+    return subroutine_name or f"{name}_fused"
+
+
 def _fused_workload_kernel(
     context: _Context,
     selection: Any,
@@ -375,7 +393,7 @@ def scalar_chain_workload_procedures(
         name=name,
     )
     context = _Context(core, chain_args, core_name, fixed, passed)
-    base = subroutine_name or f"{name}_fused"
+    base = dispatcher_name(name, subroutine_name)
     fallback_name = f"{base}_fallback"
     fallback_text = _fused(context, derivatives, fallback_name, optional=True)
     fallback = parse_kernel(fallback_text)
@@ -429,8 +447,8 @@ def scalar_chain_workload_module(
     code = scalar_chain_workload_procedures(
         core, scalars, workloads, depends_on, **kwargs
     )
-    base = kwargs.get("subroutine_name") or (
-        f"{kwargs.get('name', _DEFAULT_NAME)}_fused"
+    base = dispatcher_name(
+        kwargs.get("name", _DEFAULT_NAME), kwargs.get("subroutine_name")
     )
     return wrap_module(
         module_name or f"{base}_mod",
