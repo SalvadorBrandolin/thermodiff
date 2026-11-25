@@ -258,19 +258,19 @@ def _render_column_order(definition: TempDef) -> list[str]:
         (f,) = free
         b, low, high = limits[0]
         return [
-            f"do {f} = 1, nc",
+            f"do {f} = 1, {index_extent(f)}",
             f"{_INDENT}{target_s} = 0.0d0",
             "end do",
             f"do {b} = {_print_expr(low)}, {_print_expr(high)}",
-            f"{_INDENT}do {f} = 1, nc",
+            f"{_INDENT}do {f} = 1, {index_extent(f)}",
             f"{_INDENT * 2}{target_s} = {target_s} + {body_s}",
             f"{_INDENT}end do",
             "end do",
         ]
     p_, q_ = free
     return [
-        f"do {q_} = 1, nc",
-        f"{_INDENT}do {p_} = 1, nc",
+        f"do {q_} = 1, {index_extent(q_)}",
+        f"{_INDENT}do {p_} = 1, {index_extent(p_)}",
         f"{_INDENT * 2}{target_s} = {body_s}",
         f"{_INDENT}end do",
         "end do",
@@ -288,9 +288,9 @@ def _render_column_sum(definition: TempDef) -> list[str]:
     p_, q_ = definition.free
     b, low, high = definition.limits[0]
     target_s = _print_expr(target)
-    upper = q_ if definition.mirror_sum else "nc"
+    upper = q_ if definition.mirror_sum else index_extent(p_)
     lines = [
-        f"do {q_} = 1, nc",
+        f"do {q_} = 1, {index_extent(q_)}",
         f"{_INDENT}do {p_} = 1, {upper}",
         f"{_INDENT * 2}{target_s} = 0.0d0",
         f"{_INDENT}end do",
@@ -317,13 +317,15 @@ def _render_fused(definition: FusedNest) -> list[str]:
     f = group[0].free[0]
     b, low, high = group[0].limits[0]
     colmajor = bool(group[0].colmajor)
-    lines = [f"do {f} = 1, nc"]
+    extent = index_extent(f)
+    lines = [f"do {f} = 1, {extent}"]
     for d in group:
         lines.append(f"{_INDENT}{_print_expr(d.target)} = 0.0d0")
     lines.append("end do")
     outer, inner = (b, f) if colmajor else (f, b)
-    lo_o, hi_o = (low, high) if colmajor else (1, sp.Symbol("nc"))
-    lo_i, hi_i = (1, sp.Symbol("nc")) if colmajor else (low, high)
+    free_extent = sp.Symbol(extent)
+    lo_o, hi_o = (low, high) if colmajor else (1, free_extent)
+    lo_i, hi_i = (1, free_extent) if colmajor else (low, high)
     lines.append(
         f"do {outer} = {_print_expr(sp.sympify(lo_o))}, "
         f"{_print_expr(sp.sympify(hi_o))}"
@@ -342,7 +344,7 @@ def _render_fused(definition: FusedNest) -> list[str]:
 
 def _render_component_fused(definition: ComponentFusedMap) -> list[str]:
     idx = definition.free[0]
-    lines = [f"do {idx} = 1, nc"]
+    lines = [f"do {idx} = 1, {index_extent(idx)}"]
     for _kind, target, value in definition.steps:
         lines.append(f"{_INDENT}{_print_expr(target)} = {_print_expr(value)}")
     lines.append("end do")
@@ -452,7 +454,7 @@ def _render_outer_fused(definition: OuterFusedNest) -> list[str]:
     for member in definition.members:
         if _is_reduction_member(member):
             lines.append(f"{_print_expr(member.target)} = 0.0d0")
-    lines.append(f"do {outer} = 1, nc")
+    lines.append(f"do {outer} = 1, {index_extent(outer)}")
     members = definition.members
     position = 0
     while position < len(members):
@@ -480,7 +482,10 @@ def _render_outer_fused(definition: OuterFusedNest) -> list[str]:
 
 def _render_sibling(definition: SiblingNest) -> list[str]:
     a, b = definition.free
-    lines = [f"do {b} = 1, nc", f"{_INDENT}do {a} = 1, {b}"]
+    lines = [
+        f"do {b} = 1, {index_extent(b)}",
+        f"{_INDENT}do {a} = 1, {b}",
+    ]
     for acc in definition.accs:
         lines.append(f"{_INDENT * 2}{acc} = 0.0d0")
     m, lo, hi = definition.limits[0]
@@ -535,7 +540,7 @@ def _render_mirror_sum_table(definition: TempDef) -> list[str]:
     target_s = _print_expr(target)
     transposed = _print_expr(sp.Indexed(target.base, b, a))
     out = [
-        f"do {b} = 1, nc",
+        f"do {b} = 1, {index_extent(b)}",
         f"{_INDENT}do {a} = 1, {b}",
         f"{_INDENT * 2}{target_s} = 0.0d0",
     ]
@@ -566,8 +571,8 @@ def _render_mirror_triangle(definition: TempDef) -> list[str]:
     target_s = _print_expr(target)
     transposed = _print_expr(sp.Indexed(target.base, free[1], free[0]))
     return [
-        f"do {free[0]} = 1, nc",
-        f"{_INDENT}do {free[1]} = {free[0]}, nc",
+        f"do {free[0]} = 1, {index_extent(free[0])}",
+        f"{_INDENT}do {free[1]} = {free[0]}, {index_extent(free[1])}",
         _INDENT * 2 + f"{target_s} = {body_s}",
         _INDENT * 2 + f"{transposed} = {target_s}",
         _INDENT + "end do",

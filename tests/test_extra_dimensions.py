@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(
 
 BOUNDS_FLAGS = ("-O0", "-fcheck=bounds", "-ffree-line-length-0")
 SIZES = [(2, 3), (4, 2)]
-PRESETS = ["minimal"]
+PRESETS = ["minimal", "standard", "fastest"]
 RELATIVE_TOLERANCE = 1e-8
 TEMPERATURE = 310.0
 

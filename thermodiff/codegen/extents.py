@@ -77,6 +77,31 @@ def with_range_of(index: sp.Idx, label: str) -> sp.Idx:
     return sp.Idx(label, (index.lower, index.upper))
 
 
+def slot_mapping(
+    indices: list[sp.Idx], slots: list[sp.Idx]
+) -> dict[sp.Idx, sp.Idx]:
+    """Map ``indices`` to the leading auxiliary ``slots``, keeping ranges.
+
+    Parameters
+    ----------
+    indices : list of sympy.Idx
+        Indices of a sub-expression, in slot order.
+    slots : list of sympy.Idx
+        Auxiliary indices; the first ``len(indices)`` are used.
+
+    Returns
+    -------
+    dict
+        Each index to the slot at its position, as a ranged index when the
+        index runs over an extra dimension.  The values are the free
+        indices of the temporary that holds the sub-expression.
+    """
+    return {
+        index: with_range_of(index, str(slots[position]))
+        for position, index in enumerate(indices)
+    }
+
+
 def _dimension_symbol(high: sp.Basic) -> bool:
     """Whether a summation bound is a dimension symbol other than ``nc``."""
     return (
@@ -136,3 +161,73 @@ def annotate_index_ranges(
         (high,) = highs
         mapping[index] = sp.Idx(str(index), (1, high))
     return mapping
+
+
+def _use_extents(
+    name: str, expressions: Iterable[sp.Basic]
+) -> dict[tuple[str, ...], tuple[sp.Idx, ...]]:
+    """Return the subscripts that read array ``name``, by their extents."""
+    uses: dict[tuple[str, ...], tuple[sp.Idx, ...]] = {}
+    for expression in expressions:
+        for element in expression.atoms(sp.Indexed):
+            if str(element.base) != name:
+                continue
+            indices = tuple(element.indices)
+            extents = tuple(index_extent(index) for index in indices)
+            if all(isinstance(index, sp.Idx) for index in indices):
+                uses.setdefault(extents, indices)
+    return uses
+
+
+def ranged_slots(
+    name: str, slots: list[sp.Idx], expressions: Iterable[sp.Basic]
+) -> dict[sp.Idx, sp.Idx]:
+    """Give the slots of a component array the ranges of its readers.
+
+    The body of a component array is written over fixed slot indices, which
+    do not know the dimension the readers run over.
+
+    Parameters
+    ----------
+    name : str
+        Name of the component array.
+    slots : list of sympy.Idx
+        Slot indices of the definition, one per subscript.
+    expressions : iterable of sympy expression
+        Expressions that read the array with their (ranged) indices.
+
+    Returns
+    -------
+    dict
+        Slot to ranged slot; empty when every reader runs over ``nc``.
+
+    Raises
+    ------
+    ValueError
+        If the readers disagree on the extents of the array.
+
+    Notes
+    -----
+    Readers over ``nc`` only count when no reader runs over an extra
+    dimension: the bodies of the other component arrays read this one at
+    their own slot indices, which carry no range yet.
+    """
+    uses = _use_extents(name, expressions)
+    if len(uses) > 1:
+        # a component body reads the other arrays at its own, unranged,
+        # slots: only a reader over an extra dimension says something
+        plain = (COMPONENT_EXTENT,) * len(slots)
+        uses.pop(plain, None)
+    if len(uses) > 1:
+        raise ValueError(
+            f"Function '{name}' is used over several extents "
+            f"({sorted(uses)}); use a different function for each."
+        )
+    if not uses:
+        return {}
+    (indices,) = uses.values()
+    mapping = {
+        slot: with_range_of(index, str(slot))
+        for slot, index in zip(slots, indices)
+    }
+    return {slot: new for slot, new in mapping.items() if new != slot}

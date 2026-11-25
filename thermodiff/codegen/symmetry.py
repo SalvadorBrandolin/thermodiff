@@ -13,6 +13,7 @@ from thermodiff.codegen.common import (
     _order_free,
     _print_expr,
 )
+from thermodiff.codegen.extents import is_component_index
 from thermodiff.codegen.ir import TempDef
 
 
@@ -225,6 +226,8 @@ def _symv_parts(
     if low != 1 or str(high) != "nc":
         return None
     f = free[0]
+    if not is_component_index(f):
+        return None
     body = definition.body
     factors = body.args if isinstance(body, sp.Mul) else (body,)
     pair = [x for x in factors if {f, b} <= x.atoms(sp.Idx)]

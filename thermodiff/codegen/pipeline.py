@@ -44,6 +44,7 @@ from thermodiff.codegen.extents import (
     COMPONENT_EXTENT,
     annotate_index_ranges,
     index_extent,
+    ranged_slots,
 )
 from thermodiff.codegen.hoisting import (
     _hoist_invariants,
@@ -998,6 +999,17 @@ def _component_definitions(state: _EmitState) -> None:
     state.component_defs = component_defs
 
 
+def _array_readers(state: _EmitState) -> list[sp.Basic]:
+    """Return the expressions that may read the component arrays."""
+    readers: list[sp.Basic] = list(state.all_exprs)
+    readers += [body for _name, body, _rank, _sym in state.component_defs]
+    readers += [
+        body.xreplace(state.index_ranges)
+        for _symbol, body in state.scalar_chain_defs
+    ]
+    return readers
+
+
 def _component_arrays(state: _EmitState) -> None:
     """Declare the component arrays and build their definitions (S12)."""
     if not state.component_defs:
@@ -1006,6 +1018,7 @@ def _component_arrays(state: _EmitState) -> None:
 
     opts = state.opts
     scheme = cast(Structure, state.structured)[NAME_SCHEME_KEY]
+    readers = _array_readers(state)
     for comp_name, comp_body, comp_rank, comp_sym in state.component_defs:
         state.arrays[comp_name] = comp_rank
         free_ = (
@@ -1013,6 +1026,9 @@ def _component_arrays(state: _EmitState) -> None:
             if comp_rank == 1
             else list(scheme.pair_slots)
         )
+        slot_ranges = ranged_slots(comp_name, free_, readers)
+        free_ = [slot_ranges.get(slot, slot) for slot in free_]
+        comp_body = comp_body.xreplace(slot_ranges)
         base_ = sp.IndexedBase(comp_name, shape=(nc,) * comp_rank)
         state.component_array_defs.append(
             TempDef(

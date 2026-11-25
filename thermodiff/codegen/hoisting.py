@@ -16,6 +16,7 @@ from thermodiff.codegen.common import (
     _new_shared_temp,
     _temp_name,
 )
+from thermodiff.codegen.extents import slot_mapping
 from thermodiff.codegen.ir import Limit, TempDef
 
 #: A separable term ``(scalar, factor over first, factor over second)``.
@@ -129,10 +130,10 @@ def _hoisted_temporary(state: _HoistState, sub: sp.Expr) -> sp.Basic:
     sub-expressions over different indices share one definition.
     """
     indices = _index_symbols(sub)
-    mapping = {index: state.slots[pos] for pos, index in enumerate(indices)}
+    mapping = slot_mapping(indices, state.slots)
     canon = sub.xreplace(mapping)
     if canon not in state.temps:
-        free = state.slots[: len(indices)]
+        free = list(mapping.values())
         target = _new_shared_temp(state.namer, free, state.arrays)
         state.definitions.append(
             TempDef(target=target, free=free, limits=[], body=canon)
@@ -622,10 +623,10 @@ class _LoopHoister:
     def make(self, sub: sp.Expr) -> sp.Basic:
         """Return the reference to the temporary holding ``sub``."""
         indices = _index_symbols(sub)
-        mapping = {index: self.slots[pos] for pos, index in enumerate(indices)}
+        mapping = slot_mapping(indices, self.slots)
         canon = sub.xreplace(mapping)
         if canon not in self.temps:
-            free = self.slots[: len(indices)]
+            free = list(mapping.values())
             target = _new_shared_temp(self.namer, free, self.arrays)
             self.pending.append(
                 TempDef(target=target, free=free, limits=[], body=canon)

@@ -19,7 +19,7 @@ from thermodiff.codegen.common import (
     _order_free,
     _sorted_indices,
 )
-from thermodiff.codegen.extents import with_range_of
+from thermodiff.codegen.extents import slot_mapping
 from thermodiff.codegen.ir import TempDef
 from thermodiff.codegen.symmetry import (
     _alpha_key,
@@ -578,11 +578,7 @@ def _canonical_form(
     A slot keeps the range of the index it replaces, so that two shapes
     that differ only in the dimension an index runs over stay different.
     """
-    mapping = {
-        index: with_range_of(index, str(slots[position]))
-        for position, index in enumerate(indices)
-    }
-    return sub.xreplace(mapping)
+    return sub.xreplace(slot_mapping(indices, slots))
 
 
 def _cached_hoistable(
