@@ -30,6 +30,7 @@ from thermodiff import (
     to_fortran,
 )
 from thermodiff.codegen.options import CodegenOptions
+from thermodiff.codegen.resolve import expression_argument_placeholders
 from thermodiff.derivatives import resolve_derivatives
 
 FLAGS = ("-O1", "-ffree-line-length-0")
@@ -472,3 +473,24 @@ class TestExpressionArguments:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             to_fortran(diff, derivatives=["dV"])
+
+
+@pytest.mark.parametrize("preset", ["minimal", "standard", "fastest"])
+def test_vector_placeholder_arguments_do_not_warn(preset):
+    """``B(n)`` and ``D(n, T)`` take variables, not expressions."""
+    b_func = idx_function("B")(n)
+    d_func = idx_function("D")(n, T)
+    diff = DiffPlz(
+        sum_components(n[l], l) * sp.log(1 - b_func / V) + d_func / T,
+        internal_functions=[b_func, d_func],
+        indexes=[l],
+        name="f",
+    )
+    assert expression_argument_placeholders(diff.expression) == []
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        to_fortran(
+            diff,
+            derivatives=["dn", "dndn", "dT", "dndT"],
+            options=CodegenOptions.from_preset(preset),
+        )

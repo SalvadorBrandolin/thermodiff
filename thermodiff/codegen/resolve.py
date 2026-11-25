@@ -222,12 +222,15 @@ def _check_symmetric_pair(func: sp.Function, pair: tuple[int, ...]) -> None:
     )
 
 
+#: Argument types that are plain variables: a scalar (``T``), an index, an
+#: element (``n[i]``) or the whole composition vector (``n``).
+_VARIABLE_ARGUMENTS = (sp.Symbol, sp.Idx, sp.Indexed, sp.IndexedBase)
+
+
 def _expression_arguments(func: sp.Function) -> list[sp.Basic]:
     """Return the arguments of ``func`` that are not plain variables."""
     return [
-        arg
-        for arg in func.args
-        if not isinstance(arg, (sp.Symbol, sp.Idx, sp.Indexed))
+        arg for arg in func.args if not isinstance(arg, _VARIABLE_ARGUMENTS)
     ]
 
 
