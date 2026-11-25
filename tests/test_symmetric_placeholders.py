@@ -123,6 +123,16 @@ def test_invalid_symmetric_pair_is_rejected():
         idx_function("a", symmetric=(1, 2))
 
 
+@pytest.mark.parametrize("derivative", [False, True])
+def test_symmetric_pair_must_be_index_arguments(derivative):
+    """``symmetric=(0, 1)`` names the first two arguments, not any two."""
+    a = idx_function("a", symmetric=(0, 1))(T, k, l)
+    expr = sp.Derivative(a, T) if derivative else a
+    resolver = _PlaceholderResolver(canonical=True)
+    with pytest.raises(ValueError, match="not both index arguments"):
+        resolver.resolve(expr)
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(GFORTRAN is None, reason="needs gfortran")
 @pytest.mark.parametrize("chain_rule", [False, True])

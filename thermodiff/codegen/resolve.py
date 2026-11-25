@@ -191,12 +191,35 @@ class _PlaceholderResolver:
         """Return whether ``func`` is a rank-2 symmetric placeholder.
 
         Declared with ``symmetric_params`` or ``idx_function(symmetric=)``.
+
+        Raises
+        ------
+        ValueError
+            If ``idx_function(symmetric=(0, 1))`` was used on a function
+            whose first two arguments are not index arguments.
         """
+        pair = getattr(func.func, "symmetric_args", None)
+        if pair is not None:
+            _check_symmetric_pair(func, pair)
         declared = (
             _sanitize(func.func.__name__) in self.symmetric_names
-            or getattr(func.func, "symmetric_args", None) is not None
+            or pair is not None
         )
         return declared and len(dims) == 2
+
+
+def _check_symmetric_pair(func: sp.Function, pair: tuple[int, ...]) -> None:
+    """Require that the arguments at ``pair`` of ``func`` are indices."""
+    if all(
+        position < len(func.args) and isinstance(func.args[position], sp.Idx)
+        for position in pair
+    ):
+        return
+    raise ValueError(
+        f"Function '{func.func.__name__}' is declared symmetric in its "
+        f"arguments {pair}, but they are not both index arguments: "
+        f"{func.args}"
+    )
 
 
 def _expression_arguments(func: sp.Function) -> list[sp.Basic]:
