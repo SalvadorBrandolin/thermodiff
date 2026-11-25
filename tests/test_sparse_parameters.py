@@ -49,6 +49,8 @@ UNIFAC_SHAPES = {
 }
 OUTPUT_PREFIXES = ("ge", "dge", "f", "df")
 EXTENT_NAMES = ("nc", "ng")
+# The NaN of the poison is a double; wider kinds need the range check off.
+COMPILE_FLAGS = (*DEBUG_FREE_FORM_FLAGS, "-fno-range-check")
 QUIET_NAN = "transfer(-2251799813685248_8, 1.0d0)"
 KERNEL_NAMES = ("kernel_plain", "kernel_sparse")
 
@@ -151,9 +153,8 @@ def _kernel(
 ) -> str:
     """Return the kernel of ``model`` as a subroutine called ``name``."""
     preset = settings.pop("preset", "standard")
-    options = CodegenOptions.from_preset(
-        preset, optional_derivatives=False, **settings
-    )
+    settings.setdefault("optional_derivatives", False)
+    options = CodegenOptions.from_preset(preset, **settings)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         return to_fortran(
@@ -210,11 +211,15 @@ def _extents(name: str, rank: int, is_output: bool) -> str:
     return "nc,ng" if name in ("th", "v") else "ng,ng"
 
 
-def _driver(unguarded: str, guarded: str) -> tuple[str, list[str]]:
+def _driver(
+    unguarded: str, guarded: str, kind: str = "8"
+) -> tuple[str, list[str]]:
     """Return a program that runs both kernels on the data of ``in.txt``.
 
     The input file holds ``nc`` and ``ng`` and then every other input in
     argument order (arrays in column-major order).
+
+    Every output goes to its own file ``out<kernel>_<name>.txt``.
 
     Returns
     -------
@@ -230,10 +235,10 @@ def _driver(unguarded: str, guarded: str) -> tuple[str, list[str]]:
     body = ["open(newunit=u, file='in.txt')", "read(u,*) nc, ng"]
     for arg in inputs:
         if ranks[arg] == 0:
-            declare.append(f"real(8) :: {arg}")
+            declare.append(f"real({kind}) :: {arg}")
         else:
             declare.append(
-                f"real(8), allocatable :: {arg}({','.join(':' * ranks[arg])})"
+                f"real({kind}), allocatable :: {arg}({','.join(':' * ranks[arg])})"
             )
             body.append(f"allocate({arg}({_extents(arg, ranks[arg], False)}))")
         body.append(f"read(u,*) {arg}")
@@ -246,15 +251,16 @@ def _driver(unguarded: str, guarded: str) -> tuple[str, list[str]]:
             name = f"{out}_{suffix}"
             if rank:
                 dims = ",".join(":" * rank)
-                declare.append(f"real(8), allocatable :: {name}({dims})")
+                declare.append(f"real({kind}), allocatable :: {name}({dims})")
                 body.append(f"allocate({name}({_extents(out, rank, True)}))")
             else:
-                declare.append(f"real(8) :: {name}")
+                declare.append(f"real({kind}) :: {name}")
         args_out = [f"{o}={o}_{suffix}" for o in outputs]
         body.append(f"call {kernel}({', '.join(calls + args_out)})")
-        body.append(f"open(newunit=u, file='out{suffix}.txt')")
-        body.extend(f"write(u,'(es30.17e3)') {o}_{suffix}" for o in outputs)
-        body.append("close(u)")
+        for out in outputs:
+            body.append(f"open(newunit=u, file='out{suffix}_{out}.txt')")
+            body.append(f"write(u,'(es30.17e3)') {out}_{suffix}")
+            body.append("close(u)")
     text = (
         module
         + "program drive\nuse kernels\nimplicit none\ninteger :: u\n"
@@ -287,7 +293,7 @@ def _poison_arrays(code: str) -> str:
     local = [
         position
         for position, line in enumerate(lines)
-        if line.strip().startswith("real(8) ::") and "intent" not in line
+        if re.match(r"\s*real\(\w+\) ::", line) and "intent" not in line
     ]
     names = [
         name
@@ -305,41 +311,56 @@ def _poison_arrays(code: str) -> str:
 
 def _run_pair(
     model: str, data: dict, settings: dict, derivatives: str
-) -> tuple[np.ndarray, np.ndarray]:
-    """Run the kernel without and with the option; return both outputs."""
-    plain = _kernel(model, KERNEL_NAMES[0], derivatives, **settings)
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Run the kernel without and with the option; return both outputs.
+
+    The outputs come as dictionaries from the output name to its values.
+    """
+    plain = _kernel(model, KERNEL_NAMES[0], derivatives, **dict(settings))
     guarded = _kernel(
         model,
         KERNEL_NAMES[1],
         derivatives,
         sparse_parameters=SPARSE,
-        **settings,
+        **dict(settings),
     )
-    source, names = _driver(plain, _poison_arrays(guarded))
+    kind = settings.get("real_kind", "8")
+    source, names = _driver(plain, _poison_arrays(guarded), kind)
     with tempfile.TemporaryDirectory() as tmp:
         workdir = pathlib.Path(tmp)
         (workdir / "drive.f90").write_text(source)
         _write_inputs(workdir / "in.txt", data, names)
-        compile_and_run(
-            [workdir / "drive.f90"], workdir, DEBUG_FREE_FORM_FLAGS
-        )
-        return (
-            np.loadtxt(workdir / "out0.txt"),
-            np.loadtxt(workdir / "out1.txt"),
+        compile_and_run([workdir / "drive.f90"], workdir, COMPILE_FLAGS)
+        return tuple(  # type: ignore[return-value]
+            {
+                path.stem.split("_", 1)[1]: np.loadtxt(path)
+                for path in sorted(workdir.glob(f"out{position}_*.txt"))
+            }
+            for position in range(len(KERNEL_NAMES))
         )
 
 
-def _assert_agree(guarded: np.ndarray, plain: np.ndarray) -> None:
-    """Compare at ``rel=1e-13`` of each value or of the largest output.
+def _assert_agree(
+    guarded: dict[str, np.ndarray], plain: dict[str, np.ndarray]
+) -> None:
+    """Compare at ``rel=1e-13`` of each value or of the largest of its block.
 
     A term guard splits an accumulation in two, which reassociates it; an
     element that is a difference of larger terms then differs in its last
-    bits relative to itself, but not relative to the largest output.
+    bits relative to itself, but not relative to the largest element of the
+    same output (``dge``, ``dgedn``, ...).  Every output has its own scale,
+    so a small output cannot hide behind a large one.
     """
-    scale = np.max(np.abs(plain))
-    np.testing.assert_allclose(
-        guarded, plain, rtol=REL_TOLERANCE, atol=REL_TOLERANCE * scale
-    )
+    assert guarded.keys() == plain.keys()
+    for name, reference in plain.items():
+        scale = np.max(np.abs(reference))
+        np.testing.assert_allclose(
+            guarded[name],
+            reference,
+            rtol=REL_TOLERANCE,
+            atol=REL_TOLERANCE * scale,
+            err_msg=f"output {name}",
+        )
 
 
 CASES = [(3, 6), (5, 8), (10, 12)]
@@ -363,7 +384,7 @@ class TestNumerics:
         plain, guarded = _run_pair(
             "unifac", data, {"preset": preset}, FIRST_DERIVATIVES
         )
-        assert np.all(np.isfinite(guarded))
+        assert all(np.all(np.isfinite(v)) for v in guarded.values())
         _assert_agree(guarded, plain)
 
     @pytest.mark.slow
@@ -388,6 +409,38 @@ class TestNumerics:
             "dT,dT2,dn,dndT,dndn",
         )
         _assert_agree(guarded, plain)
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("model", ["unifac", "weighted_table"])
+    @pytest.mark.parametrize("preset", ["standard", "minimal"])
+    def test_optional_derivatives(self, model, preset):
+        """The ``present()`` path: every output is requested."""
+        data = _inputs(6, 9, dense=False)
+        plain, guarded = _run_pair(
+            model,
+            data,
+            {"preset": preset, "optional_derivatives": True},
+            FIRST_DERIVATIVES,
+        )
+        _assert_agree(guarded, plain)
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("model", ["unifac", "weighted_table"])
+    def test_quad_precision_literal(self, model):
+        """The ``/= 0`` literal takes the kind of the kernel (real(16))."""
+        data = _inputs(5, 8, dense=False)
+        plain, guarded = _run_pair(
+            model, data, {"real_kind": "16"}, FIRST_DERIVATIVES
+        )
+        _assert_agree(guarded, plain)
+        code = _kernel(
+            model,
+            "k",
+            FIRST_DERIVATIVES,
+            real_kind="16",
+            sparse_parameters=SPARSE,
+        )
+        assert "/= 0.0_16" in code and "/= 0.0d0" not in code
 
 
 def _guard_conditions(code: str) -> list[str]:
