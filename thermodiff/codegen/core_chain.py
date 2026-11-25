@@ -38,10 +38,18 @@ The Hessian is computed on the lower triangle and mirrored.
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import combinations_with_replacement
+from typing import TYPE_CHECKING
+
+import sympy as sp
 
 from thermodiff.codegen.common import apply_real_kind
 from thermodiff.codegen.options import CodegenOptions
 from thermodiff.derivatives import resolve_derivatives
+from thermodiff.thermovars import T, V
+
+if TYPE_CHECKING:
+    from thermodiff.diffplz import DiffPlz
 
 __all__ = ["scalar_chain_routine", "scalar_chain_core_derivatives"]
 
@@ -94,6 +102,9 @@ class _Model:
         Scalars whose Hessian with respect to ``n`` is zero.
     core, out : str
         Prefixes (``f`` and ``ar``) of the core and total derivatives.
+    zero : frozenset of tuple of str
+        Derivatives of the core that vanish identically, as factors in
+        canonical order (scalars in declaration order, then ``T``, ``V``).
     """
 
     scalars: tuple[str, ...]
@@ -101,6 +112,7 @@ class _Model:
     linear: frozenset[str]
     core: str
     out: str
+    zero: frozenset[tuple[str, ...]] = frozenset()
 
     def dependent(self, thermo: str) -> list[str]:
         """Return the scalars that depend on the variable ``thermo``."""
@@ -111,6 +123,24 @@ class _Model:
         if factor in self.scalars:
             return self.scalars.index(factor)
         return _THERMO_RANK_OFFSET + THERMO_VARIABLES.index(factor)
+
+    def vanishes(self, *factors: str) -> bool:
+        """Return whether the core derivative of ``factors`` is zero."""
+        return tuple(sorted(factors, key=self.rank)) in self.zero
+
+    def q_vanishes(self, thermo: str, scalar: str) -> bool:
+        """Return whether the total partial ``q_W,r`` is identically zero."""
+        if not self.vanishes(scalar, thermo):
+            return False
+        return all(self.vanishes(scalar, o) for o in self.dependent(thermo))
+
+    def active_y(self) -> list[str]:
+        """Return the scalars ``r`` whose ``y_r,j`` is not identically zero."""
+        return [
+            r
+            for r in self.scalars
+            if not all(self.vanishes(r, s) for s in self.scalars)
+        ]
 
 
 @dataclass
@@ -182,22 +212,30 @@ def _q_name(thermo: str, scalar: str) -> str:
 def _q_terms(inputs: _Inputs, thermo: str, scalar: str) -> list[str]:
     """Return the terms of ``q_W,r = F_rW + sum_s F_rs x_s,W``."""
     model = inputs.model
-    terms = [inputs.core_name(scalar, thermo)]
+    terms = []
+    if not model.vanishes(scalar, thermo):
+        terms.append(inputs.core_name(scalar, thermo))
     for other in model.dependent(thermo):
-        terms.append(
-            f"{inputs.core_name(scalar, other)}"
-            f"*{inputs.scalar_name(other, thermo)}"
-        )
+        if not model.vanishes(scalar, other):
+            terms.append(
+                f"{inputs.core_name(scalar, other)}"
+                f"*{inputs.scalar_name(other, thermo)}"
+            )
     return terms
 
 
 def _first_thermo_terms(inputs: _Inputs, thermo: str) -> list[str]:
     """Return the terms of ``Ar_W = F_W + sum_r F_r x_r,W``."""
-    terms = [inputs.core_name(thermo)]
-    for scalar in inputs.model.dependent(thermo):
-        terms.append(
-            f"{inputs.core_name(scalar)}*{inputs.scalar_name(scalar, thermo)}"
-        )
+    model = inputs.model
+    terms = []
+    if not model.vanishes(thermo):
+        terms.append(inputs.core_name(thermo))
+    for scalar in model.dependent(thermo):
+        if not model.vanishes(scalar):
+            terms.append(
+                f"{inputs.core_name(scalar)}"
+                f"*{inputs.scalar_name(scalar, thermo)}"
+            )
     return terms
 
 
@@ -206,19 +244,23 @@ def _second_thermo_terms(
 ) -> list[str]:
     """Return the terms of ``Ar_WW'`` (``W`` = first, ``W'`` = second)."""
     model = inputs.model
-    terms = [inputs.core_name(first, second)]
+    terms = []
+    if not model.vanishes(first, second):
+        terms.append(inputs.core_name(first, second))
     for scalar in model.dependent(first):
-        terms.append(
-            f"{inputs.scalar_name(scalar, first)}"
-            f"*{_q_name(second, scalar)}"
-        )
+        if not model.q_vanishes(second, scalar):
+            terms.append(
+                f"{inputs.scalar_name(scalar, first)}"
+                f"*{_q_name(second, scalar)}"
+            )
     for scalar in model.dependent(second):
-        terms.append(
-            f"{inputs.core_name(scalar, first)}"
-            f"*{inputs.scalar_name(scalar, second)}"
-        )
+        if not model.vanishes(scalar, first):
+            terms.append(
+                f"{inputs.core_name(scalar, first)}"
+                f"*{inputs.scalar_name(scalar, second)}"
+            )
     for scalar in model.dependent(first):
-        if second in model.depends[scalar]:
+        if second in model.depends[scalar] and not model.vanishes(scalar):
             terms.append(
                 f"{inputs.core_name(scalar)}"
                 f"*{inputs.scalar_name(scalar, first, second)}"
@@ -233,18 +275,20 @@ def _vector_terms(
     model = inputs.model
     terms = []
     for scalar in model.scalars:
-        weight = (
-            inputs.core_name(scalar)
-            if thermo is None
-            else _q_name(thermo, scalar)
-        )
+        if thermo is None and not model.vanishes(scalar):
+            weight = inputs.core_name(scalar)
+        elif thermo is not None and not model.q_vanishes(thermo, scalar):
+            weight = _q_name(thermo, scalar)
+        else:
+            continue
         terms.append(f"{weight}*{inputs.gradient(scalar)}({index})")
     if thermo is not None:
         for scalar in model.dependent(thermo):
-            terms.append(
-                f"{inputs.core_name(scalar)}"
-                f"*{inputs.mixed(scalar, thermo)}({index})"
-            )
+            if not model.vanishes(scalar):
+                terms.append(
+                    f"{inputs.core_name(scalar)}"
+                    f"*{inputs.mixed(scalar, thermo)}({index})"
+                )
     return terms
 
 
@@ -267,7 +311,11 @@ def _q_requirements(
                 model.dependent(factors[0])
             )
     return {
-        thermo: [x for x in model.scalars if x in needed[thermo]]
+        thermo: [
+            x
+            for x in model.scalars
+            if x in needed[thermo] and not model.q_vanishes(thermo, x)
+        ]
         for thermo in THERMO_VARIABLES
         if thermo in needed
     }
@@ -289,21 +337,22 @@ def _hessian_lines(inputs: _Inputs, output: str) -> list[str]:
     """Return the triangle loop of ``Ar_ij`` with its mirror."""
     model = inputs.model
     lines = [f"do {_LOOP_COLUMN} = 1, {_EXTENT}"]
-    for scalar in model.scalars:
+    for scalar in model.active_y():
         terms = [
             f"{inputs.core_name(scalar, other)}"
             f"*{inputs.gradient(other)}({_LOOP_COLUMN})"
             for other in model.scalars
+            if not model.vanishes(scalar, other)
         ]
         lines += _wrap(f"y_{scalar}", terms, _INDENT)
     lines.append(f"{_INDENT}do {_LOOP_INDEX} = {_LOOP_COLUMN}, {_EXTENT}")
     terms = [
         f"y_{scalar}*{inputs.gradient(scalar)}({_LOOP_INDEX})"
-        for scalar in model.scalars
+        for scalar in model.active_y()
     ]
     cell = f"{output}({_LOOP_INDEX}, {_LOOP_COLUMN})"
     for scalar in model.scalars:
-        if scalar not in model.linear:
+        if scalar not in model.linear and not model.vanishes(scalar):
             terms.append(
                 f"{inputs.core_name(scalar)}*{inputs.hessian(scalar)}"
                 f"({_LOOP_INDEX}, {_LOOP_COLUMN})"
@@ -340,7 +389,7 @@ def _indented(lines: Iterable[str], levels: int = 1) -> list[str]:
 
 def _guarded(lines: list[str], conditions: Sequence[str]) -> list[str]:
     """Wrap ``lines`` in ``if (present(...) .or. ...)`` if requested."""
-    if not conditions:
+    if not conditions or not lines:
         return lines
     test = " .or. ".join(f"present({name})" for name in conditions)
     return [f"if ({test}) then", *_indented(lines), "end if"]
@@ -409,7 +458,7 @@ def _locals(
         for scalar in scalars
     ]
     if (COMPOSITION, COMPOSITION) in requested:
-        names += [f"y_{scalar}" for scalar in model.scalars]
+        names += [f"y_{scalar}" for scalar in model.active_y()]
     lines = [f"real(8) :: {', '.join(names)}"] if names else []
     return lines + [f"integer :: {_LOOP_INDEX}, {_LOOP_COLUMN}"]
 
@@ -426,12 +475,56 @@ def _check_unique(names: Iterable[str]) -> None:
             )
 
 
+def _candidate_factors(scalars: Sequence[str]) -> list[tuple[str, ...]]:
+    """Return the first and second core derivatives, in canonical order."""
+    ordered = [*scalars, *THERMO_VARIABLES]
+    return [
+        factors
+        for order in (1, 2)
+        for factors in combinations_with_replacement(ordered, order)
+    ]
+
+
+def _named_zero_factors(
+    scalars: Sequence[str], names: Iterable[str]
+) -> set[tuple[str, ...]]:
+    """Translate derivative names (``dD2``, ``dBdS``) to factor tuples."""
+    known: dict[str, tuple[str, ...]] = {}
+    for factors in _candidate_factors(scalars):
+        known[_derivative_name(factors)] = factors
+        known[_derivative_name(factors[::-1])] = factors
+    unknown = sorted(set(names) - set(known))
+    if unknown:
+        raise ValueError(f"unknown derivatives in zero: {unknown}")
+    return {known[name] for name in names}
+
+
+def _symbolic_zero_factors(
+    scalars: Sequence[str], core: "DiffPlz"
+) -> set[tuple[str, ...]]:
+    """Return the derivatives of the core that are identically zero."""
+    symbols = {str(variable): variable for variable in core.variables}
+    missing = [x for x in scalars if x not in symbols]
+    if missing:
+        raise ValueError(f"core has no variables {missing}")
+    symbols.update({"T": T, "V": V})
+    zero = set()
+    for factors in _candidate_factors(scalars):
+        value = core.expression
+        for factor in factors:
+            value = sp.diff(value, symbols[factor])
+        if value == 0:
+            zero.add(factors)
+    return zero
+
+
 def _build_model(
     scalars: Sequence[str],
     depends_on: Mapping[str, Iterable[str]],
     linear: Iterable[str],
     core_name: str,
     name: str,
+    zero: frozenset[tuple[str, ...]] = frozenset(),
 ) -> _Model:
     """Validate the declarations and return the model."""
     names = tuple(str(scalar) for scalar in scalars)
@@ -447,7 +540,20 @@ def _build_model(
                 f"{scalar!r} depends on {sorted(thermo)}; "
                 f"only {list(THERMO_VARIABLES)} are supported"
             )
-    return _Model(names, depends, frozenset(linear), core_name, name)
+    return _Model(names, depends, frozenset(linear), core_name, name, zero)
+
+
+def _zero_factors(
+    scalars: Sequence[str],
+    core: "DiffPlz | None",
+    zero: Iterable[str] | None,
+) -> frozenset[tuple[str, ...]]:
+    """Merge the declared and the symbolic zero derivatives of the core."""
+    names = tuple(str(scalar) for scalar in scalars)
+    found = _named_zero_factors(names, zero or ())
+    if core is not None:
+        found |= _symbolic_zero_factors(names, core)
+    return frozenset(found)
 
 
 def _requested_factors(
@@ -509,6 +615,8 @@ def scalar_chain_routine(
     depends_on: Mapping[str, Iterable[str]] | None = None,
     *,
     linear: Iterable[str] = (),
+    core: "DiffPlz | None" = None,
+    zero: Iterable[str] | None = None,
     thermo: Sequence[str] = THERMO_VARIABLES,
     derivatives: object = "all",
     subroutine_name: str | None = None,
@@ -547,6 +655,14 @@ def scalar_chain_routine(
         Scalar -> iterable of ``"T"``/``"V"`` it depends on besides ``n``.
     linear : iterable of str, optional
         Scalars linear in ``n`` (their Hessian input is omitted).
+    core : DiffPlz, optional
+        The scalar core (``DiffPlz(..., variables=[...])``).  Its first and
+        second derivatives that are identically zero (SymPy ``== 0``; the
+        core kernel does not emit them) are dropped: they are not inputs
+        and no generated statement reads them.
+    zero : iterable of str, optional
+        The same, declared by name (``"dD2"``, ``"dBdS"``, ``"dT2"``; the
+        order of the factors is free), merged with those found in ``core``.
     thermo : sequence of str, optional
         Thermodynamic variables the model uses (default ``T`` and ``V``).
     derivatives : str or list of str, optional
@@ -574,7 +690,14 @@ def scalar_chain_routine(
         If the declarations are inconsistent or two names clash ignoring
         case.
     """
-    model = _build_model(scalars, depends_on or {}, linear, core_name, name)
+    model = _build_model(
+        scalars,
+        depends_on or {},
+        linear,
+        core_name,
+        name,
+        _zero_factors(scalars, core, zero),
+    )
     requested = _requested_factors(derivatives, model, thermo)
     text, _ = _assemble(
         model,
@@ -590,6 +713,8 @@ def scalar_chain_core_derivatives(
     depends_on: Mapping[str, Iterable[str]] | None = None,
     *,
     linear: Iterable[str] = (),
+    core: "DiffPlz | None" = None,
+    zero: Iterable[str] | None = None,
     thermo: Sequence[str] = THERMO_VARIABLES,
     derivatives: object = "all",
     core_name: str = "f",
@@ -599,7 +724,10 @@ def scalar_chain_core_derivatives(
 
     Parameters
     ----------
-    scalars, depends_on, linear, thermo, derivatives, core_name, name
+    scalars, depends_on, linear, core, zero, thermo, derivatives, core_name
+        As in :func:`scalar_chain_routine`; the zero derivatives of the
+        core are not returned.
+    name
         As in :func:`scalar_chain_routine`.
 
     Returns
@@ -608,7 +736,14 @@ def scalar_chain_core_derivatives(
         Names for ``to_fortran(core, derivatives=...)`` (``"dB"``,
         ``"dBdD"``, ``"dT"`` ...), in the order of the routine's inputs.
     """
-    model = _build_model(scalars, depends_on or {}, linear, core_name, name)
+    model = _build_model(
+        scalars,
+        depends_on or {},
+        linear,
+        core_name,
+        name,
+        _zero_factors(scalars, core, zero),
+    )
     requested = _requested_factors(derivatives, model, thermo)
     _, inputs = _assemble(model, requested, CodegenOptions(), "unused")
     prefix = f"d{core_name}"

@@ -281,7 +281,8 @@ def assemble_from_scalar_core(core):
     """Apply the chain rule over the composition to the scalar derivatives.
 
     ``core`` maps the names of the scalar kernel outputs (``dfdB`` ...) to
-    their values; the mixing rules are ``B = b.n``, ``D = n.a.n``,
+    their values (a missing derivative is zero); the mixing rules are
+    ``B = b.n``, ``D = n.a.n``,
     ``D1 = c.n`` and ``nT = sum(n)``.
     """
     gradients = {
@@ -297,9 +298,9 @@ def assemble_from_scalar_core(core):
         key = "df" + derivative_name(
             tuple(sorted((first, second_name), key=VARIABLE_NAMES.index))
         )
-        return core[key]
+        return core.get(key, 0.0)
 
-    gradient = sum(core["dfd" + x] * gradients[x] for x in names)
+    gradient = sum(core.get("dfd" + x, 0.0) * gradients[x] for x in names)
     hessian = (
         sum(
             second(x, y) * np.outer(gradients[x], gradients[y])
@@ -309,7 +310,9 @@ def assemble_from_scalar_core(core):
         + core["dfdD"] * hessians["D"]
     )
     mixed = {
-        thermo: sum(core[f"dfd{x}d{thermo}"] * gradients[x] for x in names)
+        thermo: sum(
+            core.get(f"dfd{x}d{thermo}", 0.0) * gradients[x] for x in names
+        )
         for thermo in ("T", "V")
     }
     return gradient, hessian, mixed
@@ -813,10 +816,17 @@ class TestScalarChainDeclarations:
 
 @pytest.mark.skipif(GFORTRAN is None, reason="gfortran is not available")
 @pytest.mark.parametrize("preset", PRESETS)
-def test_cubic_core_with_the_chain_routine(preset, tmp_path):
-    """The generated assembly replaces the NumPy one of the cubic example."""
+@pytest.mark.parametrize("prune", [False, True])
+def test_cubic_core_with_the_chain_routine(preset, prune, tmp_path):
+    """The generated assembly replaces the NumPy one of the cubic example.
+
+    With ``prune`` the zero derivatives of the core are dropped (``core=``)
+    and the result must not change.
+    """
     derivatives = ["dT", "dV", "dn", "dndn", "dndT", "dndV"]
     chain = {"linear": ["B", "D1", "nT"], "derivatives": derivatives}
+    if prune:
+        chain["core"] = scalar_core_diff()
     names = scalar_chain_core_derivatives(["B", "D", "D1", "nT"], {}, **chain)
     point = {
         "B": COVOLUMES @ COMPOSITION,
@@ -863,3 +873,56 @@ def test_cubic_core_with_the_chain_routine(preset, tmp_path):
     assert assembled["dardndT"] == pytest.approx(mixed["T"], rel=1e-11)
     assert assembled["dardndV"] == pytest.approx(mixed["V"], rel=1e-11)
     assert assembled["dardT"] == pytest.approx(core["dfdT"], rel=1e-11)
+
+
+class TestStructuralZeros:
+    """Derivatives of the core that vanish are not inputs nor read."""
+
+    SCALARS = ["B", "D", "D1", "nT"]
+
+    def test_core_derivatives_are_pruned(self):
+        chain = {"linear": ["B", "D1", "nT"], "derivatives": "all"}
+        full = scalar_chain_core_derivatives(self.SCALARS, {}, **chain)
+        pruned = scalar_chain_core_derivatives(
+            self.SCALARS, {}, core=scalar_core_diff(), **chain
+        )
+        assert {"dD2", "dnT2", "dDdnT"} <= set(full)
+        assert not {"dD2", "dnT2", "dDdnT"} & set(pruned)
+        assert set(pruned) < set(full)
+
+    def test_declared_zero_equals_symbolic_zero(self):
+        chain = {"linear": ["B"], "derivatives": ["dndn", "dndT"]}
+        by_name = scalar_chain_routine(
+            self.SCALARS, zero=["dD2", "dDdnT"], **chain
+        )
+        by_core = scalar_chain_routine(
+            self.SCALARS,
+            core=scalar_core_diff(),
+            zero=["dD2", "dDdnT"],
+            **chain,
+        )
+        assert "dfdD2" not in by_name and "dfdDdnT" not in by_name
+        assert "dfdnT2" in by_name and "dfdnT2" not in by_core
+
+    def test_order_of_factors_is_free(self):
+        source = scalar_chain_routine(
+            ["B", "D"], zero=["dDdB"], derivatives=["dndn"]
+        )
+        assert "dfdBdD" not in source and "dfdB2" in source
+
+    def test_unknown_zero_is_rejected(self):
+        with pytest.raises(ValueError, match="unknown derivatives"):
+            scalar_chain_routine(["B"], zero=["dX2"])
+
+    def test_missing_core_variable_is_rejected(self):
+        with pytest.raises(ValueError, match="no variables"):
+            scalar_chain_routine(["B", "Z"], core=scalar_core_diff())
+
+    def test_all_zero_outputs_are_assigned_zero(self):
+        source = scalar_chain_routine(
+            ["B"],
+            zero=["dB", "dB2"],
+            linear=["B"],
+            derivatives=["dn", "dndn"],
+        )
+        assert "dfdB" not in source and "0.0d0" in source
