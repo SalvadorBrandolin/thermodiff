@@ -14,6 +14,7 @@ def compile_model(
     *,
     preset=None,
     options=None,
+    workloads=None,
     **overrides,
 ):
     """Compile the contents of a ``.model`` file into a Fortran module.
@@ -40,6 +41,13 @@ def compile_model(
     options : CodegenOptions, optional
         Explicit options used instead of a preset; passing both raises
         ``ValueError``.
+    workloads : list of (str or list of str), optional
+        Workload mode: one derivative selection per fixed-output kernel,
+        for example ``["dn,dndn", "dT"]``.  The module gets a dispatcher
+        with the signature of the ``optional_derivatives=True`` kernel
+        that selects the kernel of the exact set of present outputs and
+        falls back to the optional kernel otherwise.  See
+        :mod:`thermodiff.codegen.workload`.
     **overrides
         Individual options replacing those of the preset, for example
         ``optional_derivatives=True`` (declare every output as a Fortran
@@ -58,6 +66,7 @@ def compile_model(
         derivatives=derivatives,
         preset=preset,
         options=options,
+        workloads=workloads,
         **overrides,
     )
 
@@ -68,6 +77,7 @@ def compile_model_file(
     *,
     preset=None,
     options=None,
+    workloads=None,
     **overrides,
 ):
     """Compile a ``.model`` file into a Fortran module.
@@ -84,6 +94,13 @@ def compile_model_file(
     options : CodegenOptions, optional
         Explicit options used instead of a preset; passing both raises
         ``ValueError``.
+    workloads : list of (str or list of str), optional
+        Workload mode: one derivative selection per fixed-output kernel,
+        for example ``["dn,dndn", "dT"]``.  The module gets a dispatcher
+        with the signature of the ``optional_derivatives=True`` kernel
+        that selects the kernel of the exact set of present outputs and
+        falls back to the optional kernel otherwise.  See
+        :mod:`thermodiff.codegen.workload`.
     **overrides
         Individual options replacing those of the preset.  See
         :func:`compile_model`.
@@ -101,5 +118,6 @@ def compile_model_file(
         derivatives=derivatives,
         preset=preset,
         options=options,
+        workloads=workloads,
         **overrides,
     )

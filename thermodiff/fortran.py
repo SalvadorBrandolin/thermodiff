@@ -59,5 +59,6 @@ from thermodiff.codegen.symmetry import (  # noqa: F401
     _fold_symmetric_sums,
     _swap,
 )
+from thermodiff.codegen.workload import workload_module
 
-__all__ = ["to_fortran"]
+__all__ = ["to_fortran", "workload_module"]

@@ -26,7 +26,7 @@ from thermodiff.core.kronecker_handling import (
 )
 from thermodiff.derivatives import resolve_derivatives
 from thermodiff.diffplz import DiffPlz
-from thermodiff.fortran import to_fortran
+from thermodiff.fortran import to_fortran, workload_module
 from thermodiff.thermovars import P, R, T, V, i, j, k, l, m, n, nc
 from thermodiff.yaeos_model import kernel_interface, yaeos_model_module
 
@@ -43,6 +43,7 @@ __all__ = [
     "DiffPlz",
     # Fortran code generation:
     "to_fortran",
+    "workload_module",
     # yaeos ArModel/GeModel wrappers of generated kernels:
     "yaeos_model_module",
     "kernel_interface",

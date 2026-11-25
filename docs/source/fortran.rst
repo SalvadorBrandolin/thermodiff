@@ -82,3 +82,47 @@ and ``tau``, make them scalar variables of the placeholder's core and use
 the recipe above: generate the mixture layer with ``variables=[delta,
 tau]`` written as symbols, supply ``alpha`` and its partial derivatives
 with respect to them, and assemble.
+Workload mode: fixed-output kernels and a dispatcher
+----------------------------------------------------
+
+``optional_derivatives=True`` gives one kernel for any output set, but it
+pays a fixed cost on every call and disables the loop passes of the
+``fastest`` preset.  The workload mode keeps that single public procedure
+and makes it cheap.  From the command line::
+
+    thermodiff-model nrtl.model --preset fastest \
+        --workload dn,dndn --workload dT --derivatives dT,dn,dndn
+
+or from Python, ``compile_model(text, workloads=["dn,dndn", "dT"])`` and
+:func:`thermodiff.workload_module` for a ``DiffPlz`` object.  The module
+contains
+
+* a dispatcher ``<model>_derivs`` with the signature of the optional
+  kernel; it builds a bit mask from ``present()`` and selects, with
+  ``select case``, the kernel whose output set is exactly the present
+  set;
+* one fixed-output kernel ``<model>_derivs_w<k>`` per workload, generated
+  with ``optional_derivatives=False`` and the chosen preset (explicit-shape
+  dummies, ``!GCC$ ATTRIBUTES NOINLINE``);
+* the optional kernel ``<model>_derivs_fallback``, used for every other
+  combination of present outputs.  ``--derivatives`` selects its outputs and
+  must cover the workloads.
+
+A workload is matched by the output set of its kernel, including the
+function value when the kernel computes it.  A call with a larger set is not
+served by a covering kernel (that would need scratch arrays for the extra
+outputs); it goes to the fallback.
+
+Pitfalls handled by the generator (measured with gfortran 16): the
+dispatcher's optional array dummies are not ``contiguous`` (an absent
+actual argument could be packed, and crash), while its inputs are; the
+kernels have explicit-shape dummies so that forwarding makes no copy;
+and the kernels are not inlined into the dispatcher, which would make them
+lose the contiguity facts.  Dimensions other than ``nc`` (for example
+``ng``) are forwarded from the kernels' own dummy lists; their arrays keep
+assumed shape in the kernels unless the extents are known (the ``.model``
+front end passes them).
+
+.. automodule:: thermodiff.codegen.workload
+   :members: workload_module, workload_procedures
+   :show-inheritance:

@@ -146,6 +146,16 @@ by the tests.
   `malloc`/`free` per call).  Neither option is a pass; the default
   output is unchanged.
 
+`workload.py`
+: The workload mode (issue #11), built on top of `to_fortran` without
+  touching the pipeline: one `to_fortran` call per output set
+  (`optional_derivatives=False`) plus one with `optional_derivatives=True`
+  (the fallback).  `parse_kernel` reads the dummy list and declarations of
+  each generated kernel, `specialise_kernel` rewrites a fixed-output kernel
+  (explicit-shape dummies, `NOINLINE`) and `build_dispatcher` emits the `present()` mask and the
+  `select case`.  The dummy lists come from the generated text, so extra
+  dimension arguments are forwarded without special cases.
+
 `pipeline.py`
 : The orchestration.  It defines `_EmitContext` (immutable inputs),
   `_EmitState` (mutable state of one emission), `Pass`, the `_PASSES`

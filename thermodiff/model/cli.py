@@ -43,6 +43,19 @@ def _build_parser():
         ),
     )
     parser.add_argument(
+        "--workload",
+        action="append",
+        help=(
+            "workload mode: emit a fixed-output kernel for this derivative "
+            "set, for example --workload dn,dndn --workload dT (repeat the "
+            "flag once per set).  The module gets a dispatcher with the "
+            "signature of the optional-derivatives kernel that picks the "
+            "kernel of the exact set of present outputs and falls back to "
+            "the optional kernel otherwise; --derivatives selects the "
+            "outputs of that signature."
+        ),
+    )
+    parser.add_argument(
         "--preset",
         choices=[preset.value for preset in Preset],
         default=Preset.STANDARD.value,
@@ -215,6 +228,7 @@ def main(argv=None):
             ir,
             derivatives=derivatives,
             preset=args.preset,
+            workloads=args.workload,
             optional_derivatives=args.optional_derivatives,
             array_cse=args.array_cse,
             share=args.share,
