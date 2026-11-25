@@ -554,6 +554,8 @@ class _EmitState:
         Symmetric parameters (grows with the pair functions).
     scalar_chain_defs : sequence
         Scalar-chain definitions (empty without ``scalar_chain``).
+    scalar_chain_active : bool
+        Whether the structure carries scalar-chain nodes or definitions.
     sc_temp_names : set of str
         Names of the scalar-chain temporaries.
     outputs : list of tuple
@@ -615,6 +617,7 @@ class _EmitState:
     module_symbols: set[str]
     symmetric_params: tuple[str, ...]
     scalar_chain_defs: Sequence[ScalarDef] = ()
+    scalar_chain_active: bool = False
     sc_temp_names: set[str] = dataclasses.field(default_factory=set)
     outputs: list[Output] = dataclasses.field(default_factory=list)
     share_sums: bool = False
@@ -742,6 +745,11 @@ def _new_state(
         module_symbols=set(ctx.module_symbols),
         symmetric_params=ctx.symmetric_params,
         scalar_chain_defs=(structured or {}).get("_scalar_defs", ()),
+        # an outer function that is a node itself has nodes but no scalars
+        scalar_chain_active=bool(
+            (structured or {}).get("_scalar_defs")
+            or (structured or {}).get("_scalar_nodes")
+        ),
     )
 
 
@@ -827,7 +835,7 @@ def _resolve_outputs(ctx: _EmitContext, state: _EmitState) -> None:
             )
         )
     state.outputs = outputs
-    if state.scalar_chain_defs:
+    if state.scalar_chain_active:
         _scalar_chain_outputs(state)
 
 
@@ -1212,7 +1220,7 @@ def _array_cse(ctx: _EmitContext, state: _EmitState) -> None:
         # with scalar_chain, only the plain outputs count (as without it)
         counted=(
             [entry[0] == _SCALAR_PLAIN for entry in state.prepared]
-            if state.scalar_chain_defs
+            if state.scalar_chain_active
             else None
         ),
     )
@@ -1485,7 +1493,7 @@ def _alias_scalar_chain(ctx: _EmitContext, state: _EmitState) -> None:
         Writes ``scalar_chain_definitions``; prunes ``prepared``,
         ``residuals``, the pools, ``arrays`` and ``namer.created``.
     """
-    if not state.scalar_chain_defs:
+    if not state.scalar_chain_active:
         return
     keep = [
         k
