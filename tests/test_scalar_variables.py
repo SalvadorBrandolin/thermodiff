@@ -368,6 +368,14 @@ class TestVocabulary:
         with pytest.raises(ValueError, match="thermodynamic variable"):
             DiffPlz(T, variables=[sp.Symbol(bad)])
 
+    def test_case_clash_message_explains_and_suggests(self):
+        with pytest.raises(ValueError) as caught:
+            DiffPlz(T, variables=[sp.Symbol("N")])
+        message = str(caught.value)
+        assert "'N' clashes with the thermodynamic variable 'n'" in message
+        assert "case-insensitive" in message
+        assert "choose another name" in message
+
     def test_variables_must_be_plain_symbols(self):
         with pytest.raises(ValueError, match="plain symbols"):
             DiffPlz(T, variables=[n[k]])

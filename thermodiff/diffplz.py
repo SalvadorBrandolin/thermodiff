@@ -107,6 +107,10 @@ def _rename_reserved_indices(
 _THERMO_SYMBOLS = {"T": T, "V": V, "P": P}
 
 
+#: Canonical spelling of each reserved name, by its lower-case form.
+_RESERVED_CANONICAL = {"t": "T", "v": "V", "p": "P", "n": "n"}
+
+
 def _check_variables(variables: Iterable[sp.Symbol] | None) -> list[sp.Symbol]:
     """Validate the extra scalar differentiation variables.
 
@@ -135,9 +139,12 @@ def _check_variables(variables: Iterable[sp.Symbol] | None) -> list[sp.Symbol]:
                 f"variables must be plain symbols, got {variable!r}"
             )
         if name.lower() in RESERVED_VARIABLE_NAMES:
+            reserved = _RESERVED_CANONICAL[name.lower()]
             raise ValueError(
-                f"{name!r} is a thermodynamic variable (T, V, P, n); "
-                "choose another name for the scalar variable"
+                f"variable {name!r} clashes with the thermodynamic variable "
+                f"{reserved!r} (T, V, P, n) because Fortran is "
+                f"case-insensitive; choose another name, for example "
+                f"{name + 'x'!r}"
             )
         if variable in checked:
             raise ValueError(f"variable {name!r} is declared twice")
