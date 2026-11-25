@@ -82,6 +82,17 @@ by the tests.
 : The typed definition records (`TempDef` and its four subclasses), see
   Definition records.
 
+`extents.py`
+: Extra dimensions.  A summation over a dimension symbol other than `nc`
+  (`sum_m[1:ng]`, `sum_custom(expr, m, 1, ng)`) binds an index that
+  `annotate_index_ranges` rebuilds as `Idx(label, (1, ng))` at the start of
+  the pipeline, so the range travels with the index.  `index_extent` gives
+  the bound of a loop or declaration; passes that create indices keep the
+  range (`slot_mapping`, `ranged_slots`), and the loop passes that assume
+  `nc` skip the definitions over an extra dimension.  `dimension_symbols`
+  finds the integer arguments of the kernel.  One index label cannot be
+  summed over two different ranges.
+
 `options.py`
 : `CodegenOptions`, the option enums, the presets, validation and
   `resolve_codegen_options`, see Options.
