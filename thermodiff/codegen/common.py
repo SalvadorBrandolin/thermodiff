@@ -9,6 +9,7 @@ import sympy as sp
 from sympy.core.function import DefinedFunction
 from sympy.printing.fortran import fcode
 
+from thermodiff.codegen.options import DEFAULT_REAL_KIND
 from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES
 from thermodiff.thermovars import i, j, nc
 
@@ -303,6 +304,58 @@ class _Namer:
         symbol = sp.Symbol(f"{prefix}{self._count}")
         self.created.append(symbol)
         return symbol
+
+
+_REAL_8 = "real(8)"
+_FLOAT_LITERAL = re.compile(r"(?<![\w.])(\d+\.\d*)d([+-]?\d+)")
+
+
+def _kind_literal(match: re.Match[str]) -> str:
+    """Rewrite a ``<mantissa>d<exp>`` literal with the kind suffix."""
+    mantissa, exponent = match.groups()
+    if int(exponent) == 0:
+        return mantissa
+    return f"{mantissa}e{exponent}"
+
+
+def apply_real_kind(
+    text: str, real_kind: str, kind_module: str | None = None
+) -> str:
+    """Re-express the ``real(8)`` source ``text`` in another real kind.
+
+    Every ``real(8)`` becomes ``real(<real_kind>)`` and every ``d``
+    floating-point literal ``<m>d<e>`` becomes ``<m>e<e>_<real_kind>``
+    (``<m>_<real_kind>`` when ``e`` is 0).  With ``kind_module`` the line
+    ``use <kind_module>, only: <real_kind>`` is added before the first
+    ``implicit none``, which the internal procedures of ``work_array``
+    inherit.
+
+    Parameters
+    ----------
+    text : str
+        Fortran source generated for ``real(8)``.
+    real_kind : str
+        Kind value (``"8"``, ``"16"``) or the name of a kind constant.
+    kind_module : str, optional
+        Module that exports ``real_kind``.
+
+    Returns
+    -------
+    str
+        The converted source; ``text`` itself for the default kind.
+    """
+    if real_kind == DEFAULT_REAL_KIND:
+        return text
+    text = text.replace(_REAL_8, f"real({real_kind})")
+    text = _FLOAT_LITERAL.sub(
+        lambda match: f"{_kind_literal(match)}_{real_kind}", text
+    )
+    if kind_module is None:
+        return text
+    use_line = f"{_INDENT}use {kind_module}, only: {real_kind}"
+    marker = f"{_INDENT}implicit none"
+    head, found, tail = text.partition(marker)
+    return head + use_line + "\n" + found + tail if found else text
 
 
 def _print_expr(expr: sp.Expr) -> str:

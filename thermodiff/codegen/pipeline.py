@@ -30,6 +30,7 @@ from thermodiff.codegen.common import (
     _order_free,
     _referenced_temp_names,
     _rename_names,
+    apply_real_kind,
     _sanitize,
     _temp_name,
 )
@@ -2189,7 +2190,9 @@ def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
         lines.append(f"end subroutine {sub_name}")
     lines.append("")
 
-    state.text = "\n".join(lines)
+    state.text = apply_real_kind(
+        "\n".join(lines), state.opts.real_kind, state.opts.kind_module
+    )
 
 
 _PASSES: tuple[Pass, ...] = (
@@ -2339,6 +2342,8 @@ def _emit_code(
     canonical_placeholders: bool = True,
     work_array: bool = False,
     max_nc: int | None = None,
+    real_kind: str = "8",
+    kind_module: str | None = None,
 ) -> str:
     """Emit the subroutine from a precomputed chain-rule structure.
 
@@ -2711,6 +2716,17 @@ def to_fortran(
         rank 2, ``<= 20`` for rank 3) is made static by gfortran (not thread
         safe), so a ``UserWarning`` is emitted.  Same arithmetic.  ``None``
         (the default) keeps ``nc``-sized temporaries.
+    real_kind : str, optional
+        Kind of every real: ``"8"`` (the default) emits ``real(8)`` and
+        ``d`` literals, as always.  Any other integer (``"16"``) or the
+        name of a kind constant (``"pr"``) emits ``real(<kind>)`` for the
+        dummies, temporaries, work arrays and results, and literals as
+        ``1.0_<kind>`` (``1.5e-10_<kind>``).  The arithmetic is the same.
+    kind_module : str, optional
+        Module that exports the kind constant ``real_kind``: the
+        subroutine gets ``use <kind_module>, only: <real_kind>`` (so
+        ``real_kind="pr", kind_module="yaeos__constants"``).  Ignored for
+        an integer ``real_kind``.
 
     Returns
     -------

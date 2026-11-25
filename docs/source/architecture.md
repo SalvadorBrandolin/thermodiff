@@ -193,6 +193,17 @@ derivative selection, names, `integer_args`, `module_symbols`,
   `max_nc <= 90` for a rank-2 `real(8)` array) becomes static and warns.
   `max_nc` disables `work_array`.
 
+* Real kind (issue #9).  `real_kind="8"` (the default) is the historical
+  `real(8)` and `d` literals.  Any other integer or kind name (`"pr"`)
+  turns every `real(8)` into `real(<kind>)` and every `1.5d-10` into
+  `1.5e-10_<kind>`; `kind_module="yaeos__constants"` also adds
+  `use yaeos__constants, only: pr` to the subroutine (an integer kind needs
+  no module, so `validate()` drops `kind_module` then).  The conversion is
+  one text pass at the end of `_assemble_text`
+  (`common.apply_real_kind`), so the passes and the default output are
+  untouched.  CLI: `--real-kind`, `--kind-module`, `--work-array`,
+  `--max-nc`.
+
 Presets are the `Preset` enum, with the settings in `PRESET_SETTINGS`:
 
 | Preset | Meaning |

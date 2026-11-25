@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import re
 import sys
 import types
 import warnings
@@ -139,6 +140,37 @@ def _coerce_max_nc(value: Any) -> int | None:
     return int(value)
 
 
+_KIND_PATTERN = re.compile(r"\d+|[A-Za-z]\w*")
+_MODULE_PATTERN = re.compile(r"[A-Za-z]\w*")
+DEFAULT_REAL_KIND = "8"
+
+
+def _coerce_real_kind(value: Any) -> str:
+    """Map ``real_kind`` to a kind string: digits or a Fortran name.
+
+    Raises
+    ------
+    ValueError
+        If ``value`` is neither an integer kind nor an identifier.
+    """
+    text = str(value).strip()
+    if not _KIND_PATTERN.fullmatch(text):
+        raise ValueError(
+            f"real_kind must be an integer or an identifier, got {value!r}"
+        )
+    return text
+
+
+def _coerce_kind_module(value: Any) -> str | None:
+    """Map ``kind_module`` to ``None`` or a module name (identifier)."""
+    if value is None or value == "":
+        return None
+    text = str(value).strip()
+    if not _MODULE_PATTERN.fullmatch(text):
+        raise ValueError(f"kind_module must be an identifier, got {value!r}")
+    return text
+
+
 def _coerce_optional_bool(value: Any) -> bool | None:
     """Keep ``None`` (inherit ``share``), otherwise ``bool(value)``."""
     return None if value is None else bool(value)
@@ -159,6 +191,8 @@ _COERCERS: Mapping[str, Callable[[Any], Any]] = MappingProxyType(
         ),
         "split_acc": _coerce_split_acc,
         "max_nc": _coerce_max_nc,
+        "real_kind": _coerce_real_kind,
+        "kind_module": _coerce_kind_module,
     }
 )
 
@@ -241,6 +275,8 @@ class CodegenOptions:
     canonical_placeholders: bool = True
     work_array: bool = False
     max_nc: int | None = None
+    real_kind: str = DEFAULT_REAL_KIND
+    kind_module: str | None = None
 
     def __post_init__(self) -> None:
         """Coerce every field to its canonical type."""
@@ -439,6 +475,8 @@ _RULES: tuple[_Rule, ...] = (
     _Rule(lambda o: not o.fuse_outer, ("fuse_libm_guard",)),
     # fixed-size temporaries need no allocation, a work array is moot
     _Rule(lambda o: o.max_nc is not None, ("work_array",)),
+    # a numeric kind needs no module
+    _Rule(lambda o: o.real_kind.isdigit(), ("kind_module",)),
 )
 
 # Of the ``scalar_chain`` values, only these are coerced to off today; ``ON``

@@ -145,6 +145,42 @@ def _build_parser():
         default=None,
         help="algorithm of the scalar common sub-expression pass.",
     )
+    parser.add_argument(
+        "--work-array",
+        action="store_const",
+        const=True,
+        default=None,
+        help=(
+            "store the array temporaries in one work array (one allocation "
+            "per call instead of one per temporary)."
+        ),
+    )
+    parser.add_argument(
+        "--max-nc",
+        type=int,
+        default=None,
+        help=(
+            "give the array temporaries the compile-time extent MAX_NC "
+            "(stack storage); the kernel stops with 'error stop' when nc "
+            "exceeds it, so callers with larger nc need another kernel."
+        ),
+    )
+    parser.add_argument(
+        "--real-kind",
+        default=None,
+        help=(
+            "kind of every real: an integer (default 8) or the name of a "
+            "kind constant such as 'pr' (literals become 1.0_pr)."
+        ),
+    )
+    parser.add_argument(
+        "--kind-module",
+        default=None,
+        help=(
+            "module that exports the --real-kind constant; adds "
+            "'use <module>, only: <kind>' to the subroutine."
+        ),
+    )
     return parser
 
 
@@ -189,6 +225,10 @@ def main(argv=None):
             cse_backend=args.cse_backend,
             sum_alpha=args.sum_alpha,
             hoist_invariants=args.hoist_invariants,
+            work_array=args.work_array,
+            max_nc=args.max_nc,
+            real_kind=args.real_kind,
+            kind_module=args.kind_module,
         )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)
