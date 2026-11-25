@@ -1384,6 +1384,32 @@ def _reserved_names(ctx: _EmitContext, state: _EmitState) -> None:
     state.reserved = reserved
 
 
+def _factor_free_indices(exprs: list[sp.Expr]) -> list[sp.Expr]:
+    """Move the factors of the free indices out of the reductions.
+
+    The chain rule abstracts ``qs(l)*tau(l, k)`` as one pair array, so
+    once :func:`_fuse_temps` inlines it, the derivative reductions read
+    ``sum_k qs(i)*qs(j)*w(k)*tau(i, k)*tau(j, k)``.  This puts the
+    factors that do not depend on the bound index back in front of the sum
+    (:func:`thermodiff.chain.factor_sums`).
+
+    Parameters
+    ----------
+    exprs : list of sympy expression
+        The output expressions.
+
+    Returns
+    -------
+    list of sympy expression
+        The factored expressions, in the same order.
+    """
+    from thermodiff.chain import factor_sums
+
+    return [
+        factor_sums(expr) for expr in exprs  # type: ignore[no-untyped-call]
+    ]
+
+
 def _fuse_temps(ctx: _EmitContext, state: _EmitState) -> None:
     """Fuse the temporaries that are read once (S16).
 
@@ -1410,6 +1436,8 @@ def _fuse_temps(ctx: _EmitContext, state: _EmitState) -> None:
     state.array_defs = [d for d in pool if d not in state.component_array_defs]
     for name in fused:
         state.arrays.pop(name, None)
+    if opts.chain_factor_sums:
+        state.all_exprs = _factor_free_indices(state.all_exprs)
 
 
 def _hoist_array_temps(ctx: _EmitContext, state: _EmitState) -> None:
@@ -2471,6 +2499,7 @@ def _emit_code(
     col_major: bool = False,
     pair_cse: bool = False,
     pair_rates: bool = False,
+    chain_factor_sums: bool = False,
     sum_transpose: bool = False,
     sep_sums: SepSumsMode | bool | str = False,
     sym_rank3: bool = False,
@@ -2702,6 +2731,13 @@ def to_fortran(
         (``tau*exp(-c tau)`` as ``tau*M``), and write the temperature
         derivatives of pair functions with a cheap pair-dependent
         logarithmic rate in place (``M' = M*r_ab``).  Off by default.
+    chain_factor_sums : bool, optional
+        With ``chain_rule`` and ``fuse_temps``: move the factors that
+        depend only on the free indices out of the reductions of the
+        structured derivatives (``sum_k qs(i)*qs(j)*w(k)*tau(i,k)*tau(j,k)``
+        becomes ``qs(i)*qs(j)*sum_k w(k)*tau(i,k)*tau(j,k)``), as the plain
+        path does.  Fewer multiplications in the inner loops; last-bit rounding
+        differences.  Off by default.
     sum_transpose : bool, optional
         With ``sum_free_alpha``: reuse a rank-2 summation that is the
         transpose of another one.  Off by default.
