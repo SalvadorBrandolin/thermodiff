@@ -16,6 +16,7 @@ from thermodiff.codegen.common import (
     _order_free,
     _temp_name,
 )
+from thermodiff.codegen.extents import is_component_index
 from thermodiff.codegen.ir import (
     ComponentFusedMap,
     FusedNest,
@@ -566,6 +567,8 @@ def _prefers_column_order(definition: TempDef) -> bool:
     body = definition.body
     if definition.mirror or body.has(sp.Piecewise):
         return False
+    if not all(is_component_index(index) for index in free):
+        return False
     if any(isinstance(x, _LoopStart) for x in body.atoms(sp.Symbol)):
         return False
     if len(free) == 1 and len(limits) == 1:
@@ -615,6 +618,8 @@ def _prefers_column_sum(
     limits = definition.limits
     if len(free) != 2 or len(limits) != 1 or definition.mirror:
         return False
+    if not all(is_component_index(index) for index in free):
+        return False
     b, low, high = limits[0]
     if low != 1 or str(high) != "nc":
         return False
@@ -639,6 +644,8 @@ def _prefers_column_sum(
 def _is_simple_nest(definition: TempDef) -> bool:
     """Whether a vector sum has the plain loop structure of a fusable nest."""
     if len(definition.free) != 1 or len(definition.limits) != 1:
+        return False
+    if not is_component_index(definition.free[0]):
         return False
     if definition.mirror or definition.mirror_sum or definition.symv:
         return False
@@ -807,6 +814,8 @@ def _permute_symmetric_subscripts(
 def _is_fusable_map(definition: TempDef) -> bool:
     """Whether ``definition`` is a plain per-component map over ``1..nc``."""
     if len(definition.free) != 1 or definition.limits:
+        return False
+    if not is_component_index(definition.free[0]):
         return False
     if (
         definition.mirror
@@ -1009,7 +1018,8 @@ def _is_plain_outer_candidate(definition: TempDef) -> bool:
     """
     body = definition.body
     return (
-        not body.has(sp.Piecewise)
+        all(is_component_index(index) for index in definition.free)
+        and not body.has(sp.Piecewise)
         and not any(
             isinstance(symbol, _LoopStart) for symbol in body.atoms(sp.Symbol)
         )
