@@ -926,3 +926,80 @@ class TestStructuralZeros:
             derivatives=["dn", "dndn"],
         )
         assert "dfdB" not in source and "0.0d0" in source
+
+
+@pytest.mark.skipif(GFORTRAN is None, reason="gfortran is not available")
+@pytest.mark.parametrize("preset", PRESETS)
+def test_total_moles_scalar_has_no_inputs(preset, tmp_path):
+    """``nT`` declared as ``total_moles`` gives the same assembly."""
+    derivatives = ["dT", "dV", "dn", "dndn", "dndT", "dndV"]
+    chain = {
+        "linear": ["B", "D1"],
+        "total_moles": ["nT"],
+        "derivatives": derivatives,
+        "core": scalar_core_diff(),
+    }
+    names = scalar_chain_core_derivatives(["B", "D", "D1", "nT"], {}, **chain)
+    point = {
+        "B": COVOLUMES @ COMPOSITION,
+        "D": COMPOSITION @ ATTRACTIONS @ COMPOSITION,
+        "D1": VOLUME_PARAMETERS @ COMPOSITION,
+        "nT": COMPOSITION.sum(),
+        "V": POINT["V"],
+        "T": POINT["T"],
+    }
+    core = run_kernel(
+        generate(scalar_core_diff(), names, preset),
+        "f_derivs",
+        point,
+        {"f": ()} | {"df" + name: () for name in names},
+        tmp_path / "core",
+    )
+    source = scalar_chain_routine(
+        ["B", "D", "D1", "nT"], {}, subroutine_name="ar_chain", **chain
+    )
+    dummies = chain_dummies(source)
+    assert not any(name.startswith("dnTd") for name in dummies)
+    inputs = {
+        "nc": NC,
+        "dBdn": COVOLUMES,
+        "dDdn": 2 * ATTRACTIONS @ COMPOSITION,
+        "dDdndn": 2 * ATTRACTIONS,
+        "dD1dn": VOLUME_PARAMETERS,
+    }
+    outputs = {
+        name: shape
+        for name, shape in CHAIN_OUTPUT_SHAPES.items()
+        if name in dummies
+    }
+    wanted = {
+        name: value
+        for name, value in (core | inputs).items()
+        if name in dummies
+    }
+    assembled = run_kernel(
+        source, "ar_chain", wanted, outputs, tmp_path / "chain", CHECKED_FLAGS
+    )
+    gradient, hessian, mixed = assemble_from_scalar_core(core)
+    assert assembled["dardn"] == pytest.approx(gradient, rel=1e-11)
+    assert assembled["dardndn"] == pytest.approx(hessian, rel=1e-11)
+    assert assembled["dardndT"] == pytest.approx(mixed["T"], rel=1e-11)
+    assert assembled["dardndV"] == pytest.approx(mixed["V"], rel=1e-11)
+
+
+class TestTotalMolesDeclaration:
+    """Validation of ``total_moles``."""
+
+    def test_unknown_scalar_is_rejected(self):
+        with pytest.raises(ValueError, match="unknown scalars"):
+            scalar_chain_routine(["B"], total_moles=["S"])
+
+    def test_thermo_dependence_is_rejected(self):
+        with pytest.raises(ValueError, match="cannot depend"):
+            scalar_chain_routine(["B", "S"], {"S": ["T"]}, total_moles=["S"])
+
+    def test_gradient_is_not_an_input(self):
+        source = scalar_chain_routine(
+            ["B", "S"], total_moles=["S"], derivatives=["dn", "dndn"]
+        )
+        assert "dSdn" not in source and "dBdn" in source

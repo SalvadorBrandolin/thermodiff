@@ -100,6 +100,8 @@ class _Model:
         Scalar -> thermodynamic variables (``T``, ``V``) it depends on.
     linear : frozenset of str
         Scalars whose Hessian with respect to ``n`` is zero.
+    total : frozenset of str
+        Scalars equal to the total moles: gradient 1, no other dependence.
     core, out : str
         Prefixes (``f`` and ``ar``) of the core and total derivatives.
     zero : frozenset of tuple of str
@@ -113,6 +115,7 @@ class _Model:
     core: str
     out: str
     zero: frozenset[tuple[str, ...]] = frozenset()
+    total: frozenset[str] = frozenset()
 
     def dependent(self, thermo: str) -> list[str]:
         """Return the scalars that depend on the variable ``thermo``."""
@@ -281,7 +284,7 @@ def _vector_terms(
             weight = _q_name(thermo, scalar)
         else:
             continue
-        terms.append(f"{weight}*{inputs.gradient(scalar)}({index})")
+        terms.append(_gradient_term(inputs, weight, scalar, index))
     if thermo is not None:
         for scalar in model.dependent(thermo):
             if not model.vanishes(scalar):
@@ -290,6 +293,15 @@ def _vector_terms(
                     f"*{inputs.mixed(scalar, thermo)}({index})"
                 )
     return terms
+
+
+def _gradient_term(
+    inputs: _Inputs, weight: str, scalar: str, index: str
+) -> str:
+    """Return ``weight * dx/dn(index)``; the gradient of ``nT`` is one."""
+    if scalar in inputs.model.total:
+        return weight
+    return f"{weight}*{inputs.gradient(scalar)}({index})"
 
 
 def _is_thermo(factors: Sequence[str]) -> bool:
@@ -339,15 +351,19 @@ def _hessian_lines(inputs: _Inputs, output: str) -> list[str]:
     lines = [f"do {_LOOP_COLUMN} = 1, {_EXTENT}"]
     for scalar in model.active_y():
         terms = [
-            f"{inputs.core_name(scalar, other)}"
-            f"*{inputs.gradient(other)}({_LOOP_COLUMN})"
+            _gradient_term(
+                inputs,
+                inputs.core_name(scalar, other),
+                other,
+                _LOOP_COLUMN,
+            )
             for other in model.scalars
             if not model.vanishes(scalar, other)
         ]
         lines += _wrap(f"y_{scalar}", terms, _INDENT)
     lines.append(f"{_INDENT}do {_LOOP_INDEX} = {_LOOP_COLUMN}, {_EXTENT}")
     terms = [
-        f"y_{scalar}*{inputs.gradient(scalar)}({_LOOP_INDEX})"
+        _gradient_term(inputs, f"y_{scalar}", scalar, _LOOP_INDEX)
         for scalar in model.active_y()
     ]
     cell = f"{output}({_LOOP_INDEX}, {_LOOP_COLUMN})"
@@ -525,12 +541,14 @@ def _build_model(
     core_name: str,
     name: str,
     zero: frozenset[tuple[str, ...]] = frozenset(),
+    total: Iterable[str] = (),
 ) -> _Model:
     """Validate the declarations and return the model."""
     names = tuple(str(scalar) for scalar in scalars)
     if not names or len(set(names)) != len(names):
         raise ValueError("scalars must be a non-empty list of unique names")
-    unknown = set(depends_on) | set(linear)
+    total = frozenset(total)
+    unknown = set(depends_on) | set(linear) | total
     if unknown - set(names):
         raise ValueError(f"unknown scalars: {sorted(unknown - set(names))}")
     depends = {x: frozenset(depends_on.get(x, ())) for x in names}
@@ -540,7 +558,11 @@ def _build_model(
                 f"{scalar!r} depends on {sorted(thermo)}; "
                 f"only {list(THERMO_VARIABLES)} are supported"
             )
-    return _Model(names, depends, frozenset(linear), core_name, name, zero)
+    clash = [x for x in names if x in total and depends[x]]
+    if clash:
+        raise ValueError(f"total_moles scalars {clash} cannot depend on T, V")
+    linear = frozenset(linear) | total
+    return _Model(names, depends, linear, core_name, name, zero, total)
 
 
 def _zero_factors(
@@ -615,6 +637,7 @@ def scalar_chain_routine(
     depends_on: Mapping[str, Iterable[str]] | None = None,
     *,
     linear: Iterable[str] = (),
+    total_moles: Iterable[str] = (),
     core: "DiffPlz | None" = None,
     zero: Iterable[str] | None = None,
     thermo: Sequence[str] = THERMO_VARIABLES,
@@ -655,6 +678,15 @@ def scalar_chain_routine(
         Scalar -> iterable of ``"T"``/``"V"`` it depends on besides ``n``.
     linear : iterable of str, optional
         Scalars linear in ``n`` (their Hessian input is omitted).
+    total_moles : iterable of str, optional
+        Scalars equal to the total number of moles, ``nT = sum(n)``: their
+        gradient is one and their Hessian zero, so they have no input at
+        all and the sums over the scalars add the core derivative
+        directly (``F_S`` instead of ``F_S * dSdn(i)``).  They must not
+        depend on ``T`` or ``V`` and imply ``linear``.  The name is
+        ``total_moles`` and not a general ``unit_gradient`` because a
+        scalar with unit gradient and no ``T``/``V`` dependence is ``nT``
+        up to a constant, which no derivative sees.
     core : DiffPlz, optional
         The scalar core (``DiffPlz(..., variables=[...])``).  Its first and
         second derivatives that are identically zero (SymPy ``== 0``; the
@@ -697,6 +729,7 @@ def scalar_chain_routine(
         core_name,
         name,
         _zero_factors(scalars, core, zero),
+        total_moles,
     )
     requested = _requested_factors(derivatives, model, thermo)
     text, _ = _assemble(
@@ -713,6 +746,7 @@ def scalar_chain_core_derivatives(
     depends_on: Mapping[str, Iterable[str]] | None = None,
     *,
     linear: Iterable[str] = (),
+    total_moles: Iterable[str] = (),
     core: "DiffPlz | None" = None,
     zero: Iterable[str] | None = None,
     thermo: Sequence[str] = THERMO_VARIABLES,
@@ -724,7 +758,8 @@ def scalar_chain_core_derivatives(
 
     Parameters
     ----------
-    scalars, depends_on, linear, core, zero, thermo, derivatives, core_name
+    scalars, depends_on, linear, total_moles, core, zero, thermo, derivatives
+    core_name
         As in :func:`scalar_chain_routine`; the zero derivatives of the
         core are not returned.
     name
@@ -743,6 +778,7 @@ def scalar_chain_core_derivatives(
         core_name,
         name,
         _zero_factors(scalars, core, zero),
+        total_moles,
     )
     requested = _requested_factors(derivatives, model, thermo)
     _, inputs = _assemble(model, requested, CodegenOptions(), "unused")
