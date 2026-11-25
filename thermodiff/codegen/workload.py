@@ -32,7 +32,12 @@ Performance pitfalls handled here (measured by the ``yaeos`` benchmarks):
   it and crash; the *inputs* keep ``contiguous`` (they are never absent);
 * the fixed-output kernels get explicit-shape dummies (``n(nc)``,
   ``dBij(nc, nc)``), so forwarding the dispatcher's arrays makes no copy
-  and the descriptor handling disappears (about 7 % of a small kernel);
+  and the descriptor handling disappears (about 7 % of a small kernel).
+  Explicit shape re-strides an actual array whose leading extents differ
+  from the declared ones, so the dispatcher calls such a kernel only when
+  ``size(x, d)`` equals the declared extent of every dimension but the last
+  of every array of rank two or more (inputs and outputs); otherwise it
+  calls the assumed-shape fallback (:func:`shape_guard`);
 * ``!GCC$ ATTRIBUTES NOINLINE`` on the fixed-output kernels: at ``-O3``
   gfortran inlines them into the dispatcher and the code loses the
   contiguity facts (up to 18x slower).
@@ -59,6 +64,8 @@ NC_NAME = "nc"
 NC_DUMMY_NAME = "nc_in"
 #: Largest number of outputs: the mask is a default (32-bit) integer.
 MAX_MASK_OUTPUTS = 30
+#: Dimension specification of an assumed-shape dummy.
+ASSUMED_EXTENT = ":"
 #: Local variable of the dispatcher that holds the bit mask.
 MASK_NAME = "present_mask_"
 #: Column at which wrapped calls and headers continue.
@@ -442,6 +449,50 @@ class _ExplicitShape:
         return [NC_NAME] * dummy.rank
 
 
+def _lower_extents(
+    extents: Mapping[str, Sequence[str]],
+) -> dict[str, tuple[str, ...]]:
+    """Return ``extents`` with lower-case names and tuple values."""
+    return {key.lower(): tuple(value) for key, value in extents.items()}
+
+
+def shape_guard(
+    iface: KernelInterface, extents: Mapping[str, Sequence[str]]
+) -> list[str]:
+    """Return the conditions under which explicit-shape dummies are safe.
+
+    An explicit-shape dummy ``a(nc, nc)`` re-strides the actual argument
+    by sequence association: it reads the right elements only when the
+    leading extents of the actual array are exactly the declared ones.
+    (Rank-1 dummies, and the last extent of any array, cannot go wrong:
+    only the first elements are used.)  The dispatcher routes to the
+    assumed-shape fallback unless every condition holds.
+
+    Parameters
+    ----------
+    iface : KernelInterface
+        Parsed fixed-output kernel.
+    extents : mapping
+        Extents of the input arrays (see :func:`workload_procedures`).
+
+    Returns
+    -------
+    list of str
+        Fortran logical expressions, such as ``size(a, 1) == nc``; empty
+        when no dummy needs a check.
+    """
+    editor = _ExplicitShape(iface, _lower_extents(extents))
+    conditions: dict[str, None] = {}
+    for arg in iface.args:
+        dummy = iface.dummies[arg.lower()]
+        if dummy.rank < 2:
+            continue
+        for position, extent in enumerate(editor(dummy).dims[:-1], start=1):
+            if extent != ASSUMED_EXTENT:
+                conditions[f"size({arg}, {position}) == {extent}"] = None
+    return list(conditions)
+
+
 def specialise_kernel(
     iface: KernelInterface,
     *,
@@ -472,7 +523,7 @@ def specialise_kernel(
     str
         The kernel text.
     """
-    lowered = {key.lower(): tuple(value) for key, value in extents.items()}
+    lowered = _lower_extents(extents)
     fixed = fixed_nc is not None and iface.has_nc
     extra = [NOINLINE_DIRECTIVE.format(name=name)]
     args = list(iface.args)
@@ -496,6 +547,7 @@ class _Specialised:
     iface: KernelInterface
     mask: int
     copies: dict[int, str]
+    guard: list[str]
 
 
 def _call_lines(
@@ -512,15 +564,23 @@ def _call_lines(
     return _wrap_items(f"{indent}call {callee}(", actuals, ")")
 
 
-def _dispatch_branch(
-    kernel: _Specialised, fixed_nc: Sequence[int]
+def _guard_lines(conditions: Sequence[str], indent: str) -> list[str]:
+    """Return the ``if (...) then`` header that tests ``conditions``."""
+    lines = []
+    for position, condition in enumerate(conditions):
+        head = f"{indent}if (" if position == 0 else f"{indent}    "
+        tail = " .and. &" if position < len(conditions) - 1 else ") then"
+        lines.append(head + condition + tail)
+    return lines
+
+
+def _kernel_calls(
+    kernel: _Specialised, fixed_nc: Sequence[int], inner: str
 ) -> list[str]:
-    """Return the ``case`` of the dispatcher that handles ``kernel``."""
-    outputs = ", ".join(kernel.iface.outputs)
-    lines = [f"   case ({kernel.mask})  ! {outputs}"]
-    inner = "      "
+    """Return the calls of ``kernel`` and of its fixed-``nc`` copies."""
     if not (kernel.copies and kernel.iface.has_nc):
-        return lines + _call_lines(kernel.name, kernel.iface, inner)
+        return _call_lines(kernel.name, kernel.iface, inner)
+    lines: list[str] = []
     for position, size in enumerate(fixed_nc):
         keyword = "if" if position == 0 else "else if"
         lines.append(f"{inner}{keyword} ({NC_NAME} == {size}) then")
@@ -529,6 +589,32 @@ def _dispatch_branch(
         )
     lines.append(f"{inner}else")
     lines.extend(_call_lines(kernel.name, kernel.iface, inner + "   "))
+    lines.append(f"{inner}end if")
+    return lines
+
+
+def _dispatch_branch(
+    kernel: _Specialised,
+    fixed_nc: Sequence[int],
+    fallback: KernelInterface,
+    fallback_name: str,
+) -> list[str]:
+    """Return the ``case`` of the dispatcher that handles ``kernel``.
+
+    When the kernel has explicit-shape dummies of rank two or more the
+    branch calls it only if the actual arrays have the declared leading
+    extents (:func:`shape_guard`) and the fallback otherwise.
+    """
+    outputs = ", ".join(kernel.iface.outputs)
+    lines = [f"   case ({kernel.mask})  ! {outputs}"]
+    inner = "      "
+    if not kernel.guard:
+        return lines + _kernel_calls(kernel, fixed_nc, inner)
+    deeper = inner + "   "
+    lines += _guard_lines(kernel.guard, inner)
+    lines += _kernel_calls(kernel, fixed_nc, deeper)
+    lines.append(f"{inner}else")
+    lines += _call_lines(fallback_name, fallback, deeper)
     lines.append(f"{inner}end if")
     return lines
 
@@ -611,7 +697,9 @@ def build_dispatcher(
     lines = _dispatcher_head(name, fallback)
     lines += ["", f"   select case ({MASK_NAME})"]
     for kernel in kernels:
-        lines.extend(_dispatch_branch(kernel, fixed_nc))
+        lines.extend(
+            _dispatch_branch(kernel, fixed_nc, fallback, fallback_name)
+        )
     lines.append("   case default")
     lines.extend(_call_lines(fallback_name, fallback, "      "))
     lines += ["   end select", f"end subroutine {name}"]
@@ -719,7 +807,8 @@ def _fixed_kernel(
             )
             for size in plan.sizes
         ]
-    return _Specialised(kernel_name, iface, mask, copies), texts
+    guard = shape_guard(iface, plan.extents)
+    return _Specialised(kernel_name, iface, mask, copies, guard), texts
 
 
 def workload_procedures(

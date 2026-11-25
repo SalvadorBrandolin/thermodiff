@@ -153,8 +153,10 @@ by the tests.
   (the fallback).  `parse_kernel` reads the dummy list and declarations of
   each generated kernel, `specialise_kernel` rewrites a fixed-output kernel
   (explicit-shape dummies, `NOINLINE`, optionally `nc` as a named
-  constant) and `build_dispatcher` emits the `present()` mask and the
-  `select case`.  The dummy lists come from the generated text, so extra
+  constant), `shape_guard` lists the extent checks that make explicit shape
+  safe (the dispatcher falls back to the assumed-shape kernel when an actual
+  array is larger than declared) and `build_dispatcher` emits the
+  `present()` mask and the `select case`.  The dummy lists come from the generated text, so extra
   dimension arguments are forwarded without special cases.
 
 `pipeline.py`

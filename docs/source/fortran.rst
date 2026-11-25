@@ -127,7 +127,12 @@ and the kernels are not inlined into the dispatcher, which would make them
 lose the contiguity facts.  Dimensions other than ``nc`` (for example
 ``ng``) are forwarded from the kernels' own dummy lists; their arrays keep
 assumed shape in the kernels unless the extents are known (the ``.model``
-front end passes them).
+front end passes them).  Explicit shape re-strides an actual array whose
+leading extents differ from the declared ones (a ``(3, 3)`` array passed with
+``nc = 2``), so the dispatcher calls a fixed-output kernel only when every
+array of rank two or more, input or output, has exactly the declared extents
+in all dimensions but the last; otherwise it calls the fallback, which is
+always correct.
 
 .. automodule:: thermodiff.codegen.workload
    :members: workload_module, workload_procedures
