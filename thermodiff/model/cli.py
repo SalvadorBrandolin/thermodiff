@@ -15,6 +15,16 @@ from thermodiff.model.parser import read_sections
 __all__ = ["main"]
 
 
+def _parse_sizes(text):
+    """Parse a comma separated list of component counts."""
+    try:
+        return tuple(int(item) for item in text.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"expected integers separated by commas, got {text!r}"
+        ) from error
+
+
 def _build_parser():
     parser = argparse.ArgumentParser(
         prog="thermodiff-model",
@@ -53,6 +63,16 @@ def _build_parser():
             "kernel of the exact set of present outputs and falls back to "
             "the optional kernel otherwise; --derivatives selects the "
             "outputs of that signature."
+        ),
+    )
+    parser.add_argument(
+        "--fixed-nc",
+        type=_parse_sizes,
+        default=None,
+        help=(
+            "with --workload: also emit each kernel for these compile-time "
+            "numbers of components, for example 2,3; the dispatcher "
+            "selects by nc."
         ),
     )
     parser.add_argument(
@@ -229,6 +249,7 @@ def main(argv=None):
             derivatives=derivatives,
             preset=args.preset,
             workloads=args.workload,
+            fixed_nc=args.fixed_nc,
             optional_derivatives=args.optional_derivatives,
             array_cse=args.array_cse,
             share=args.share,

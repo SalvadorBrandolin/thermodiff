@@ -370,3 +370,78 @@ class TestNumeric:
         values = run_driver(generate(preset="fastest"), tmp_path)
         assert values[("D", 3, 0b0100)].shape == (3,)
         assert values[("D", 3, 0)].shape == (0,)
+
+
+NC_MASKS = (0b1101, 0b0011)
+FIXED_SIZES = (2, 3)
+FIXED_TOLERANCE = 1e-14
+
+
+class TestFixedNc:
+    """Copies of the fixed-output kernels with a compile-time nc."""
+
+    def fixed(self, **kwargs):
+        return generate(fixed_nc=FIXED_SIZES, **kwargs)
+
+    def test_structure(self):
+        code = self.fixed(preset="fastest")
+        assert "subroutine nrtl_derivs_w1_nc2(nc_in, T," in code
+        assert "integer, parameter :: nc = 2" in code
+        assert "real(8), intent(in) :: a(nc, nc)" in code
+        assert "else if (nc == 3) then" in code
+        assert "call nrtl_derivs_w1_nc2(nc_in=nc, " in code
+        assert "call nrtl_derivs_w1(nc=nc, " in code
+
+    def test_without_the_option_there_are_no_copies(self):
+        assert "_nc2" not in generate(preset="minimal")
+
+    @pytest.mark.parametrize("sizes", [(2, 2), (0,), (-3,)])
+    def test_invalid_sizes_are_rejected(self, sizes):
+        with pytest.raises(ModelError, match="fixed_nc"):
+            generate(preset="minimal", fixed_nc=sizes)
+
+    def test_sizes_need_workloads(self):
+        with pytest.raises(ModelError, match="needs workloads"):
+            compile_model(MODEL.read_text(), fixed_nc=(2,))
+
+    def test_cli_flag(self, tmp_path):
+        target = tmp_path / "nrtl.f90"
+        status = main(
+            [
+                str(MODEL),
+                "--preset",
+                "minimal",
+                "--workload",
+                "dT",
+                "--fixed-nc",
+                "2,3",
+                "-o",
+                str(target),
+            ]
+        )
+        assert status == 0
+        assert "subroutine nrtl_derivs_w1_nc3(" in target.read_text()
+
+    def test_cli_rejects_non_integer_sizes(self):
+        with pytest.raises(SystemExit):
+            main([str(MODEL), "--workload", "dT", "--fixed-nc", "two"])
+
+    @pytest.mark.skipif(not GFORTRAN, reason="gfortran not available")
+    @pytest.mark.parametrize("config", sorted(TestNumeric.CONFIGS))
+    def test_copies_equal_the_generic_kernels(self, config, tmp_path):
+        code = self.fixed(**TestNumeric.CONFIGS[config])
+        values = run_driver(code, tmp_path)
+        for nc in SIZES:
+            for mask in NC_MASKS:
+                got = values[("D", nc, mask)]
+                want = values[("G", nc, mask)]
+                scale = np.linalg.norm(want)
+                bound = FIXED_TOLERANCE if nc in FIXED_SIZES else 0.0
+                assert np.linalg.norm(got - want) <= bound * scale
+        # Every other set still reaches the optional kernel.
+        for nc in SIZES:
+            got = values[("D", nc, 0b0110)]
+            want = values[("F", nc, 0b0110)]
+            assert np.linalg.norm(got - want) <= TOLERANCE * np.linalg.norm(
+                want
+            )

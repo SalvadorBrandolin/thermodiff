@@ -14,6 +14,11 @@ and makes it cheap:
   goes to the fallback.  Covering a request with a larger kernel would need
   scratch arrays for the extra outputs, which costs more than it saves.
 
+Optionally (``fixed_nc``) every fixed-output kernel is also copied once per
+listed number of components, with ``nc`` turned into a named constant so
+that the compiler unrolls the loops, drops the array descriptors and keeps
+the temporaries on the stack.  The dispatcher selects the copy by ``nc``.
+
 The module is built on top of :func:`~thermodiff.codegen.pipeline.to_fortran`:
 the kernels are generated one by one, parsed for their dummy arguments and
 rewritten textually (names, array dummies, directives).  The dummy lists
@@ -50,6 +55,8 @@ __all__ = ["workload_module", "workload_procedures"]
 
 #: Name of the component-count dummy of the generated kernels.
 NC_NAME = "nc"
+#: Dummy that keeps the ``nc`` slot of a fixed-nc copy.
+NC_DUMMY_NAME = "nc_in"
 #: Largest number of outputs: the mask is a default (32-bit) integer.
 MAX_MASK_OUTPUTS = 30
 #: Local variable of the dispatcher that holds the bit mask.
@@ -400,15 +407,19 @@ class _ExplicitShape:
     Outputs always have extents ``nc``.  Inputs take theirs from
     ``extents``; without an entry they are ``nc`` too, unless the kernel
     has extra integer dimensions (then the shape is unknown and the dummy
-    stays assumed shape, which is correct but slower).
+    stays assumed shape, which is correct but slower).  With
+    ``rename_nc`` the dummy ``nc`` is renamed to ``nc_in``.
     """
 
     iface: KernelInterface
     extents: Mapping[str, tuple[str, ...]]
+    rename_nc: bool = False
 
     def __call__(self, dummy: Dummy) -> Dummy:
         """Return the new declaration of ``dummy``."""
         dummy = _drop_contiguous(dummy)
+        if self.rename_nc and dummy.name == NC_NAME:
+            return dataclasses.replace(dummy, name=NC_DUMMY_NAME)
         if dummy.rank == 0 or not self.iface.has_nc:
             return dummy
         dims = self._dims(dummy)
@@ -436,12 +447,14 @@ def specialise_kernel(
     *,
     name: str,
     extents: Mapping[str, Sequence[str]],
+    fixed_nc: int | None = None,
 ) -> str:
     """Make a fixed-output kernel callable from the dispatcher.
 
     Array dummies become explicit shape, ``contiguous`` is dropped (it is
     illegal on explicit-shape dummies) and the no-inline directive is
-    added.
+    added.  With ``fixed_nc`` the dummy ``nc`` becomes the named constant
+    and the signature keeps a dummy ``nc_in`` in its place.
 
     Parameters
     ----------
@@ -451,6 +464,8 @@ def specialise_kernel(
         Name of the new subroutine.
     extents : mapping
         Extents of the input arrays (see :func:`workload_procedures`).
+    fixed_nc : int, optional
+        Compile-time number of components.
 
     Returns
     -------
@@ -458,12 +473,18 @@ def specialise_kernel(
         The kernel text.
     """
     lowered = {key.lower(): tuple(value) for key, value in extents.items()}
+    fixed = fixed_nc is not None and iface.has_nc
+    extra = [NOINLINE_DIRECTIVE.format(name=name)]
+    args = list(iface.args)
+    if fixed:
+        extra.append(f"integer, parameter :: {NC_NAME} = {fixed_nc}")
+        args = [NC_DUMMY_NAME if arg == NC_NAME else arg for arg in args]
     return render_kernel(
         iface,
         name=name,
-        args=iface.args,
-        edit=_ExplicitShape(iface, lowered),
-        after_implicit=[NOINLINE_DIRECTIVE.format(name=name)],
+        args=args,
+        edit=_ExplicitShape(iface, lowered, rename_nc=fixed),
+        after_implicit=extra,
     )
 
 
@@ -474,25 +495,42 @@ class _Specialised:
     name: str
     iface: KernelInterface
     mask: int
+    copies: dict[int, str]
 
 
 def _call_lines(
     callee: str,
     iface: KernelInterface,
     indent: str,
+    fixed_nc: bool = False,
 ) -> list[str]:
     """Keyword call of ``callee`` forwarding the dispatcher's dummies."""
     actuals = []
     for arg in iface.args:
-        actuals.append(f"{arg}={arg}")
+        keyword = NC_DUMMY_NAME if fixed_nc and arg == NC_NAME else arg
+        actuals.append(f"{keyword}={arg}")
     return _wrap_items(f"{indent}call {callee}(", actuals, ")")
 
 
-def _dispatch_branch(kernel: _Specialised) -> list[str]:
+def _dispatch_branch(
+    kernel: _Specialised, fixed_nc: Sequence[int]
+) -> list[str]:
     """Return the ``case`` of the dispatcher that handles ``kernel``."""
     outputs = ", ".join(kernel.iface.outputs)
     lines = [f"   case ({kernel.mask})  ! {outputs}"]
-    return lines + _call_lines(kernel.name, kernel.iface, "      ")
+    inner = "      "
+    if not (kernel.copies and kernel.iface.has_nc):
+        return lines + _call_lines(kernel.name, kernel.iface, inner)
+    for position, size in enumerate(fixed_nc):
+        keyword = "if" if position == 0 else "else if"
+        lines.append(f"{inner}{keyword} ({NC_NAME} == {size}) then")
+        lines.extend(
+            _call_lines(kernel.copies[size], kernel.iface, inner + "   ", True)
+        )
+    lines.append(f"{inner}else")
+    lines.extend(_call_lines(kernel.name, kernel.iface, inner + "   "))
+    lines.append(f"{inner}end if")
+    return lines
 
 
 def output_bits(fallback: KernelInterface) -> dict[str, int]:
@@ -547,6 +585,7 @@ def build_dispatcher(
     fallback: KernelInterface,
     fallback_name: str,
     kernels: Sequence[_Specialised],
+    fixed_nc: Sequence[int],
 ) -> str:
     """Build the dispatcher subroutine.
 
@@ -561,6 +600,8 @@ def build_dispatcher(
         Name under which the fallback is emitted.
     kernels : sequence
         Fixed-output kernels.
+    fixed_nc : sequence of int
+        Fixed component counts of the copies.
 
     Returns
     -------
@@ -570,11 +611,21 @@ def build_dispatcher(
     lines = _dispatcher_head(name, fallback)
     lines += ["", f"   select case ({MASK_NAME})"]
     for kernel in kernels:
-        lines.extend(_dispatch_branch(kernel))
+        lines.extend(_dispatch_branch(kernel, fixed_nc))
     lines.append("   case default")
     lines.extend(_call_lines(fallback_name, fallback, "      "))
     lines += ["   end select", f"end subroutine {name}"]
     return "\n".join(lines)
+
+
+def _normalise_fixed_nc(fixed_nc: Iterable[int] | None) -> list[int]:
+    """Return the fixed component counts as a list of unique integers."""
+    sizes = [] if fixed_nc is None else [int(size) for size in fixed_nc]
+    if any(size < 1 for size in sizes) or len(set(sizes)) != len(sizes):
+        raise ValueError(
+            f"fixed_nc must hold distinct positive integers, got {sizes}"
+        )
+    return sizes
 
 
 def _resolve_pair(
@@ -634,6 +685,7 @@ class _Plan:
     fixed_options: CodegenOptions
     passed: Mapping[str, Any]
     extents: Mapping[str, Sequence[str]]
+    sizes: Sequence[int]
 
 
 def _fixed_kernel(
@@ -642,8 +694,8 @@ def _fixed_kernel(
     position: int,
     fallback: KernelInterface,
     taken: Iterable[int],
-) -> tuple[_Specialised, str]:
-    """Generate one fixed-output kernel and its dispatcher data."""
+) -> tuple[_Specialised, list[str]]:
+    """Generate one fixed-output kernel, its copies and dispatcher data."""
     kernel_name = f"{plan.base}_w{position}"
     text = to_fortran(
         plan.diff,
@@ -658,8 +710,16 @@ def _fixed_kernel(
         raise ValueError(
             f"workload {position} has the same output set as an earlier one"
         )
-    text = specialise_kernel(iface, name=kernel_name, extents=plan.extents)
-    return _Specialised(kernel_name, iface, mask), text
+    copies = {size: f"{kernel_name}_nc{size}" for size in plan.sizes}
+    texts = [specialise_kernel(iface, name=kernel_name, extents=plan.extents)]
+    if iface.has_nc:
+        texts += [
+            specialise_kernel(
+                iface, name=copies[size], extents=plan.extents, fixed_nc=size
+            )
+            for size in plan.sizes
+        ]
+    return _Specialised(kernel_name, iface, mask, copies), texts
 
 
 def workload_procedures(
@@ -668,6 +728,7 @@ def workload_procedures(
     *,
     derivatives: Any = None,
     subroutine_name: str | None = None,
+    fixed_nc: Iterable[int] | None = None,
     extents: Mapping[str, Sequence[str]] | None = None,
     preset: Preset | str | None = None,
     options: CodegenOptions | None = None,
@@ -691,8 +752,13 @@ def workload_procedures(
         derivative of ``diff``.
     subroutine_name : str, optional
         Public name of the dispatcher.  The kernels are named
-        ``<name>_fallback`` and ``<name>_w<k>`` (``k`` from 1, in the order
-        of ``workloads``).  Default: the name of ``diff``.
+        ``<name>_fallback``, ``<name>_w<k>`` (``k`` from 1, in the order of
+        ``workloads``) and ``<name>_w<k>_nc<size>``.  Default: the name
+        of ``diff``.
+    fixed_nc : iterable of int, optional
+        Component counts for which every fixed-output kernel is also
+        emitted with ``nc`` as a named constant; the dispatcher selects
+        by ``nc`` and then by output set.
     extents : mapping, optional
         Extents of the array inputs by name (for example
         ``{"a": ("nc", "ng")}``).  Inputs without an entry are ``nc`` in
@@ -714,7 +780,7 @@ def workload_procedures(
     ------
     ValueError
         If two workloads have the same outputs, a workload is not
-        covered by ``derivatives``.
+        covered by ``derivatives`` or ``fixed_nc`` is invalid.
     """
     to_fortran_keys = (
         "name",
@@ -732,6 +798,7 @@ def workload_procedures(
         fixed_options,
         passed,
         dict(extents or {}),
+        _normalise_fixed_nc(fixed_nc),
     )
     fallback_name = f"{base}_fallback"
     fallback_text = to_fortran(
@@ -746,12 +813,14 @@ def workload_procedures(
     kernels: list[_Specialised] = []
     texts: list[str] = []
     for position, workload in enumerate(workloads, start=1):
-        kernel, kernel_text = _fixed_kernel(
+        kernel, kernel_texts = _fixed_kernel(
             plan, workload, position, fallback, [k.mask for k in kernels]
         )
         kernels.append(kernel)
-        texts.append(kernel_text)
-    dispatcher = build_dispatcher(base, fallback, fallback_name, kernels)
+        texts += kernel_texts
+    dispatcher = build_dispatcher(
+        base, fallback, fallback_name, kernels, plan.sizes
+    )
     return "\n\n".join([dispatcher, fallback_text, *texts]) + "\n"
 
 

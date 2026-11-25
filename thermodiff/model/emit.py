@@ -147,6 +147,7 @@ def _workload_code(
     ir,
     diff,
     workloads,
+    fixed_nc,
     subroutine,
     preset,
     options,
@@ -163,6 +164,7 @@ def _workload_code(
             diff,
             selections,
             subroutine_name=subroutine,
+            fixed_nc=fixed_nc,
             extents=_array_extents(ir),
             preset=preset,
             options=options,
@@ -181,6 +183,7 @@ def emit_module(
     preset=None,
     options=None,
     workloads=None,
+    fixed_nc=None,
     **overrides,
 ):
     """Generate the Fortran module for a :class:`ModelIR`.
@@ -216,6 +219,9 @@ def emit_module(
         kernel (which is also emitted, as the fallback), and one kernel
         per workload; see :mod:`thermodiff.codegen.workload`.  ``derivatives``
         selects the outputs of the fallback and must cover the workloads.
+    fixed_nc : iterable of int, optional
+        With ``workloads``: also emit every fixed-output kernel for these
+        compile-time numbers of components (for example ``(2, 3)``).
     **overrides
         Individual options replacing those of the preset, with the names of
         :class:`thermodiff.codegen.options.CodegenOptions` (for example
@@ -248,11 +254,14 @@ def emit_module(
         symmetric_params=getattr(ir, "symmetric", ()),
         stats=stats,
     )
+    if workloads is None and fixed_nc is not None:
+        raise ModelError("fixed_nc needs workloads")
     if workloads is not None:
         code = _workload_code(
             ir,
             diff,
             workloads,
+            fixed_nc,
             subroutine,
             preset,
             options,

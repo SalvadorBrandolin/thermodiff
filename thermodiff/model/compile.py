@@ -15,6 +15,7 @@ def compile_model(
     preset=None,
     options=None,
     workloads=None,
+    fixed_nc=None,
     **overrides,
 ):
     """Compile the contents of a ``.model`` file into a Fortran module.
@@ -48,6 +49,9 @@ def compile_model(
         that selects the kernel of the exact set of present outputs and
         falls back to the optional kernel otherwise.  See
         :mod:`thermodiff.codegen.workload`.
+    fixed_nc : iterable of int, optional
+        With ``workloads``: also emit each fixed-output kernel for these
+        compile-time numbers of components (for example ``(2, 3)``).
     **overrides
         Individual options replacing those of the preset, for example
         ``optional_derivatives=True`` (declare every output as a Fortran
@@ -67,6 +71,7 @@ def compile_model(
         preset=preset,
         options=options,
         workloads=workloads,
+        fixed_nc=fixed_nc,
         **overrides,
     )
 
@@ -78,6 +83,7 @@ def compile_model_file(
     preset=None,
     options=None,
     workloads=None,
+    fixed_nc=None,
     **overrides,
 ):
     """Compile a ``.model`` file into a Fortran module.
@@ -101,6 +107,9 @@ def compile_model_file(
         that selects the kernel of the exact set of present outputs and
         falls back to the optional kernel otherwise.  See
         :mod:`thermodiff.codegen.workload`.
+    fixed_nc : iterable of int, optional
+        With ``workloads``: also emit each fixed-output kernel for these
+        compile-time numbers of components (for example ``(2, 3)``).
     **overrides
         Individual options replacing those of the preset.  See
         :func:`compile_model`.
@@ -119,5 +128,6 @@ def compile_model_file(
         preset=preset,
         options=options,
         workloads=workloads,
+        fixed_nc=fixed_nc,
         **overrides,
     )

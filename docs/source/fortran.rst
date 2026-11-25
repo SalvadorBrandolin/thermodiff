@@ -113,6 +113,12 @@ function value when the kernel computes it.  A call with a larger set is not
 served by a covering kernel (that would need scratch arrays for the extra
 outputs); it goes to the fallback.
 
+``--fixed-nc 2,3`` (``fixed_nc=(2, 3)``) also emits, for each workload and
+each size, a copy ``<model>_derivs_w<k>_nc<size>`` where ``nc`` is a named
+constant (the dummy ``nc_in`` keeps the signature).  The compiler then
+unrolls the loops, drops the array descriptors and keeps the temporaries on
+the stack.  The dispatcher selects by ``nc`` and then by output set.
+
 Pitfalls handled by the generator (measured with gfortran 16): the
 dispatcher's optional array dummies are not ``contiguous`` (an absent
 actual argument could be packed, and crash), while its inputs are; the
