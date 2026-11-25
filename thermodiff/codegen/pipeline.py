@@ -2925,7 +2925,10 @@ def to_fortran(
         routine or is a nested loop, so that dense parameters do not get
         slower.  Names that are not array parameters of the model are
         dropped with a ``UserWarning``.  The results agree with the
-        unguarded kernel up to the reassociation of the accumulations.
+        unguarded kernel up to the reassociation of the accumulations.  A
+        table whose body is a multiple of the element is set to zero where
+        the element is zero, even if the unguarded expression would give
+        NaN or Inf there (``log(0)*0``).
         Empty (no guards) by default.
     canonical_placeholders : bool, optional
         Name the derivatives of placeholder functions by their

@@ -123,6 +123,23 @@ and ``tau``, make them scalar variables of the placeholder's core and use
 the recipe above: generate the mixture layer with ``variables=[delta,
 tau]`` written as symbols, supply ``alpha`` and its partial derivatives
 with respect to them, and assemble.
+Sparse parameters
+-----------------
+
+``CodegenOptions(sparse_parameters=("v",))`` (or ``v nc ng sparse`` in a
+``.model``) names array parameters that are mostly zero, such as the
+group-count matrix of UNIFAC.  Work that is multiplied by an element of one
+of them is skipped where the element is zero: the terms of a reduction run
+under ``if (v(l, k) /= 0.0d0)``, and a table that is only read through such
+terms (the ``log`` of a sum over groups and its temperature derivatives) is
+not evaluated there.  A table that is itself a multiple of the element is
+set to zero where the element is zero, even if the unguarded expression
+would be NaN or Inf (``log(0)*0``).  Guards are emitted only where the
+skipped work is a transcendental call or a nested loop.  The option is off
+by default and the generated code without it does not change.  Because it
+tests values at run time, a dense parameter makes the kernel slower
+(about 10% on UNIFAC), so enable it only for sparse data.
+
 Workload mode: fixed-output kernels and a dispatcher
 ----------------------------------------------------
 
