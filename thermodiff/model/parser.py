@@ -2,7 +2,8 @@
 
 The ``.model`` file is a small, line oriented text format.  It is divided
 into sections introduced by the keywords ``model``, ``target``, ``use``,
-``variables``, ``parameters``, ``expressions`` and ``function``.  A short
+``variables``, ``parameters``, ``functions``, ``expressions`` and
+``function`` (the main function; ``functions`` declares placeholders).  A short
 example looks like::
 
     model pr
@@ -28,6 +29,7 @@ from thermodiff.model.errors import ModelError
 __all__ = [
     "RawDecl",
     "RawDef",
+    "RawFunctionDecl",
     "RawModel",
     "read_sections",
     "ExpressionParser",
@@ -42,12 +44,19 @@ SECTION_KEYWORDS = (
     "use",
     "variables",
     "parameters",
+    "functions",
     "expressions",
     "function",
 )
 
 #: Keywords that open a block of content.
-_BLOCK_KEYWORDS = {"variables", "parameters", "expressions", "function"}
+_BLOCK_KEYWORDS = {
+    "variables",
+    "parameters",
+    "functions",
+    "expressions",
+    "function",
+}
 
 #: Built-in functions usable inside expressions.
 FUNCTIONS = {
@@ -106,6 +115,34 @@ DECL_ATTRIBUTES = ("symmetric", "positive")
 
 
 @dataclass
+class RawFunctionDecl:
+    """A raw placeholder declaration, e.g. ``tau  nc nc  (T)``.
+
+    Attributes
+    ----------
+    name : str
+        Placeholder name as written (``tau`` or ``tau_ij``).
+    dims : tuple of str
+        Dimension names, one per index argument.
+    args : tuple of str
+        Names of the variables the placeholder depends on.
+    line : int
+        Line number of the declaration.
+    attributes : tuple of str
+        Attribute keywords written after the dimensions.  The parser accepts
+        the ones of :data:`DECL_ATTRIBUTES` so that attributes such as
+        ``symmetric`` can be given a meaning later; the interpreter rejects
+        them for now.
+    """
+
+    name: str
+    dims: tuple
+    args: tuple
+    line: int
+    attributes: tuple = ()
+
+
+@dataclass
 class RawDef:
     """A raw ``name = expression`` definition."""
 
@@ -123,6 +160,7 @@ class RawModel:
     uses: list = field(default_factory=list)
     variables: list = field(default_factory=list)
     parameters: list = field(default_factory=list)
+    functions: list = field(default_factory=list)
     expressions: list = field(default_factory=list)
     function: RawDef | None = None
     filename: str | None = None
@@ -199,6 +237,10 @@ def read_sections(text, filename=None):
                 _, _, rhs = logical.partition("=")
                 logical = rhs
             model.function = RawDef("f", logical.strip(), line_no)
+        elif current == "functions":
+            model.functions.append(
+                _parse_function_decl(logical, line_no, filename)
+            )
         elif current in ("variables", "parameters"):
             decl = _parse_decl(logical, line_no, filename)
             getattr(model, current).append(decl)
@@ -216,6 +258,14 @@ def read_sections(text, filename=None):
             # except for 'model', 'target' and 'use' which take a value.
             keyword_length = len(first)
             rest = line[keyword_length:].strip()
+            if first == "functions" and (
+                section == "function" or model.function is not None
+            ):
+                raise ModelError(
+                    "the 'functions' section must come before 'function'",
+                    number,
+                    filename,
+                )
             if first in _BLOCK_KEYWORDS:
                 if rest:
                     # e.g. 'function R*T' on a single line.
@@ -317,6 +367,53 @@ def _parse_decl(logical, line_no, filename):
             )
         dims.append(token)
     return RawDecl(name, tuple(dims), line_no, tuple(attributes))
+
+
+_FUNCTION_DECL_RE = re.compile(r"([^()]*)\(([^()]*)\)\s*")
+
+
+def _parse_function_decl(logical, line_no, filename):
+    """Parse a ``name [dim ...] [attribute ...] (arg, ...)`` line.
+
+    Parameters
+    ----------
+    logical : str
+        The declaration text, without comments.
+    line_no : int
+        Line number used for error messages.
+    filename : str or None
+        File name used for error messages.
+
+    Returns
+    -------
+    RawFunctionDecl
+        The raw placeholder declaration.
+
+    Raises
+    ------
+    ModelError
+        If the declaration does not have the expected shape.
+    """
+    match = _FUNCTION_DECL_RE.fullmatch(logical)
+    if match is None:
+        raise ModelError(
+            "placeholder declaration must have the form "
+            f"'name [dims] (args)', got {logical!r}",
+            line_no,
+            filename,
+        )
+    head = _parse_decl(match.group(1), line_no, filename)
+    args = tuple(match.group(2).replace(",", " ").split())
+    for arg in args:
+        if not _IDENT_RE.fullmatch(arg):
+            raise ModelError(
+                f"invalid argument {arg!r} in declaration of {head.name!r}",
+                line_no,
+                filename,
+            )
+    return RawFunctionDecl(
+        head.name, head.dims, args, line_no, head.attributes
+    )
 
 
 def tokenize(text, line=None, filename=None):

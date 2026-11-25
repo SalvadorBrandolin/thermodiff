@@ -16,8 +16,9 @@ from dataclasses import dataclass, field
 import sympy as sp
 
 from thermodiff import thermovars
+from thermodiff.core.idxfunction import idx_function
 from thermodiff.model.errors import ModelError
-from thermodiff.model.parser import ExpressionParser
+from thermodiff.model.parser import FUNCTIONS, ExpressionParser
 
 __all__ = ["Declaration", "ModelIR", "build_ir", "split_decl_name"]
 
@@ -28,6 +29,10 @@ _VARIABLE_SYMBOLS = {
     "V": thermovars.V,
     "P": thermovars.P,
 }
+
+#: Variables that a placeholder may depend on (``DiffPlz`` differentiates
+#: with respect to them).
+_PLACEHOLDER_ARGUMENTS = ("n", "T", "V", "P")
 
 #: Prefix used for the internal index symbols.  It avoids clashing with the
 #: ``i`` and ``j`` indices reserved for the derivatives.
@@ -62,6 +67,46 @@ class Declaration:
 
 
 @dataclass
+class Placeholder:
+    """A placeholder function declared in the ``functions`` section.
+
+    Attributes
+    ----------
+    base : str
+        Base name of the placeholder.
+    rank : int
+        Number of index arguments (0 for a scalar placeholder).
+    dims : tuple of str
+        Dimension names of the index arguments.
+    arguments : tuple
+        SymPy objects of the variable arguments (``n``, ``T``, ...), in the
+        declared order.
+    function_class : type
+        The lazy-derivative function class (see
+        :func:`thermodiff.core.idxfunction.idx_function`).  It is created
+        once per declaration, because applications of different classes
+        never compare equal.
+    line : int
+        Line number of the declaration.
+    """
+
+    base: str
+    rank: int
+    dims: tuple
+    arguments: tuple
+    function_class: type
+    line: int
+
+    def apply(self, indices):
+        """Return the placeholder applied to ``indices`` and its variables.
+
+        The argument order is the index arguments first and then the
+        variables, as in ``idx_function("tau")(i, j, T)``.
+        """
+        return self.function_class(*indices, *self.arguments)
+
+
+@dataclass
 class ModelIR:
     """The symbolic interpretation of a ``.model`` file."""
 
@@ -71,6 +116,8 @@ class ModelIR:
     dimensions: list = field(default_factory=list)
     variables: list = field(default_factory=list)
     parameters: list = field(default_factory=list)
+    placeholders: list = field(default_factory=list)
+    placeholder_calls: list = field(default_factory=list)
     declared_variables: set = field(default_factory=set)
     function: sp.Expr | None = None
     indexes: list = field(default_factory=list)
@@ -153,6 +200,7 @@ class _Resolver:
         self.bases = {}
         self.indexed_bases = {}
         self.pool = {}
+        self.placeholders = {}
         self.default_upper = default_upper
 
     def index(self, letter):
@@ -167,6 +215,14 @@ class _Resolver:
     def add_base(self, name, rank, indexed_base):
         self.bases[name] = rank
         self.indexed_bases[name] = indexed_base
+
+    def add_placeholder(self, placeholder):
+        """Register a placeholder declared in the ``functions`` section."""
+        if placeholder.rank == 0:
+            self.add_scalar(placeholder.base, placeholder.apply(()))
+            return
+        self.bases[placeholder.base] = placeholder.rank
+        self.placeholders[placeholder.base] = placeholder
 
     def resolve(self, token):
         """Return the SymPy object for an identifier ``token``."""
@@ -185,9 +241,10 @@ class _Resolver:
                         f"array {base!r} expects {rank} subscript(s), "
                         f"got {len(suffix)}"
                     )
-                indexed_base = self.indexed_bases[base]
                 indices = [self.index(char) for char in suffix]
-                return sp.Indexed(indexed_base, *indices)
+                if base in self.placeholders:
+                    return self.placeholders[base].apply(indices)
+                return sp.Indexed(self.indexed_bases[base], *indices)
         raise ModelError(f"undefined name {token!r}")
 
 
@@ -328,6 +385,70 @@ def _register_parameter(declaration, resolver, filename):
                 positive=declaration.positive,
             ),
         )
+
+
+def _build_placeholder(raw, resolver, dimensions, declared, filename):
+    """Turn a raw ``functions`` declaration into a :class:`Placeholder`."""
+    base, _letters, dims = split_decl_name(raw.name, raw.dims)
+    if raw.attributes:
+        raise ModelError(
+            f"attribute {raw.attributes[0]!r} is not supported yet for "
+            f"placeholder {base!r}",
+            raw.line,
+            filename,
+        )
+    if base in resolver.scalars or base in resolver.bases or base in FUNCTIONS:
+        raise ModelError(
+            f"{base!r} is declared more than once", raw.line, filename
+        )
+    if not raw.args:
+        raise ModelError(
+            f"placeholder {base!r} needs at least one variable argument "
+            "(a function of nothing is a parameter)",
+            raw.line,
+            filename,
+        )
+    for dim in dims:
+        if dim != "nc" and dim not in dimensions:
+            raise ModelError(
+                f"unknown dimension {dim!r} in placeholder {base!r}; it must "
+                "be 'nc' or a dimension of a variable or parameter",
+                raw.line,
+                filename,
+            )
+    arguments = tuple(
+        _placeholder_argument(raw, name, resolver, declared, base, filename)
+        for name in raw.args
+    )
+    return Placeholder(
+        base,
+        len(dims),
+        dims,
+        arguments,
+        idx_function(base),
+        raw.line,
+    )
+
+
+def _placeholder_argument(raw, name, resolver, declared, base, filename):
+    """Return the SymPy object of a variable argument of a placeholder."""
+    if name not in declared:
+        raise ModelError(
+            f"argument {name!r} of placeholder {base!r} is not a declared "
+            "variable",
+            raw.line,
+            filename,
+        )
+    if name not in _PLACEHOLDER_ARGUMENTS:
+        raise ModelError(
+            f"argument {name!r} of placeholder {base!r} must be one of "
+            + ", ".join(_PLACEHOLDER_ARGUMENTS),
+            raw.line,
+            filename,
+        )
+    if name == "n":
+        return resolver.indexed_bases["n"]
+    return resolver.scalars[name]
 
 
 def _bound_indices(expr):
@@ -499,6 +620,15 @@ def build_ir(raw, filename=None):
         _register_parameter(declaration, resolver, filename)
         parameters.append(declaration)
 
+    placeholders = []
+    declared = {declaration.base for declaration in variables}
+    for raw_func in raw.functions:
+        placeholder = _build_placeholder(
+            raw_func, resolver, dimensions, declared, filename
+        )
+        resolver.add_placeholder(placeholder)
+        placeholders.append(placeholder)
+
     imported = []
     for use_text, _line in raw.uses:
         for name in _imported_names(use_text):
@@ -564,6 +694,8 @@ def build_ir(raw, filename=None):
 
     model_name = (raw.model or "model").strip()
     warnings = _unused_warnings(function, parameters)
+    calls = _placeholder_calls(function, placeholders)
+    warnings.extend(_unused_placeholders(calls, placeholders))
 
     # Fortran is case insensitive: an imported symbol (``R``) and a model
     # name that differs only in case (a parameter ``r``) would clash.  The
@@ -594,6 +726,8 @@ def build_ir(raw, filename=None):
         dimensions=dimensions,
         variables=variables,
         parameters=parameters,
+        placeholders=placeholders,
+        placeholder_calls=calls,
         declared_variables=declared_variables,
         function=function,
         indexes=list(resolver.pool.values()),
@@ -617,3 +751,27 @@ def _unused_warnings(function, parameters):
                 f"parameter {declaration.base!r} is declared but never used"
             )
     return warnings
+
+
+def _placeholder_calls(function, placeholders):
+    """Return the applications of the declared placeholders in ``function``.
+
+    These are the objects the Python API passes as ``internal_functions``
+    to :class:`~thermodiff.diffplz.DiffPlz`, sorted for a deterministic
+    order.
+    """
+    classes = {placeholder.function_class for placeholder in placeholders}
+    calls = [
+        call for call in function.atoms(sp.Function) if type(call) in classes
+    ]
+    return sorted(calls, key=sp.default_sort_key)
+
+
+def _unused_placeholders(calls, placeholders):
+    """Return warning strings for declared but unused placeholders."""
+    used = {type(call).__name__ for call in calls}
+    return [
+        f"placeholder {placeholder.base!r} is declared but never used"
+        for placeholder in placeholders
+        if placeholder.base not in used
+    ]

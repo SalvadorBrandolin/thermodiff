@@ -51,6 +51,7 @@ def _reserved_names(ir, derivatives):
     reserved.update(ir.dimensions)
     for declaration in list(ir.variables) + list(ir.parameters):
         reserved.add(declaration.base)
+    reserved.update(placeholder.base for placeholder in ir.placeholders)
     for symbol in ir.function.atoms(sp.Symbol):
         reserved.add(str(symbol))
     for indexed in ir.function.atoms(sp.Indexed):
@@ -58,8 +59,8 @@ def _reserved_names(ir, derivatives):
     return reserved
 
 
-def _rename_indices(ir, derivatives):
-    """Return ``(function, indexes)`` with friendly index names."""
+def _index_mapping(ir, derivatives):
+    """Return the mapping from the internal indices to friendly ones."""
     reserved = _reserved_names(ir, derivatives)
     mapping = {}
     used = set()
@@ -73,6 +74,16 @@ def _rename_indices(ir, derivatives):
                 break
         else:
             raise ModelError("too many distinct indices in the model")
+    return mapping
+
+
+def _rename_indices(ir, derivatives):
+    """Return ``(function, indexes)`` with friendly index names."""
+    return _apply_mapping(ir, _index_mapping(ir, derivatives))
+
+
+def _apply_mapping(ir, mapping):
+    """Return ``(function, indexes)`` renamed with ``mapping``."""
     function = ir.function.xreplace(mapping)
     indexes = [mapping.get(index, index) for index in ir.indexes]
     return function, indexes
@@ -111,10 +122,12 @@ def build_diff(ir, derivatives=None):
             )
         except ValueError as error:
             raise ModelError(str(error)) from error
-    function, indexes = _rename_indices(ir, derivatives)
+    mapping = _index_mapping(ir, derivatives)
+    function, indexes = _apply_mapping(ir, mapping)
+    calls = [call.xreplace(mapping) for call in ir.placeholder_calls]
     diff = DiffPlz(
         function,
-        internal_functions=[],
+        internal_functions=calls,
         indexes=indexes,
         name="f",
         derivatives=derivatives,
