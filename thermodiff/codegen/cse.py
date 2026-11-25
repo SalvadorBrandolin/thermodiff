@@ -19,6 +19,7 @@ from thermodiff.codegen.common import (
     _order_free,
     _sorted_indices,
 )
+from thermodiff.codegen.extents import with_range_of
 from thermodiff.codegen.ir import TempDef
 from thermodiff.codegen.symmetry import (
     _alpha_key,
@@ -572,9 +573,14 @@ def _is_hoistable(
 def _canonical_form(
     sub: sp.Basic, indices: list[sp.Idx], slots: list[sp.Idx]
 ) -> sp.Basic:
-    """Rename ``indices`` of ``sub`` to the leading auxiliary ``slots``."""
+    """Rename ``indices`` of ``sub`` to the leading auxiliary ``slots``.
+
+    A slot keeps the range of the index it replaces, so that two shapes
+    that differ only in the dimension an index runs over stay different.
+    """
     mapping = {
-        index: slots[position] for position, index in enumerate(indices)
+        index: with_range_of(index, str(slots[position]))
+        for position, index in enumerate(indices)
     }
     return sub.xreplace(mapping)
 
@@ -668,6 +674,14 @@ def _best_indexed_candidate(
         if best is not None:
             return best
     return None
+
+
+def _slots_in_use(canonical: sp.Basic, slots: list[sp.Idx]) -> list[sp.Idx]:
+    """Return the indices of ``canonical`` in the order of ``slots``."""
+    position = {str(slot): place for place, slot in enumerate(slots)}
+    return sorted(
+        canonical.atoms(sp.Idx), key=lambda index: position[str(index)]
+    )
 
 
 def _free_aux_indices(exprs: Iterable[sp.Basic]) -> list[sp.Idx]:
@@ -808,13 +822,13 @@ def _indexed_cse(
             _preorder_entries(expr, own_entries, entries_memo)
             for expr in exprs
         ]
-        counts, sizes = _count_canonical_entries(entries, counted)
+        counts, _sizes = _count_canonical_entries(entries, counted)
         best = _best_indexed_candidate(
             counts, expensive_twice, ops_memo, sort_key_memo
         )
         if best is None:
             break
-        free = slots[: sizes[best]]
+        free = _slots_in_use(best, slots)
         target = _new_shared_temp(namer, free, arrays)
         definitions.append(
             TempDef(target=target, free=free, limits=[], body=best)

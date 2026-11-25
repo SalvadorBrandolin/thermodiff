@@ -40,6 +40,11 @@ from thermodiff.codegen.cse import (
     _share_sums,
     _sympy_scalar_cse,
 )
+from thermodiff.codegen.extents import (
+    COMPONENT_EXTENT,
+    annotate_index_ranges,
+    index_extent,
+)
 from thermodiff.codegen.hoisting import (
     _hoist_invariants,
     _hoist_loop_invariants,
@@ -47,7 +52,13 @@ from thermodiff.codegen.hoisting import (
     _separate_sums,
     _split_affine,
 )
-from thermodiff.codegen.ir import TempDef
+from thermodiff.codegen.ir import (
+    ComponentFusedMap,
+    FusedNest,
+    OuterFusedNest,
+    SiblingNest,
+    TempDef,
+)
 from thermodiff.codegen.loops import (
     Staged,
     _diagonal_from_tables,
@@ -624,6 +635,9 @@ class _EmitState:
     symmetric_params: tuple[str, ...]
     scalar_chain_defs: Sequence[ScalarDef] = ()
     scalar_chain_active: bool = False
+    index_ranges: dict[sp.Basic, sp.Basic] = dataclasses.field(
+        default_factory=dict
+    )
     sc_temp_names: set[str] = dataclasses.field(default_factory=set)
     outputs: list[Output] = dataclasses.field(default_factory=list)
     share_sums: bool = False
@@ -850,14 +864,27 @@ def _resolve_outputs(ctx: _EmitContext, state: _EmitState) -> None:
     )
 
 
+def _extra_dimension_ranges(state: _EmitState) -> dict[sp.Basic, sp.Basic]:
+    """Return the ranged indices of the extra dimensions (see extents)."""
+    bodies = [expr for _attr, _out, expr in state.outputs]
+    if state.structured is not None:
+        bodies += [
+            comp[1] for comp in state.structured.get("_component_defs", ())
+        ]
+    bodies += [body for _symbol, body in state.scalar_chain_defs]
+    return annotate_index_ranges(bodies)
+
+
 def _stage_outputs(state: _EmitState) -> None:
     """Canonicalise every output expression into ``staged`` (S4)."""
     opts = state.opts
     symmetric_params = state.symmetric_params
     staged: Staged = []
+    state.index_ranges = _extra_dimension_ranges(state)
     for attr, out_name, expr in state.outputs:
         expr = _kron_to_piecewise(expr)
         expr = expr.xreplace({nc: sp.Symbol("nc")})
+        expr = expr.xreplace(state.index_ranges)
         if opts.float_canon:
             expr = _canonical_floats(expr)
         if opts.param_symmetry and symmetric_params:
@@ -962,6 +989,7 @@ def _component_definitions(state: _EmitState) -> None:
             comp_body = state.resolver.resolve(comp_body).xreplace(
                 {nc: sp.Symbol("nc")}
             )
+            comp_body = comp_body.xreplace(state.index_ranges)
             if opts.param_symmetry and state.symmetric_params:
                 comp_body = _canonical_symmetric(
                     comp_body, state.symmetric_params, opts.sym_rank3
@@ -1448,6 +1476,7 @@ def _scalar_chain_scalars(state: _EmitState) -> dict[sp.Symbol, sp.Symbol]:
         body = (
             _kron_to_piecewise(body)
             .xreplace({nc: sp.Symbol("nc")})
+            .xreplace(state.index_ranges)
             .xreplace(alias)
         )
         if state.opts.float_canon:
@@ -2131,6 +2160,48 @@ def _argument_names(ctx: _EmitContext, state: _EmitState) -> list[str]:
     return arg_names
 
 
+def _nested_definitions(definition: TempDef) -> list[TempDef]:
+    """Return the definitions wrapped by a fused record (none otherwise)."""
+    if isinstance(definition, FusedNest):
+        return definition.fused
+    if isinstance(definition, OuterFusedNest):
+        return definition.members
+    if isinstance(definition, SiblingNest):
+        return definition.sibling
+    return []
+
+
+def _record_array_extents(
+    definition: TempDef, extents: dict[str, tuple[str, ...]]
+) -> None:
+    """Record the extents of the arrays assigned by ``definition``."""
+    targets = [definition.target]
+    if isinstance(definition, ComponentFusedMap):
+        targets += [target for _kind, target, _value in definition.steps]
+    for target in targets:
+        if isinstance(target, sp.Indexed):
+            extents[str(target.base)] = tuple(
+                index_extent(index) for index in target.indices
+            )
+    for member in _nested_definitions(definition):
+        _record_array_extents(member, extents)
+
+
+def _array_extents(state: _EmitState) -> dict[str, tuple[str, ...]]:
+    """Return the declared extents of every temporary array.
+
+    An array takes the extent of the index range of each subscript of the
+    definition that assigns it, ``nc`` for the arrays no definition assigns.
+    """
+    assigned: dict[str, tuple[str, ...]] = {}
+    for definition in state.definitions:
+        _record_array_extents(definition, assigned)
+    return {
+        name: assigned.get(name, (COMPONENT_EXTENT,) * rank)
+        for name, rank in state.arrays.items()
+    }
+
+
 def _local_declarations(state: _EmitState) -> list[str]:
     """Return the declarations of the temporaries and loop indices."""
     lines = [
@@ -2138,7 +2209,7 @@ def _local_declarations(state: _EmitState) -> list[str]:
     ]
     max_nc = None if state.opts.work_array else state.opts.max_nc
     lines.extend(
-        array_declarations(state.arrays, state.opts.array_pad, max_nc)
+        array_declarations(_array_extents(state), state.opts.array_pad, max_nc)
     )
     for line in _wrap_name_list("integer :: ", state.loop_indices):
         lines.append(_INDENT + line)
@@ -2177,7 +2248,7 @@ def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
             header,
             _local_declarations(state),
             body,
-            state.arrays,
+            _array_extents(state),
             state.opts.array_pad,
         )
     else:

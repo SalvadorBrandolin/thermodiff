@@ -17,6 +17,7 @@ from thermodiff.codegen.common import (
     _print_expr,
     _temp_name,
 )
+from thermodiff.codegen.extents import index_extent
 from thermodiff.codegen.hoisting import _split_factored
 from thermodiff.codegen.ir import (
     ComponentFusedMap,
@@ -219,7 +220,9 @@ def _render_output(
     )
     for position, idx in enumerate(loop_order):
         low = str(free_order[0]) if (mirror and position == 1) else "1"
-        lines.append(_INDENT * depth + f"do {idx} = {low}, nc")
+        lines.append(
+            _INDENT * depth + f"do {idx} = {low}, {index_extent(idx)}"
+        )
         depth += 1
 
     for statement in statements:
@@ -598,7 +601,7 @@ def _render_loop_nest(definition: TempDef) -> list[str]:
     lines = []
     depth = 0
     for idx in definition.free:
-        lines.append(_INDENT * depth + f"do {idx} = 1, nc")
+        lines.append(_INDENT * depth + f"do {idx} = 1, {index_extent(idx)}")
         depth += 1
     if limits:
         lines.append(_INDENT * depth + f"{target_s} = 0.0d0")
