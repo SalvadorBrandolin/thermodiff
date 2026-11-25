@@ -3,11 +3,11 @@
 import re
 import warnings
 
+import sympy as sp
+
 from thermodiff import DiffPlz, k, l, n, sum_components
 from thermodiff.codegen.options import CodegenOptions
 from thermodiff.fortran import to_fortran
-
-import sympy as sp
 
 
 def test_outer_function_that_is_a_node_has_no_stray_arguments():

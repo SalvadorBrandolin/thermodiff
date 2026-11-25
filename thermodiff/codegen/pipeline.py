@@ -20,21 +20,21 @@ from thermodiff.codegen import (
 )
 from thermodiff.codegen.common import (
     _DERIV_ORDER,
-    _deriv_suffix,
     _INDENT,
     _LoopStart,
     _Namer,
     _canonical_floats,
     _case_clash_renames,
+    _deriv_suffix,
     _free_indices,
     _is_placeholder,
     _kron_to_piecewise,
     _order_free,
     _referenced_temp_names,
     _rename_names,
-    apply_real_kind,
     _sanitize,
     _temp_name,
+    apply_real_kind,
 )
 from thermodiff.codegen.cse import (
     _common_scalar_cse,
@@ -91,9 +91,9 @@ from thermodiff.codegen.render import (
 )
 from thermodiff.codegen.resolve import (
     _PlaceholderResolver,
-    expression_argument_placeholders,
     _scan_atoms,
     _select_derivatives,
+    expression_argument_placeholders,
 )
 from thermodiff.codegen.storage import (
     array_declarations,

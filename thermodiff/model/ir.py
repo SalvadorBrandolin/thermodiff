@@ -18,7 +18,7 @@ import sympy as sp
 from thermodiff import thermovars
 from thermodiff.core.idxfunction import idx_function
 from thermodiff.model.errors import ModelError
-from thermodiff.model.parser import FUNCTIONS, ExpressionParser
+from thermodiff.model.parser import ExpressionParser, FUNCTIONS
 
 __all__ = ["Declaration", "ModelIR", "build_ir", "split_decl_name"]
 

@@ -1,12 +1,10 @@
 """Summations over the reserved indices ``i`` and ``j`` (issue #16)."""
 
+from fortran_tools import DEBUG_FREE_FORM_FLAGS, GFORTRAN, compile_and_run
+
 import pytest
+
 import sympy as sp
-from fortran_tools import (
-    DEBUG_FREE_FORM_FLAGS,
-    GFORTRAN,
-    compile_and_run,
-)
 
 from thermodiff import DiffPlz, T, i, idx_function, j, k, l, n, sum_components
 

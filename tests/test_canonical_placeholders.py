@@ -31,16 +31,16 @@ def signature(text):
 
 def repro_diff():
     """The #8 reproducer: ``f = n_T log(1 - B(n)/V)``."""
-    B = idx_function("B")(n)
-    f = sum_components(n[l], l) * sp.log(1 - B / V)
-    return DiffPlz(f, internal_functions=[B], indexes=[l], name="f")
+    b_func = idx_function("B")(n)
+    f = sum_components(n[l], l) * sp.log(1 - b_func / V)
+    return DiffPlz(f, internal_functions=[b_func], indexes=[l], name="f")
 
 
 def mixed_diff():
     """A placeholder of ``n`` and ``T``: gives the mixed ``d2D/dT dn``."""
-    D = idx_function("D")(n, T)
-    f = sum_components(n[l], l) * sp.log(D) * T
-    return DiffPlz(f, internal_functions=[D], indexes=[l], name="f")
+    d_func = idx_function("D")(n, T)
+    f = sum_components(n[l], l) * sp.log(d_func) * T
+    return DiffPlz(f, internal_functions=[d_func], indexes=[l], name="f")
 
 
 def generate(diff, derivatives, preset="fastest", **extra):

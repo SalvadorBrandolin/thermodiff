@@ -25,12 +25,12 @@ import sympy as sp
 
 from thermodiff import (
     DiffPlz,
+    T,
     idx_function,
     k,
     l,
     n,
     sum_components,
-    T,
 )
 from thermodiff.codegen.options import CodegenOptions
 from thermodiff.codegen.resolve import _PlaceholderResolver

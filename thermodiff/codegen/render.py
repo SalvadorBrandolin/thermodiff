@@ -8,10 +8,10 @@ import sympy as sp
 from sympy.printing.fortran import fcode
 
 from thermodiff.codegen.common import (
-    _emission_order,
     _FCODE_SETTINGS,
     _INDENT,
     _Namer,
+    _emission_order,
     _free_indices,
     _indent_lines,
     _print_expr,

@@ -10,11 +10,11 @@ that cannot be renamed clash.
 import re
 from pathlib import Path
 
+from fortran_tools import DEBUG_FREE_FORM_FLAGS, GFORTRAN, compile_and_run
+
 import pytest
 
 import sympy as sp
-
-from fortran_tools import DEBUG_FREE_FORM_FLAGS, GFORTRAN, compile_and_run
 
 from thermodiff import DiffPlz, T, idx_function, k, m, n, sum_components
 from thermodiff.fortran import to_fortran

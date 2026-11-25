@@ -69,16 +69,16 @@ def model_kernel(text, preset):
 
 def issue_b_diff():
     """``f = sum_l n_l log(1 - B(n)/V)`` with a placeholder ``B(n)``."""
-    B = idx_function("B")(n)
-    f = sum_components(n[k] * sp.log(1 - B / V), k)
-    return DiffPlz(f, internal_functions=[B], indexes=[k], name="f")
+    b_func = idx_function("B")(n)
+    f = sum_components(n[k] * sp.log(1 - b_func / V), k)
+    return DiffPlz(f, internal_functions=[b_func], indexes=[k], name="f")
 
 
 def issue_d_diff():
     """``f = T sum_l n_l log(D(n, T))`` with a placeholder ``D(n, T)``."""
-    D = idx_function("D")(n, T)
-    f = T * sum_components(n[k] * sp.log(D), k)
-    return DiffPlz(f, internal_functions=[D], indexes=[k], name="f")
+    d_func = idx_function("D")(n, T)
+    f = T * sum_components(n[k] * sp.log(d_func), k)
+    return DiffPlz(f, internal_functions=[d_func], indexes=[k], name="f")
 
 
 def nrtl_diff():
