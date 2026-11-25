@@ -16,6 +16,12 @@ the set of optional outputs that are present:
   calls the most complete kernel through a helper with local temporaries and
   copies the present outputs.
 
+A fixed-output kernel always has mandatory ``intent(out)`` outputs (``f``);
+for every mandatory output that a workload does not request, the call passes
+a local scratch actual (``<name>_scratch_``).  Kernel outputs that look like
+an output (``f``, ``df...``) but do not belong to the family raise
+``ValueError`` instead of becoming model parameters.
+
 The emitted code is independent of the benchmark: it only needs the kernel
 routine names, their argument lists (name and rank) and the output set of each
 workload.  ``kernel_interface`` extracts the argument list from a generated
@@ -73,6 +79,13 @@ STATE = {"nc": "size(n)", "n": "n", "V": "v", "T": "t"}
 RESERVED = {"components", "name", "self", "mask", "v0", "p"} | {
     k.lower() for k in OUTPUT_RANK
 }
+
+#: names that look like a kernel output (``f``, ``dfdV``, ``dfdTdV``,
+#: ``dfdndn``, ...); one of them that is not an output of the family is
+#: an error, never a model parameter
+_OUTPUT_LIKE = re.compile(r"^(f|df(d[ntv]\d?)+)$", re.I)
+#: suffix of the local actual that stands for an unrequested mandatory output
+SCRATCH_SUFFIX = "_scratch_"
 
 _DECL = re.compile(
     r"^\s*(?:real|integer)\s*(?:\([^)]*\))?\s*(?:,[^:]*)?::\s*(.+)$", re.I
@@ -135,6 +148,97 @@ def _wrap(line, indent, width=110):
         cur = indent + "    " + cur[cut + 2 :]
     out.append(cur)
     return out
+
+
+def _check_not_foreign_output(name, family, wid):
+    """Raise ``ValueError`` if ``name`` looks like an output of another family.
+
+    Parameters
+    ----------
+    name : str
+        Kernel argument that is not an output of ``family``.
+    family : str
+        Model family of the wrapper (``"ar"`` or ``"ge"``).
+    wid : str
+        Workload id, for the message.
+    """
+    if _OUTPUT_LIKE.match(name):
+        raise ValueError(
+            f"{wid}: kernel argument {name} looks like an output but is not "
+            f"an output of the {family!r} family; it would be treated as a "
+            "model parameter"
+        )
+
+
+def _optional_outputs(workloads):
+    """Return the kernel outputs that may be omitted, per workload.
+
+    A kernel that serves several workloads with different output sets
+    has optional outputs; a workload may also list them explicitly with
+    the key ``optional``.  Any other output of the argument list is
+    mandatory.
+
+    Parameters
+    ----------
+    workloads : dict
+        Workloads as given to :func:`yaeos_model_module`.
+
+    Returns
+    -------
+    dict of str to set of str
+        Workload id -> names of its kernel's optional outputs.
+    """
+    outputs_by_routine = {}
+    for wl in workloads.values():
+        outputs_by_routine.setdefault(wl["routine"], []).append(
+            frozenset(wl["outputs"])
+        )
+    result = {}
+    for wid, wl in workloads.items():
+        shared = len(set(outputs_by_routine[wl["routine"]])) > 1
+        names = {a for a, _ in wl["args"]}
+        result[wid] = set(wl.get("optional", ())) | (
+            names if shared else set()
+        )
+    return result
+
+
+def _scratch_outputs(wl, outmap, optional):
+    """Return the mandatory outputs of a kernel that the workload omits.
+
+    Parameters
+    ----------
+    wl : dict
+        Workload description.
+    outmap : dict
+        Output map of the family.
+    optional : set of str
+        Optional outputs of the kernel.
+
+    Returns
+    -------
+    dict of str to int
+        Kernel output name -> rank, in argument-list order.
+    """
+    return {
+        name: rank
+        for name, rank in wl["args"]
+        if name in outmap
+        and name not in wl["outputs"]
+        and name not in optional
+    }
+
+
+def _scratch_name(name):
+    """Return the local actual passed for the omitted output ``name``."""
+    return f"{name}{SCRATCH_SUFFIX}"
+
+
+def _dims(rank):
+    """Return the Fortran extent suffix of an output of ``rank``."""
+    if rank == 0:
+        return ""
+    return "(size(n))" if rank == 1 else "(size(n), size(n))"
 
 
 def _call(routine, args, outs, actual):
@@ -204,6 +308,7 @@ def yaeos_model_module(
             low = name.lower()
             if low in state or name in outmap:
                 continue
+            _check_not_foreign_output(name, family, wid)
             if low in RESERVED:
                 raise ValueError(
                     f"parameter name {name} clashes with the yaeos wrapper"
@@ -244,6 +349,16 @@ def yaeos_model_module(
         act.update({nm.lower(): STATE[nm] for nm in STATE})
         return act
 
+    optional = _optional_outputs(workloads)
+    scratch = {
+        wid: _scratch_outputs(wl, outmap, optional[wid])
+        for wid, wl in workloads.items()
+    }
+    scratch_decls = {
+        name: rank
+        for wid_scratch in scratch.values()
+        for name, rank in wid_scratch.items()
+    }
     routines = list(dict.fromkeys(wl["routine"] for wl in workloads.values()))
     base, use_base = (
         ("ArModel", "yaeos__models_ar")
@@ -320,6 +435,10 @@ def yaeos_model_module(
     ]
     module_lines += [ind + d for d in out_decls()]
     module_lines += [f"{ind}integer :: mask"]
+    module_lines += [
+        f"{ind}real(pr) :: {_scratch_name(name)}{_dims(rank)}"
+        for name, rank in scratch_decls.items()
+    ]
     terms = [f"merge({bit[nm]}, 0, present({nm}))" for nm in yaeos_names]
     module_lines += _wrap("mask = " + " + ".join(terms), ind)
     module_lines += [f"{ind}select case (mask)"]
@@ -331,6 +450,7 @@ def yaeos_model_module(
             f"{ind}case ({mask})  ! {wid}: {', '.join(present)}"
         )
         outs = {o: outmap[o] for o in wl["outputs"]}
+        outs.update({n: _scratch_name(n) for n in scratch[wid]})
         module_lines += _wrap(
             _call(wl["routine"], wl["args"], outs, act), ind + "   "
         )
