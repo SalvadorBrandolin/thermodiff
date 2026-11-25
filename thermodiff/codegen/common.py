@@ -343,6 +343,27 @@ class _Namer:
         return symbol
 
 
+def unique_name(name: str, taken: Iterable[str]) -> str:
+    """Append ``_`` to ``name`` until it is not in ``taken`` (any case).
+
+    Parameters
+    ----------
+    name : str
+        Wanted identifier.
+    taken : iterable of str
+        Identifiers that are already in use; Fortran ignores case.
+
+    Returns
+    -------
+    str
+        ``name`` or ``name`` followed by underscores.
+    """
+    lowered = {item.lower() for item in taken}
+    while name.lower() in lowered:
+        name += "_"
+    return name
+
+
 _REAL_8 = "real(8)"
 _FLOAT_LITERAL = re.compile(r"(?<![\w.])(\d+\.\d*)d([+-]?\d+)")
 

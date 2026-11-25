@@ -19,9 +19,9 @@ on the heap, so every call pays one ``malloc``/``free`` pair per temporary
 
 import math
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping
 
-from thermodiff.codegen.common import _INDENT
+from thermodiff.codegen.common import _INDENT, unique_name
 from thermodiff.codegen.render import _wrap_name_list, _wrap_signature
 
 #: gfortran's default ``-fmax-stack-var-size`` (bytes).  A larger local
@@ -190,14 +190,6 @@ def _work_slices(
     return actuals, _sum_expr(counts, array_pad)
 
 
-def _unique(name: str, taken: Sequence[str]) -> str:
-    """Append ``_`` to ``name`` until it is not in ``taken`` (any case)."""
-    lowered = {item.lower() for item in taken}
-    while name.lower() in lowered:
-        name += "_"
-    return name
-
-
 def work_array_kernel(
     sub_name: str,
     arg_names: list[str],
@@ -206,6 +198,7 @@ def work_array_kernel(
     body: list[str],
     arrays: Mapping[str, int | Shape],
     array_pad: int,
+    reserved: Iterable[str] = (),
 ) -> list[str]:
     """Return the lines of a kernel whose temporaries share one work array.
 
@@ -227,6 +220,10 @@ def work_array_kernel(
         array holds the product of the extents of every temporary.
     array_pad : int
         Extra rows of the leading dimension of rank >= 2 temporaries.
+    reserved : iterable of str, optional
+        Other names visible in the kernel (scalar temporaries, loop
+        indices, module symbols); the work array and the internal
+        procedure avoid them.
 
     Returns
     -------
@@ -234,9 +231,9 @@ def work_array_kernel(
         The subroutine, ending with ``end subroutine``.
     """
     shapes = _by_shape(arrays)
-    taken = [sub_name, *arg_names, *shapes]
-    work = _unique("work_", taken)
-    inner = _unique(f"{sub_name}_body", [*taken, work])
+    taken = [sub_name, *arg_names, *shapes, *reserved]
+    work = unique_name("work_", taken)
+    inner = unique_name(f"{sub_name}_body", [*taken, work])
     actuals, total = _work_slices(shapes, array_pad, work)
     dummies = [name for name, _dims_ in _ordered_arrays(shapes)]
     lines = _wrap_signature(sub_name, arg_names)

@@ -2278,6 +2278,35 @@ def _body_lines(sub_name: str, state: _EmitState) -> list[str]:
     return [_INDENT + line if line else "" for line in body]
 
 
+def _visible_names(ctx: _EmitContext, state: _EmitState) -> list[str]:
+    """Return the names that are declared or visible inside the kernel."""
+    return [
+        *ctx.module_symbols,
+        *state.temps,
+        *state.loop_indices,
+        *state.arrays,
+    ]
+
+
+def _check_kind_name(real_kind: str, names: Iterable[str]) -> None:
+    """Raise if the kind constant ``real_kind`` is also a kernel name.
+
+    Raises
+    ------
+    ValueError
+        If ``real_kind`` is an identifier that clashes (any case) with a
+        dummy argument, a module symbol, a temporary or the subroutine.
+    """
+    if not real_kind.isdigit() and real_kind.lower() in {
+        name.lower() for name in names
+    }:
+        raise ValueError(
+            f"real_kind {real_kind!r} is also the name of a symbol of the "
+            "model (module symbol, parameter or temporary); choose another "
+            "kind constant name"
+        )
+
+
 def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
     """Assemble the Fortran source of the subroutine (S41).
 
@@ -2304,6 +2333,7 @@ def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
             body,
             _array_extents(state),
             state.opts.array_pad,
+            _visible_names(ctx, state),
         )
     else:
         lines = _wrap_signature(sub_name, arg_names)
@@ -2315,6 +2345,10 @@ def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
         lines.append(f"end subroutine {sub_name}")
     lines.append("")
 
+    _check_kind_name(
+        state.opts.real_kind,
+        [sub_name, *arg_names, *_visible_names(ctx, state)],
+    )
     state.text = apply_real_kind(
         "\n".join(lines), state.opts.real_kind, state.opts.kind_module
     )
