@@ -8,9 +8,9 @@ the right kernel and outputs, and the default branch).
 
 import re
 
+from fortran_tools import GFORTRAN, compile_and_run
 import pytest
 
-from fortran_tools import GFORTRAN, compile_and_run
 from thermodiff.yaeos_model import kernel_interface, yaeos_model_module
 
 KERNEL = """subroutine toy_k1_w1(nc, V, T, a, kij, n, f, dfdV)
