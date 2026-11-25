@@ -4,6 +4,7 @@ import dataclasses
 import inspect
 import os
 import sys
+import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from types import FrameType
 from typing import Any, NamedTuple, cast
@@ -90,6 +91,7 @@ from thermodiff.codegen.render import (
 )
 from thermodiff.codegen.resolve import (
     _PlaceholderResolver,
+    expression_argument_placeholders,
     _scan_atoms,
     _select_derivatives,
 )
@@ -164,6 +166,8 @@ class _EmitContext:
     integer_args: tuple[str, ...]
     module_symbols: frozenset[str]
     symmetric_params: tuple[str, ...]
+    #: placeholders already warned about in this call (mutable on purpose)
+    reported: set[str] = dataclasses.field(default_factory=set)
 
 
 class _RenamedDiff:
@@ -314,6 +318,29 @@ def _resolve_context(
     )
 
 
+def _nested_nodes_allowed(ctx: _EmitContext, opts: CodegenOptions) -> bool:
+    """Return the effective ``nested_nodes``, warning when it is disabled.
+
+    The nesting of inner nodes differentiates with respect to the
+    arguments of the placeholders, which fails when an argument is an
+    expression; the option is then switched off for the call.
+    """
+    if not opts.nested_nodes:
+        return False
+    names = expression_argument_placeholders(ctx.diff.expression)
+    if names:
+        warnings.warn(
+            "nested_nodes is disabled: the placeholder(s) "
+            + ", ".join(names)
+            + " have expression arguments (give the arguments as scalar "
+            "variables with DiffPlz(..., variables=[...]) to differentiate "
+            "through them)",
+            UserWarning,
+            stacklevel=2,
+        )
+    return not names
+
+
 def _chain_structure(
     ctx: _EmitContext, opts: CodegenOptions
 ) -> Structure | None:
@@ -339,6 +366,7 @@ def _chain_structure(
         opts.scalar_chain is ScalarChainMode.ON
         and not opts.optional_derivatives
     )
+    nested_nodes = _nested_nodes_allowed(ctx, opts)
     structure: Structure = chain_rule_derivatives(  # type: ignore[no-untyped-call]  # noqa: E501
         ctx.diff.expression,
         [attr for attr in ctx.selected if attr in _DERIV_ORDER],
@@ -348,7 +376,7 @@ def _chain_structure(
         split_sums=opts.split_sums,
         pair_cse=opts.pair_cse,
         pair_rates=opts.pair_rates,
-        nested_nodes=opts.nested_nodes,
+        nested_nodes=nested_nodes,
         table_layout=opts.table_layout,
         scalar_chain=scalar_chain,
     )
@@ -770,6 +798,7 @@ def _new_state(
             strict=opts.strict,
             canonical=opts.canonical_placeholders,
             symmetric_names=ctx.symmetric_params,
+            reported=ctx.reported,
         ),
         namer=_Namer(),
         selected=list(ctx.selected),

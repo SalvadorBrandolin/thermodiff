@@ -42,6 +42,7 @@ class _PlaceholderResolver:
         strict: bool = False,
         canonical: bool = False,
         symmetric_names: Iterable[str] = (),
+        reported: set[str] | None = None,
     ) -> None:
         self.strict = strict
         self.canonical = canonical
@@ -52,7 +53,8 @@ class _PlaceholderResolver:
         #: placeholder without own indices: symmetric in their subscripts
         self.symmetric: set[str] = set()
         #: placeholders already reported by :func:`_warn_expression_args`
-        self._reported: set[str] = set()
+        #: shared by the resolvers of one ``to_fortran`` call
+        self._reported: set[str] = set() if reported is None else reported
 
     def resolve(self, expr: sp.Expr) -> sp.Expr:
         """Return ``expr`` with placeholders replaced by plain variables."""
@@ -90,7 +92,7 @@ class _PlaceholderResolver:
 
     def _check_arguments(self, func: sp.Function) -> None:
         """Warn once per placeholder whose arguments include expressions."""
-        key = str(func)
+        key = func.func.__name__
         if key not in self._reported:
             self._reported.add(key)
             _warn_expression_args(func)
@@ -197,6 +199,37 @@ class _PlaceholderResolver:
         return declared and len(dims) == 2
 
 
+def _expression_arguments(func: sp.Function) -> list[sp.Basic]:
+    """Return the arguments of ``func`` that are not plain variables."""
+    return [
+        arg
+        for arg in func.args
+        if not isinstance(arg, (sp.Symbol, sp.Idx, sp.Indexed))
+    ]
+
+
+def expression_argument_placeholders(expr: sp.Basic) -> list[str]:
+    """Return the names of the placeholders with expression arguments.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to scan.
+
+    Returns
+    -------
+    list of str
+        Sorted names (empty when every argument is a plain variable).
+    """
+    return sorted(
+        {
+            func.func.__name__
+            for func in expr.atoms(sp.Function)
+            if _is_placeholder(func) and _expression_arguments(func)
+        }
+    )
+
+
 def _warn_expression_args(func: sp.Function) -> None:
     """Warn when a placeholder takes an expression as an argument.
 
@@ -210,11 +243,7 @@ def _warn_expression_args(func: sp.Function) -> None:
     func : sympy.Function
         The placeholder call.
     """
-    expression_args = [
-        arg
-        for arg in func.args
-        if not isinstance(arg, (sp.Symbol, sp.Idx, sp.Indexed))
-    ]
+    expression_args = _expression_arguments(func)
     if not expression_args:
         return
     warnings.warn(

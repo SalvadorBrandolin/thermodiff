@@ -429,16 +429,43 @@ class TestExpressionArguments:
         expression = sum_components(n[k] * alpha, k)
         return DiffPlz(expression, internal_functions=[alpha], indexes=[k])
 
-    def test_expression_argument_warns(self):
+    @pytest.mark.parametrize("preset", PRESETS)
+    def test_expression_argument_warns_once(self, preset):
         total = sum_components(n[l], l)
         diff = self.alpha_model(total / V)
+        options = CodegenOptions.from_preset(preset)
         with pytest.warns(UserWarning) as caught:
-            to_fortran(diff, derivatives=["dV"])
-        messages = [str(w.message) for w in caught]
+            to_fortran(diff, derivatives=["dV", "dn"], options=options)
+        messages = [
+            str(w.message)
+            for w in caught
+            if str(w.message).startswith("placeholder ")
+        ]
         assert len(messages) == 1
         assert "'alpha'" in messages[0]
         assert "total derivatives" in messages[0]
         assert "/V" in messages[0]
+
+    def test_fastest_generates_the_same_inputs_as_standard(self):
+        """``nested_nodes`` used to fail differentiating w.r.t. a Sum."""
+        diff = self.alpha_model(sum_components(n[l], l) / V)
+        signatures = {}
+        for preset in ("standard", "fastest"):
+            options = CodegenOptions.from_preset(preset)
+            with pytest.warns(UserWarning):
+                text = to_fortran(
+                    diff, derivatives=["dV", "dn"], options=options
+                )
+            signatures[preset] = text.split("&\n")[0].split("(", 1)[1]
+        assert signatures["fastest"].split(", ")[:5] == (
+            signatures["standard"].split(", ")[:5]
+        )
+
+    def test_fastest_reports_that_nested_nodes_is_disabled(self):
+        diff = self.alpha_model(sum_components(n[l], l) / V)
+        options = CodegenOptions.from_preset("fastest")
+        with pytest.warns(UserWarning, match="nested_nodes is disabled"):
+            to_fortran(diff, derivatives=["dV", "dn"], options=options)
 
     def test_variable_arguments_do_not_warn(self):
         diff = self.alpha_model(V)
