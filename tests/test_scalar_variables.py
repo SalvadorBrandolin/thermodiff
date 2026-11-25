@@ -20,6 +20,7 @@ import sympy as sp
 
 from thermodiff import (
     DiffPlz,
+    workload_module,
     T,
     V,
     idx_function,
@@ -106,7 +107,9 @@ def declaration(name, value):
     )
 
 
-def run_kernel(source, sub_name, inputs, outputs, tmp_path):
+def run_kernel(
+    source, sub_name, inputs, outputs, tmp_path, flags=FLAGS, wrap=True
+):
     """Compile the kernel and a driver, run it and return the outputs.
 
     Parameters
@@ -121,6 +124,11 @@ def run_kernel(source, sub_name, inputs, outputs, tmp_path):
         ``name -> shape`` of every output to read.
     tmp_path : pathlib.Path
         Working directory.
+    flags : tuple of str, optional
+        Compiler flags.
+    wrap : bool, optional
+        Wrap ``source`` in the module ``kern``; ``False`` if it already
+        is a module named ``kern``.
 
     Returns
     -------
@@ -140,10 +148,12 @@ def run_kernel(source, sub_name, inputs, outputs, tmp_path):
     lines.append(f"call {sub_name}({arguments})")
     lines.extend(f"write(*,'(*(ES26.17E3,1X))') {name}" for name in outputs)
     lines.append("end program driver")
-    (tmp_path / "kern.f90").write_text(module_text(source))
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    kernel_text = module_text(source) if wrap else source
+    (tmp_path / "kern.f90").write_text(kernel_text)
     (tmp_path / "driver.f90").write_text("\n".join(lines) + "\n")
     result = compile_and_run(
-        [tmp_path / "kern.f90", tmp_path / "driver.f90"], tmp_path, FLAGS
+        [tmp_path / "kern.f90", tmp_path / "driver.f90"], tmp_path, flags
     )
     values = {}
     for (name, shape), line in zip(
@@ -187,6 +197,59 @@ class TestScalarCoreKernels:
             assert values["df" + name] == pytest.approx(
                 float(reference.subs(point)), rel=RELATIVE_TOLERANCE
             ), name
+
+
+CHECKED_FLAGS = ("-O1", "-ffree-line-length-0", "-fcheck=all")
+#: Output sets served by a fixed kernel, by the fallback, and the full set.
+WORKLOADS = ("dB,dBdD,dBdT", "dT,dV")
+SUBSETS = (["dB", "dBdD", "dBdT"], ["dT", "dV"], ["dD", "dnT2", "dBdV"])
+
+
+@pytest.mark.skipif(GFORTRAN is None, reason="gfortran is not available")
+@pytest.mark.parametrize("preset", PRESETS)
+def test_workload_dispatcher_with_scalar_variables(preset, tmp_path):
+    """Any output subset through the dispatcher equals the full kernel."""
+    diff = scalar_core_diff()
+    source = workload_module(
+        diff,
+        list(WORKLOADS),
+        derivatives=list(ALL_DERIVATIVES),
+        module_name="kern",
+        preset=preset,
+        subroutine_name="f_derivs",
+    )
+    names = list(ALL_DERIVATIVES)
+    full_outputs = {"f": ()} | {"df" + name: () for name in names}
+    full = run_kernel(
+        source,
+        "f_derivs",
+        POINT,
+        full_outputs,
+        tmp_path / "full",
+        CHECKED_FLAGS,
+        wrap=False,
+    )
+    for subset in SUBSETS:
+        outputs = {"df" + name: () for name in subset}
+        directory = tmp_path / "-".join(subset)
+        values = run_kernel(
+            source,
+            "f_derivs",
+            POINT,
+            outputs,
+            directory,
+            CHECKED_FLAGS,
+            wrap=False,
+        )
+        for name in outputs:
+            assert values[name] == pytest.approx(
+                full[name], rel=RELATIVE_TOLERANCE
+            ), (subset, name)
+    expression = cubic_core(NT, B, D, D1)
+    point = {SYMBOLS[name]: value for name, value in POINT.items()}
+    assert full["dfdBdT"] == pytest.approx(
+        float(sp.diff(expression, B, T).subs(point)), rel=1e-11
+    )
 
 
 COVOLUME = sp.IndexedBase("b")
