@@ -4,28 +4,17 @@ from collections.abc import Iterable
 from typing import NamedTuple, TYPE_CHECKING
 
 import sympy as sp
-from sympy.core.function import DefinedFunction
 
-from thermodiff.codegen.common import _DERIV_ORDER, _sanitize
+from thermodiff.codegen.common import (
+    _DERIV_ORDER,
+    _is_placeholder,
+    _sanitize,
+)
 from thermodiff.derivatives import resolve_derivatives
 from thermodiff.thermovars import nc
 
 if TYPE_CHECKING:
     from thermodiff.diffplz import DiffPlz
-
-
-def _is_placeholder(func: sp.Basic) -> bool:
-    """Return whether ``func`` is a user defined placeholder function.
-
-    Placeholder functions are the ones created with
-    :func:`~thermodiff.core.idxfunction.idx_function` or plain undefined
-    :class:`sympy.Function` objects.  SymPy provided functions (``exp``,
-    ``KroneckerDelta``, ``Piecewise`` ...) are defined functions and are
-    handled by the Fortran printer directly.
-    """
-    return isinstance(func, sp.Function) and not isinstance(
-        func, DefinedFunction
-    )
 
 
 class _PlaceholderResolver:

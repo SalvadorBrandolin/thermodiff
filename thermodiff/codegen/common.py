@@ -6,6 +6,7 @@ from collections.abc import Set as AbstractSet
 from typing import TypeVar
 
 import sympy as sp
+from sympy.core.function import DefinedFunction
 from sympy.printing.fortran import fcode
 
 from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES
@@ -67,6 +68,121 @@ def _sanitize(name: str) -> str:
     if clean[0].isdigit():
         clean = "v_" + clean
     return clean
+
+
+#: Names the generator itself declares as temporaries: ``t<number>`` and the
+#: accumulator ``res``.  A user name matching it (in any case) is renamed.
+_GENERATED_NAME = re.compile(r"(t\d+|res)", re.IGNORECASE)
+
+
+def _fortran_key(name: str) -> str:
+    """Return the key under which Fortran identifies ``name``.
+
+    Fortran is case-insensitive and the generator sanitises names, so two
+    names are the same variable when their keys are equal.
+    """
+    return _sanitize(name).lower()
+
+
+def _case_clash_renames(
+    fixed: Iterable[str], candidates: Iterable[str]
+) -> dict[str, str]:
+    """Rename the user names that would collide in Fortran.
+
+    ``fixed`` names (module symbols, integer arguments, the outputs and the
+    names the generator declares itself) keep their spelling; if two of
+    them differ only in case the clash cannot be solved and a
+    ``ValueError`` is raised.  A name of ``candidates`` (parameters,
+    placeholders) that collides with a fixed name, with a candidate seen
+    before it in sorted order, or with a generated name (``t1``, ``res``)
+    is renamed to ``<name>_<k>`` with the smallest free ``k``.
+
+    Parameters
+    ----------
+    fixed : iterable of str
+        Names that cannot be renamed.
+    candidates : iterable of str
+        Names that can be renamed.
+
+    Returns
+    -------
+    dict
+        ``old name -> new name`` for every renamed candidate (empty when
+        nothing clashes).
+
+    Raises
+    ------
+    ValueError
+        If two fixed names differ only in case.
+    """
+    taken: dict[str, str] = {}
+    for name in sorted(set(fixed)):
+        other = taken.setdefault(_fortran_key(name), name)
+        if other != name:
+            raise ValueError(
+                f"Names {other!r} and {name!r} are the same identifier in "
+                "Fortran (case-insensitive) and neither can be renamed "
+                "(module symbol, integer argument, output or fixed name)."
+            )
+    renames: dict[str, str] = {}
+    for name in sorted(set(candidates) - set(taken.values())):
+        key = _fortran_key(name)
+        if key not in taken and not _GENERATED_NAME.fullmatch(key):
+            taken[key] = name
+            continue
+        count = 1
+        while _fortran_key(f"{name}_{count}") in taken:
+            count += 1
+        renames[name] = f"{name}_{count}"
+        taken[_fortran_key(renames[name])] = renames[name]
+    return renames
+
+
+def _rename_names(expr: sp.Basic, renames: dict[str, str]) -> sp.Basic:
+    """Return ``expr`` with symbols, arrays and functions renamed.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to rewrite.
+    renames : dict
+        ``old name -> new name``; empty returns ``expr`` itself.
+
+    Returns
+    -------
+    sympy.Basic
+        The renamed expression (assumptions and array shapes kept).
+    """
+    if not renames:
+        return expr
+    expr = expr.replace(
+        lambda node: _is_placeholder(node) and node.func.__name__ in renames,
+        lambda node: sp.Function(renames[node.func.__name__])(*node.args),
+    )
+    mapping: dict[sp.Basic, sp.Basic] = {}
+    for base in expr.atoms(sp.IndexedBase):
+        if str(base) in renames:
+            mapping[base] = sp.IndexedBase(
+                renames[str(base)], shape=base.shape
+            )
+    for sym in expr.atoms(sp.Symbol):
+        if str(sym) in renames:
+            mapping[sym] = sp.Symbol(renames[str(sym)], **sym.assumptions0)
+    return expr.xreplace(mapping)
+
+
+def _is_placeholder(func: sp.Basic) -> bool:
+    """Return whether ``func`` is a user defined placeholder function.
+
+    Placeholder functions are the ones created with
+    :func:`~thermodiff.core.idxfunction.idx_function` or plain undefined
+    :class:`sympy.Function` objects.  SymPy provided functions (``exp``,
+    ``KroneckerDelta``, ``Piecewise`` ...) are defined functions and are
+    handled by the Fortran printer directly.
+    """
+    return isinstance(func, sp.Function) and not isinstance(
+        func, DefinedFunction
+    )
 
 
 _K = TypeVar("_K")

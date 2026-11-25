@@ -23,10 +23,13 @@ from thermodiff.codegen.common import (
     _LoopStart,
     _Namer,
     _canonical_floats,
+    _case_clash_renames,
     _free_indices,
+    _is_placeholder,
     _kron_to_piecewise,
     _order_free,
     _referenced_temp_names,
+    _rename_names,
     _sanitize,
     _temp_name,
 )
@@ -143,6 +146,97 @@ class _EmitContext:
     symmetric_params: tuple[str, ...]
 
 
+class _RenamedDiff:
+    """View of a ``DiffPlz`` whose symbol names were made case-unique.
+
+    Parameters
+    ----------
+    diff : DiffPlz
+        The instance to wrap.
+    renames : dict
+        ``old name -> new name`` applied to every expression read.
+    """
+
+    def __init__(self, diff: Any, renames: dict[str, str]) -> None:
+        self._diff = diff
+        self._renames = renames
+        self.name = diff.name
+        self.indexes = diff.indexes
+        self.expression = _rename_names(diff.expression, renames)
+
+    def __getattr__(self, attr: str) -> Any:
+        """Return the derivative ``attr`` with the names renamed."""
+        return _rename_names(getattr(self._diff, attr), self._renames)
+
+
+def _expression_names(expr: sp.Basic) -> tuple[set[str], set[str], set[str]]:
+    """Return the symbol, array and placeholder names used in ``expr``.
+
+    Returns
+    -------
+    tuple of set
+        ``(user names, index labels, thermodynamic symbols present)``:
+        the names of the symbols, arrays and placeholder functions that
+        are not ``T``, ``V``, ``P``, ``nc`` or ``n``; the labels of the
+        indices; and the names of those fixed symbols that appear.
+    """
+    names = {str(sym) for sym in expr.atoms(sp.Symbol)}
+    names.update(str(base) for base in expr.atoms(sp.IndexedBase))
+    names.update(
+        func.func.__name__
+        for func in expr.atoms(sp.Function)
+        if _is_placeholder(func)
+    )
+    fixed = {str(sym) for sym in (nc, n, P, T, V)}
+    indices = {str(idx) for idx in expr.atoms(sp.Idx)}
+    return names - fixed - indices, indices, names & fixed
+
+
+def _case_renames(
+    diff: Any,
+    selected: Sequence[str],
+    base: str,
+    external: set[str],
+    symmetric_params: Iterable[str],
+) -> dict[str, str]:
+    """Return the renames that make the names unique in Fortran.
+
+    Fortran is case-insensitive: ``R`` and ``r`` are one variable.  The
+    names of the parameters and placeholders are renamed (``r`` becomes
+    ``r_1``); module symbols, integer arguments, outputs, ``n``, ``nc``,
+    ``T``, ``V``, ``P`` and the indices keep their names.
+
+    Parameters
+    ----------
+    diff : DiffPlz
+        Instance holding the expression.
+    selected : sequence of str
+        Derivative attributes to emit.
+    base : str
+        Name of the value output.
+    external : set of str
+        Module symbols and integer arguments.
+    symmetric_params : iterable of str
+        Names that are parameters even if the expression hides them.
+
+    Returns
+    -------
+    dict
+        ``old name -> new name``, empty when no name clashes.
+
+    Raises
+    ------
+    ValueError
+        If two names that cannot be renamed differ only in case.
+    """
+    candidates, indices, thermo = _expression_names(diff.expression)
+    outputs = {base} | {"d" + base + _DERIV_SUFFIX[attr] for attr in selected}
+    fixed = external | outputs | indices | thermo
+    return _case_clash_renames(
+        fixed, (candidates | set(symmetric_params)) - external
+    )
+
+
 def _resolve_context(
     diff: Any,
     derivatives: Any,
@@ -172,14 +266,26 @@ def _resolve_context(
     sub_name = (
         _sanitize(subroutine_name) if subroutine_name else base + "_derivs"
     )
+    selected = tuple(_select_derivatives(diff, derivatives))
+    integer_names = tuple(integer_args or ())
+    module_names = frozenset(module_symbols or ())
+    renames = _case_renames(
+        diff,
+        selected,
+        base,
+        set(integer_names) | module_names,
+        symmetric_params or (),
+    )
     return _EmitContext(
-        diff=diff,
-        selected=tuple(_select_derivatives(diff, derivatives)),
+        diff=_RenamedDiff(diff, renames) if renames else diff,
+        selected=selected,
         base=base,
         sub_name=sub_name,
-        integer_args=tuple(integer_args or ()),
-        module_symbols=frozenset(module_symbols or ()),
-        symmetric_params=tuple(symmetric_params or ()),
+        integer_args=integer_names,
+        module_symbols=module_names,
+        symmetric_params=tuple(
+            renames.get(param, param) for param in symmetric_params or ()
+        ),
     )
 
 
@@ -997,6 +1103,17 @@ def _scan_signature(ctx: _EmitContext, state: _EmitState) -> None:
         or bool(state.param_arrays)
         or any(free for _, _, _, free in state.prepared)
         or any(sp.Symbol("nc") in scan.symbols for scan in scans)
+    )
+    # Backstop for names built by the generator (placeholder derivatives
+    # such as ``dgdT``) that the user names did not predict.
+    _case_clash_renames(
+        {out_name for _, out_name, _, _ in state.prepared}
+        | set(state.params)
+        | set(state.param_arrays)
+        | set(state.placeholder_args)
+        | set(state.module_symbols)
+        | set(state.integer_args),
+        (),
     )
 
 
