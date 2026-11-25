@@ -43,6 +43,7 @@ from thermodiff.codegen.cse import (
 from thermodiff.codegen.extents import (
     COMPONENT_EXTENT,
     annotate_index_ranges,
+    dimension_symbols,
     index_extent,
     ranged_slots,
 )
@@ -285,7 +286,12 @@ def _resolve_context(
         _sanitize(subroutine_name) if subroutine_name else base + "_derivs"
     )
     selected = tuple(_select_derivatives(diff, derivatives))
-    integer_names = tuple(integer_args or ())
+    explicit_names = tuple(integer_args or ())
+    integer_names = explicit_names + tuple(
+        name
+        for name in dimension_symbols(diff.expression)
+        if name not in explicit_names
+    )
     module_names = frozenset(module_symbols or ())
     renames = _case_renames(
         diff,

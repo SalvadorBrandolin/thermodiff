@@ -19,6 +19,8 @@ import pytest
 
 import sympy as sp
 
+from thermodiff import DiffPlz, l, m, n, sum_components, sum_custom, to_fortran
+from thermodiff.codegen.options import resolve_codegen_options
 from thermodiff.model import compile_model
 
 pytestmark = pytest.mark.skipif(
@@ -72,6 +74,29 @@ function
     sum_m[1:ng] q_m*X_m*log(S_m)
 """
 
+GROUP_MIXED = """model grp3
+target fortran
+
+variables
+    n   nc
+    T
+
+parameters
+    v   nc ng
+    q   ng
+    r   nc
+
+expressions
+    sr = sum_s n_s*r_s
+    phi_i = r_i*n_i/sr
+    X_m = sum_s n_s*v_sm
+    sq = sum_m[1:ng] q_m*X_m
+    theta_m = q_m*X_m/sq
+
+function
+    T*(sum_i n_i*log(phi_i/n_i) + sum_i n_i*sum_m[1:ng] v_im*log(theta_m))
+"""
+
 #: name -> shape (dimension names) of every parameter of the models.
 SHAPES = {
     "n": ("nc",),
@@ -79,6 +104,7 @@ SHAPES = {
     "x": ("ng",),
     "q": ("ng",),
     "a": ("ng", "ng"),
+    "r": ("nc",),
 }
 
 
@@ -121,6 +147,26 @@ def _reference_group_table(nc, ng, values):
     return moles, sum(
         values["q"][m] * amounts[m] * sp.log(surface[m]) for m in range(ng)
     )
+
+
+def _reference_group_mixed(nc, ng, values):
+    """Return the moles and f of ``GROUP_MIXED`` from explicit SymPy."""
+    moles = sp.symbols(f"n0:{nc}")
+    temperature = sp.Symbol("T")
+    ratio = sum(moles[s] * values["r"][s] for s in range(nc))
+    amounts = [
+        sum(moles[s] * values["v"][s, m] for s in range(nc)) for m in range(ng)
+    ]
+    total = sum(values["q"][m] * amounts[m] for m in range(ng))
+    theta = [values["q"][m] * amounts[m] / total for m in range(ng)]
+    combinatorial = sum(
+        moles[i] * sp.log(values["r"][i] / ratio) for i in range(nc)
+    )
+    residual = sum(
+        moles[i] * sum(values["v"][i, m] * sp.log(theta[m]) for m in range(ng))
+        for i in range(nc)
+    )
+    return moles, temperature * (combinatorial + residual)
 
 
 def _expected(moles, function, values, with_dt):
@@ -237,7 +283,10 @@ def _check(code, nc, ng, expected, with_dt):
 
 CASES = list(
     itertools.product(
-        PRESETS, [False, True], SIZES, ["group_sum", "group_table"]
+        PRESETS,
+        [False, True],
+        SIZES,
+        ["group_sum", "group_table", "group_mixed"],
     )
 )
 
@@ -251,8 +300,9 @@ def test_model_with_extra_dimension(preset, optional, sizes, model):
     text, reference = {
         "group_sum": (GROUP_SUM, _reference_group_sum),
         "group_table": (GROUP_TABLE, _reference_group_table),
+        "group_mixed": (GROUP_MIXED, _reference_group_mixed),
     }[model]
-    with_dt = model == "group_table"
+    with_dt = model != "group_sum"
     derivatives = "dn,dndn" + (",dT" if with_dt else "")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -265,3 +315,31 @@ def test_model_with_extra_dimension(preset, optional, sizes, model):
     moles, function = reference(nc, ng, values)
     expected = _expected(moles, function, values, with_dt)
     _check(code, nc, ng, expected, with_dt)
+
+
+def _api_group_sum_code(preset, optional):
+    """Generate ``GROUP_SUM`` through the Python API, wrapped in a module."""
+    groups = sp.Symbol("ng", integer=True, positive=True)
+    weights = sp.IndexedBase("v")
+    fractions = sp.IndexedBase("x")
+    amount = sum_components(n[l] * weights[l, m], l)
+    expression = sum_custom(fractions[m] * sp.log(amount), m, 1, groups)
+    diff = DiffPlz(expression, indexes=[l, m], name="grp")
+    options = resolve_codegen_options(preset, optional_derivatives=optional)
+    code = to_fortran(diff, ["dn", "dndn"], name="f", options=options)
+    return "module api_mod\n implicit none\ncontains\n" + code + "end module\n"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("preset", PRESETS)
+@pytest.mark.parametrize("optional", [False, True])
+@pytest.mark.parametrize("sizes", SIZES)
+def test_python_api_dimension_is_integer(preset, optional, sizes):
+    """A dimension symbol of ``sum_custom`` is an integer argument."""
+    nc, ng = sizes
+    values = _parameters(nc, ng)
+    code = _api_group_sum_code(preset, optional)
+    assert "integer, intent(in) :: ng" in code
+    assert "_S" not in code
+    moles, function = _reference_group_sum(nc, ng, values)
+    _check(code, nc, ng, _expected(moles, function, values, False), False)

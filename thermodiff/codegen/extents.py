@@ -231,3 +231,26 @@ def ranged_slots(
         for slot, index in zip(slots, indices)
     }
     return {slot: new for slot, new in mapping.items() if new != slot}
+
+
+def dimension_symbols(expression: sp.Basic) -> list[str]:
+    """Return the names of the extra dimensions that bound summations.
+
+    Parameters
+    ----------
+    expression : sympy expression
+        Expression of the model.
+
+    Returns
+    -------
+    list of str
+        Sorted names of the symbols, other than ``nc``, that are a limit of
+        a summation.  They are ``integer`` arguments of the kernel.
+    """
+    names: set[str] = set()
+    for total in expression.atoms(sp.Sum):
+        for _index, low, high in total.limits:
+            names.update(
+                str(bound) for bound in (low, high) if _dimension_symbol(bound)
+            )
+    return sorted(names)
