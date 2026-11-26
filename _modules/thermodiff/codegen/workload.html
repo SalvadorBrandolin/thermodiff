@@ -1,0 +1,1407 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="../../../genindex.html"><link rel="search" title="Search" href="../../../search.html">
+
+    <!-- Generated with Sphinx 9.2.0 and Furo 2025.12.19 -->
+        <title>thermodiff.codegen.workload - thermodiff 2.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../../index.html"><div class="brand">thermodiff 2.0.0 documentation</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../../index.html">
+  
+  <span class="sidebar-brand-text">thermodiff 2.0.0 documentation</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../tutorial/index.html">Tutorial</a><input aria-label="Toggle navigation of Tutorial" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/getting_started.html">Getting started</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/mole_fraction.html">Tutorial: the basics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/mhv.html">Differentiate: Modified Huron-Vidal mixrule</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/fortran.html">Fortran code generation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../tutorial/model_file.html">Model files: compiling a <code class="docutils literal notranslate"><span class="pre">.model</span></code> file to Fortran</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../../architecture.html">Code generator architecture</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../thermovars.html">Thermodynamic Variables</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../diffplz.html">DiffPlz</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../fortran.html">Fortran code generation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../model.html">Model files (<code class="docutils literal notranslate"><span class="pre">.model</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../gui.html">Graphical front-end</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../latex_utils.html">LaTeX Utilities</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../../core/init.html">Core module</a><input aria-label="Toggle navigation of Core module" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../../core/idxfunction.html">IndexBase Function</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../core/kronecker_handling.html">Kronecker delta Handling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../core/easy_sums.html">Easy Summations Functions</a></li>
+</ul>
+</li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <h1>Source code for thermodiff.codegen.workload</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""Workload mode: fixed-output kernels behind one dispatcher.</span>
+
+<span class="sd">``optional_derivatives=True`` gives one kernel for any output set, but it</span>
+<span class="sd">pays a fixed cost on every call and disables the loop passes of the</span>
+<span class="sd">``fastest`` preset.  The workload mode keeps that single public entry point</span>
+<span class="sd">and makes it cheap:</span>
+
+<span class="sd">* one *fixed-output* kernel per requested output set</span>
+<span class="sd">  (``optional_derivatives=False``, specialised by the generator);</span>
+<span class="sd">* the ``optional_derivatives=True`` kernel as a fallback;</span>
+<span class="sd">* a dispatcher with the public signature of the optional kernel.  It builds</span>
+<span class="sd">  a bit mask from ``present()`` and selects the kernel whose output set is</span>
+<span class="sd">  *exactly* the present set with ``select case``; any other combination</span>
+<span class="sd">  goes to the fallback.  Covering a request with a larger kernel would need</span>
+<span class="sd">  scratch arrays for the extra outputs, which costs more than it saves.</span>
+
+<span class="sd">Optionally (``fixed_nc``) every fixed-output kernel is also copied once per</span>
+<span class="sd">listed number of components, with ``nc`` turned into a named constant so</span>
+<span class="sd">that the compiler unrolls the loops, drops the array descriptors and keeps</span>
+<span class="sd">the temporaries on the stack.  The dispatcher selects the copy by ``nc``.</span>
+
+<span class="sd">The module is built on top of :func:`~thermodiff.codegen.pipeline.to_fortran`:</span>
+<span class="sd">the kernels are generated one by one, parsed for their dummy arguments and</span>
+<span class="sd">rewritten textually (names, array dummies, directives).  The dummy lists</span>
+<span class="sd">are read from the generated code, so extra integer dimensions and the</span>
+<span class="sd">placeholder arguments are forwarded without special cases.</span>
+
+<span class="sd">Performance pitfalls handled here (measured by the ``yaeos`` benchmarks):</span>
+
+<span class="sd">* the dispatcher's *optional* array dummies are not ``contiguous``: an</span>
+<span class="sd">  absent or disassociated actual argument would make gfortran try to pack</span>
+<span class="sd">  it and crash; the *inputs* keep ``contiguous`` (they are never absent);</span>
+<span class="sd">* the fixed-output kernels get explicit-shape dummies (``n(nc)``,</span>
+<span class="sd">  ``dBij(nc, nc)``), so forwarding the dispatcher's arrays makes no copy</span>
+<span class="sd">  and the descriptor handling disappears (about 7 % of a small kernel).</span>
+<span class="sd">  Explicit shape re-strides an actual array whose leading extents differ</span>
+<span class="sd">  from the declared ones, so the dispatcher calls such a kernel only when</span>
+<span class="sd">  ``size(x, d)`` equals the declared extent of every dimension but the last</span>
+<span class="sd">  of every array of rank two or more (inputs and outputs); otherwise it</span>
+<span class="sd">  calls the assumed-shape fallback (:func:`shape_guard`);</span>
+<span class="sd">* ``!GCC$ ATTRIBUTES NOINLINE`` on the fixed-output kernels: at ``-O3``</span>
+<span class="sd">  gfortran inlines them into the dispatcher and the code loses the</span>
+<span class="sd">  contiguity facts (up to 18x slower).</span>
+<span class="sd">"""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">dataclasses</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">,</span> <span class="n">Sequence</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff.codegen.common</span><span class="w"> </span><span class="kn">import</span> <span class="n">unique_name</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff.codegen.options</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">CodegenOptions</span><span class="p">,</span>
+    <span class="n">Preset</span><span class="p">,</span>
+    <span class="n">resolve_codegen_options</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">thermodiff.codegen.pipeline</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_fortran</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"workload_module"</span><span class="p">,</span> <span class="s2">"workload_procedures"</span><span class="p">]</span>
+
+<span class="c1">#: Name of the component-count dummy of the generated kernels.</span>
+<span class="n">NC_NAME</span> <span class="o">=</span> <span class="s2">"nc"</span>
+<span class="c1">#: Dummy that keeps the ``nc`` slot of a fixed-nc copy.</span>
+<span class="n">NC_DUMMY_NAME</span> <span class="o">=</span> <span class="s2">"nc_in"</span>
+<span class="c1">#: Largest number of outputs: the mask is a default (32-bit) integer.</span>
+<span class="n">MAX_MASK_OUTPUTS</span> <span class="o">=</span> <span class="mi">30</span>
+<span class="c1">#: Dimension specification of an assumed-shape dummy.</span>
+<span class="n">ASSUMED_EXTENT</span> <span class="o">=</span> <span class="s2">":"</span>
+<span class="c1">#: Local variable of the dispatcher that holds the bit mask.</span>
+<span class="n">MASK_NAME</span> <span class="o">=</span> <span class="s2">"present_mask_"</span>
+<span class="c1">#: Column at which wrapped calls and headers continue.</span>
+<span class="n">WRAP_WIDTH</span> <span class="o">=</span> <span class="mi">100</span>
+<span class="c1">#: gfortran directive that keeps a kernel out of the dispatcher.</span>
+<span class="n">NOINLINE_DIRECTIVE</span> <span class="o">=</span> <span class="s2">"!GCC$ ATTRIBUTES NOINLINE :: </span><span class="si">{name}</span><span class="s2">"</span>
+
+<span class="n">_HEADER</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">"^\s*subroutine\s+(\w+)\s*\("</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+<span class="n">_IMPLICIT</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">"^\s*implicit\s+none\b"</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+<span class="n">_USE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">"^\s*use\s"</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+<span class="n">_CONTAINS</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">"^\s*contains\b"</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+<span class="n">_DECL</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="sa">r</span><span class="s2">"^(?P&lt;indent&gt;\s*)(?P&lt;head&gt;(?:real|integer)\b[^:]*?)::(?P&lt;items&gt;.*)$"</span><span class="p">,</span>
+    <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_ITEM</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">"^\s*(\w+)\s*(?:\((.*)\))?\s*$"</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">S</span><span class="p">)</span>
+
+
+<span class="nd">@dataclasses</span><span class="o">.</span><span class="n">dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Dummy</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""A dummy argument declaration.</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    name : str</span>
+<span class="sd">        Dummy argument name.</span>
+<span class="sd">    spec : str</span>
+<span class="sd">        Type specification, for example ``real(8)`` or ``integer``.</span>
+<span class="sd">    attrs : list of str</span>
+<span class="sd">        Attributes in their original order (``contiguous``,</span>
+<span class="sd">        ``intent(out)``, ...).</span>
+<span class="sd">    dims : list of str</span>
+<span class="sd">        Dimension specifications (``":"`` for assumed shape); empty for</span>
+<span class="sd">        scalars.</span>
+<span class="sd">    """</span>
+
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">spec</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">attrs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">dims</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">rank</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Number of array dimensions (0 for scalars)."""</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dims</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_output</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Whether the dummy is ``intent(out)``."""</span>
+        <span class="k">return</span> <span class="s2">"intent(out)"</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_attr_set</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_optional</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Whether the dummy is ``optional``."""</span>
+        <span class="k">return</span> <span class="s2">"optional"</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_attr_set</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_attr_set</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s2">"\s+"</span><span class="p">,</span> <span class="s2">""</span><span class="p">,</span> <span class="n">attr</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">attr</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">attrs</span><span class="p">}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Return the declaration without indentation."""</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">spec</span><span class="p">,</span> <span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">attrs</span><span class="p">])</span> <span class="o">+</span> <span class="s2">" :: "</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dims</span><span class="p">:</span>
+            <span class="n">text</span> <span class="o">+=</span> <span class="s2">"("</span> <span class="o">+</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dims</span><span class="p">)</span> <span class="o">+</span> <span class="s2">")"</span>
+        <span class="k">return</span> <span class="n">text</span>
+
+
+<span class="nd">@dataclasses</span><span class="o">.</span><span class="n">dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">KernelInterface</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""What the workload mode needs to know about a generated kernel.</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    name : str</span>
+<span class="sd">        Subroutine name.</span>
+<span class="sd">    args : list of str</span>
+<span class="sd">        Dummy argument names in declaration order.</span>
+<span class="sd">    dummies : dict</span>
+<span class="sd">        Lower-case name to :class:`Dummy`.</span>
+<span class="sd">    lines : list of str</span>
+<span class="sd">        Source lines of the kernel.</span>
+<span class="sd">    header_end : int</span>
+<span class="sd">        Index of the first line after the subroutine header.</span>
+<span class="sd">    decl_lines : dict</span>
+<span class="sd">        Lower-case dummy name to the index of its declaration line.</span>
+<span class="sd">    indent : str</span>
+<span class="sd">        Indentation of the ``subroutine`` line.</span>
+<span class="sd">    uses : list of str</span>
+<span class="sd">        ``use`` statements of the specification part.</span>
+<span class="sd">    """</span>
+
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">args</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">dummies</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dummy</span><span class="p">]</span>
+    <span class="n">lines</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">header_end</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">decl_lines</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+    <span class="n">indent</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">uses</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">outputs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""Names of the ``intent(out)`` dummies, in argument order."""</span>
+        <span class="k">return</span> <span class="p">[</span>
+            <span class="n">arg</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">args</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dummies</span><span class="p">[</span><span class="n">arg</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span><span class="o">.</span><span class="n">is_output</span>
+        <span class="p">]</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">has_nc</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Whether the kernel receives the number of components."""</span>
+        <span class="k">return</span> <span class="n">NC_NAME</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">dummies</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">has_extra_dimensions</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Whether integer dummies other than ``nc`` are present."""</span>
+        <span class="k">return</span> <span class="nb">any</span><span class="p">(</span>
+            <span class="n">dummy</span><span class="o">.</span><span class="n">spec</span> <span class="o">==</span> <span class="s2">"integer"</span> <span class="ow">and</span> <span class="n">dummy</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">!=</span> <span class="n">NC_NAME</span>
+            <span class="k">for</span> <span class="n">dummy</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">dummies</span><span class="o">.</span><span class="n">values</span><span class="p">()</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_split_top_level</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Split ``text`` at the commas that are outside parentheses."""</span>
+    <span class="n">pieces</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">depth</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">current</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="k">for</span> <span class="n">char</span> <span class="ow">in</span> <span class="n">text</span><span class="p">:</span>
+        <span class="n">depth</span> <span class="o">+=</span> <span class="p">(</span><span class="n">char</span> <span class="o">==</span> <span class="s2">"("</span><span class="p">)</span> <span class="o">-</span> <span class="p">(</span><span class="n">char</span> <span class="o">==</span> <span class="s2">")"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">char</span> <span class="o">==</span> <span class="s2">","</span> <span class="ow">and</span> <span class="n">depth</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">pieces</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">current</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+            <span class="n">current</span> <span class="o">=</span> <span class="s2">""</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">current</span> <span class="o">+=</span> <span class="n">char</span>
+    <span class="k">if</span> <span class="n">current</span><span class="o">.</span><span class="n">strip</span><span class="p">():</span>
+        <span class="n">pieces</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">current</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">pieces</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_read_header</span><span class="p">(</span><span class="n">lines</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Return the name, arguments, first and end line of the header."""</span>
+    <span class="k">for</span> <span class="n">start</span><span class="p">,</span> <span class="n">line</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">lines</span><span class="p">):</span>
+        <span class="n">match</span> <span class="o">=</span> <span class="n">_HEADER</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">match</span><span class="p">:</span>
+            <span class="k">break</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"no subroutine found in the kernel source"</span><span class="p">)</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">end</span> <span class="o">=</span> <span class="n">start</span>
+    <span class="k">while</span> <span class="n">text</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="s2">"("</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">text</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="s2">"("</span><span class="p">)</span> <span class="o">!=</span> <span class="n">text</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="s2">")"</span><span class="p">):</span>
+        <span class="n">text</span> <span class="o">+=</span> <span class="s2">" "</span> <span class="o">+</span> <span class="n">lines</span><span class="p">[</span><span class="n">end</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">rstrip</span><span class="p">(</span><span class="s2">"&amp;"</span><span class="p">)</span><span class="o">.</span><span class="n">lstrip</span><span class="p">(</span><span class="s2">"&amp;"</span><span class="p">)</span>
+        <span class="n">end</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="n">inside</span> <span class="o">=</span> <span class="n">text</span><span class="p">[</span><span class="n">text</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="s2">"("</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span> <span class="p">:</span> <span class="n">text</span><span class="o">.</span><span class="n">rindex</span><span class="p">(</span><span class="s2">")"</span><span class="p">)]</span>
+    <span class="k">return</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="n">_split_top_level</span><span class="p">(</span><span class="n">inside</span><span class="p">),</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_declaration</span><span class="p">(</span><span class="n">line</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Dummy</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Parse a type declaration line into one record per declared name.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    line : str</span>
+<span class="sd">        One source line.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    list of Dummy</span>
+<span class="sd">        One record per declared name; empty if ``line`` is not a ``real``</span>
+<span class="sd">        or ``integer`` declaration.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If an item of the declaration cannot be parsed.</span>
+<span class="sd">    """</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">_DECL</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">match</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="n">head</span> <span class="o">=</span> <span class="n">_split_top_level</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s2">"head"</span><span class="p">))</span>
+    <span class="n">dummies</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">_split_top_level</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s2">"items"</span><span class="p">)):</span>
+        <span class="n">parsed</span> <span class="o">=</span> <span class="n">_ITEM</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">parsed</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"cannot parse the declaration </span><span class="si">{</span><span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="si">!r}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">dims</span> <span class="o">=</span> <span class="n">_split_top_level</span><span class="p">(</span><span class="n">parsed</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span> <span class="k">if</span> <span class="n">parsed</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="k">else</span> <span class="p">[]</span>
+        <span class="n">dummies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Dummy</span><span class="p">(</span><span class="n">parsed</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="n">head</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">head</span><span class="p">[</span><span class="mi">1</span><span class="p">:],</span> <span class="n">dims</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">dummies</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_count_uses</span><span class="p">(</span><span class="n">lines</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Count the ``use`` lines that precede ``implicit none``."""</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">[</span><span class="n">start</span><span class="p">:]:</span>
+        <span class="k">if</span> <span class="n">_IMPLICIT</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">line</span><span class="p">):</span>
+            <span class="k">break</span>
+        <span class="n">count</span> <span class="o">+=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">_USE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">line</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">count</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_kernel</span><span class="p">(</span><span class="n">source</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">KernelInterface</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Read the interface of a generated kernel.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    source : str</span>
+<span class="sd">        Text of one generated subroutine.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    KernelInterface</span>
+<span class="sd">        Name, dummy list and the declaration of every dummy.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If a dummy has no declaration or shares a line with a local.</span>
+<span class="sd">    """</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+    <span class="n">name</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">start</span><span class="p">,</span> <span class="n">header_end</span> <span class="o">=</span> <span class="n">_read_header</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+    <span class="n">wanted</span> <span class="o">=</span> <span class="p">{</span><span class="n">arg</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">args</span><span class="p">}</span>
+    <span class="n">dummies</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dummy</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">decl_lines</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">header_end</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">lines</span><span class="p">)):</span>
+        <span class="k">if</span> <span class="n">_CONTAINS</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="n">index</span><span class="p">]):</span>
+            <span class="k">break</span>
+        <span class="n">found</span> <span class="o">=</span> <span class="n">parse_declaration</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="n">index</span><span class="p">])</span>
+        <span class="n">mine</span> <span class="o">=</span> <span class="p">[</span><span class="n">dummy</span> <span class="k">for</span> <span class="n">dummy</span> <span class="ow">in</span> <span class="n">found</span> <span class="k">if</span> <span class="n">dummy</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">wanted</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">mine</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">mine</span><span class="p">)</span> <span class="o">!=</span> <span class="nb">len</span><span class="p">(</span><span class="n">found</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: dummy and local on one line"</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">dummy</span> <span class="ow">in</span> <span class="n">mine</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">dummy</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">dummies</span><span class="p">:</span>
+                <span class="n">dummies</span><span class="p">[</span><span class="n">dummy</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span> <span class="o">=</span> <span class="n">dummy</span>
+                <span class="n">decl_lines</span><span class="p">[</span><span class="n">dummy</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span> <span class="o">=</span> <span class="n">index</span>
+    <span class="n">missing</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">wanted</span> <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="n">dummies</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: no declaration for </span><span class="si">{</span><span class="n">missing</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="n">uses</span> <span class="o">=</span> <span class="p">[</span><span class="n">line</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">[</span><span class="n">header_end</span><span class="p">:]</span> <span class="k">if</span> <span class="n">_USE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">line</span><span class="p">)]</span>
+    <span class="k">return</span> <span class="n">KernelInterface</span><span class="p">(</span>
+        <span class="n">name</span><span class="p">,</span>
+        <span class="n">args</span><span class="p">,</span>
+        <span class="n">dummies</span><span class="p">,</span>
+        <span class="n">lines</span><span class="p">,</span>
+        <span class="n">header_end</span><span class="p">,</span>
+        <span class="n">decl_lines</span><span class="p">,</span>
+        <span class="n">_indent_of</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="n">start</span><span class="p">]),</span>
+        <span class="p">[</span><span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">uses</span><span class="p">[:</span> <span class="n">_count_uses</span><span class="p">(</span><span class="n">lines</span><span class="p">,</span> <span class="n">header_end</span><span class="p">)]],</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_wrap_items</span><span class="p">(</span><span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">items</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">suffix</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Join ``prefix item, item ... suffix`` with ``&amp;`` continuations."""</span>
+    <span class="n">lines</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">current</span> <span class="o">=</span> <span class="n">prefix</span>
+    <span class="n">indent</span> <span class="o">=</span> <span class="s2">" "</span> <span class="o">*</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">prefix</span><span class="o">.</span><span class="n">lstrip</span><span class="p">())</span> <span class="o">+</span> <span class="mi">5</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">position</span><span class="p">,</span> <span class="n">item</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">items</span><span class="p">):</span>
+        <span class="n">piece</span> <span class="o">=</span> <span class="n">item</span> <span class="o">+</span> <span class="p">(</span><span class="s2">","</span> <span class="k">if</span> <span class="n">position</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span> <span class="k">else</span> <span class="n">suffix</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">current</span><span class="p">)</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">piece</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">&gt;</span> <span class="n">WRAP_WIDTH</span> <span class="ow">and</span> <span class="n">current</span><span class="o">.</span><span class="n">strip</span><span class="p">():</span>
+            <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">current</span><span class="o">.</span><span class="n">rstrip</span><span class="p">()</span> <span class="o">+</span> <span class="s2">" &amp;"</span><span class="p">)</span>
+            <span class="n">current</span> <span class="o">=</span> <span class="n">indent</span>
+        <span class="n">current</span> <span class="o">+=</span> <span class="n">piece</span> <span class="o">+</span> <span class="s2">" "</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">current</span><span class="o">.</span><span class="n">rstrip</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">lines</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_indent_of</span><span class="p">(</span><span class="n">line</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">line</span><span class="p">[:</span> <span class="nb">len</span><span class="p">(</span><span class="n">line</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">line</span><span class="o">.</span><span class="n">lstrip</span><span class="p">())]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">render_kernel</span><span class="p">(</span>
+    <span class="n">iface</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">args</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">edit</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Dummy</span><span class="p">],</span> <span class="n">Dummy</span><span class="p">],</span>
+    <span class="n">after_implicit</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Rewrite a kernel with a new name, argument list and declarations.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    iface : KernelInterface</span>
+<span class="sd">        Parsed kernel.</span>
+<span class="sd">    name : str</span>
+<span class="sd">        New subroutine name.</span>
+<span class="sd">    args : sequence of str</span>
+<span class="sd">        Argument list of the new header.</span>
+<span class="sd">    edit : callable</span>
+<span class="sd">        Maps each dummy declaration to its new declaration.</span>
+<span class="sd">    after_implicit : sequence of str</span>
+<span class="sd">        Lines inserted right after ``implicit none`` (indentation is</span>
+<span class="sd">        added).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        The kernel text.</span>
+<span class="sd">    """</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">_wrap_items</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">iface</span><span class="o">.</span><span class="n">indent</span><span class="si">}</span><span class="s2">subroutine </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">("</span><span class="p">,</span> <span class="nb">list</span><span class="p">(</span><span class="n">args</span><span class="p">),</span> <span class="s2">")"</span><span class="p">)</span>
+    <span class="n">by_line</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">Dummy</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">index</span> <span class="ow">in</span> <span class="n">iface</span><span class="o">.</span><span class="n">decl_lines</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">by_line</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">iface</span><span class="o">.</span><span class="n">dummies</span><span class="p">[</span><span class="n">key</span><span class="p">])</span>
+    <span class="n">old_end</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">rf</span><span class="s2">"^(\s*end\s+subroutine\s+)</span><span class="si">{</span><span class="n">iface</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">\b"</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+    <span class="n">body_indent</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">iface</span><span class="o">.</span><span class="n">header_end</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">iface</span><span class="o">.</span><span class="n">lines</span><span class="p">)):</span>
+        <span class="n">line</span> <span class="o">=</span> <span class="n">iface</span><span class="o">.</span><span class="n">lines</span><span class="p">[</span><span class="n">index</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">index</span> <span class="ow">in</span> <span class="n">by_line</span><span class="p">:</span>
+            <span class="n">indent</span> <span class="o">=</span> <span class="n">_indent_of</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+            <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                    <span class="n">indent</span> <span class="o">+</span> <span class="n">edit</span><span class="p">(</span><span class="n">dummy</span><span class="p">)</span><span class="o">.</span><span class="n">render</span><span class="p">()</span> <span class="k">for</span> <span class="n">dummy</span> <span class="ow">in</span> <span class="n">by_line</span><span class="p">[</span><span class="n">index</span><span class="p">]</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+            <span class="k">continue</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">old_end</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">rf</span><span class="s2">"\g&lt;1&gt;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">line</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">_IMPLICIT</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">line</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">body_indent</span><span class="p">:</span>
+            <span class="n">body_indent</span> <span class="o">=</span> <span class="n">_indent_of</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+            <span class="n">lines</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">body_indent</span> <span class="o">+</span> <span class="n">text</span> <span class="k">for</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">after_implicit</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_drop_contiguous</span><span class="p">(</span><span class="n">dummy</span><span class="p">:</span> <span class="n">Dummy</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dummy</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Return ``dummy`` without the ``contiguous`` attribute."""</span>
+    <span class="n">attrs</span> <span class="o">=</span> <span class="p">[</span><span class="n">attr</span> <span class="k">for</span> <span class="n">attr</span> <span class="ow">in</span> <span class="n">dummy</span><span class="o">.</span><span class="n">attrs</span> <span class="k">if</span> <span class="n">attr</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"contiguous"</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">dummy</span><span class="p">,</span> <span class="n">attrs</span><span class="o">=</span><span class="n">attrs</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_drop_contiguous_if_optional</span><span class="p">(</span><span class="n">dummy</span><span class="p">:</span> <span class="n">Dummy</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dummy</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Keep ``contiguous`` on the never-absent dummies only."""</span>
+    <span class="k">return</span> <span class="n">_drop_contiguous</span><span class="p">(</span><span class="n">dummy</span><span class="p">)</span> <span class="k">if</span> <span class="n">dummy</span><span class="o">.</span><span class="n">is_optional</span> <span class="k">else</span> <span class="n">dummy</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">relax_optional_contiguity</span><span class="p">(</span><span class="n">source</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Drop ``contiguous`` from every ``optional`` declaration of a kernel.</span>
+
+<span class="sd">    The fallback receives the dispatcher's optional arrays, which are not</span>
+<span class="sd">    ``contiguous``; forwarding an absent one to a ``contiguous`` dummy</span>
+<span class="sd">    makes gfortran try to pack it and crash.  Every procedure of the text</span>
+<span class="sd">    is rewritten (with ``work_array`` the internal body has its own</span>
+<span class="sd">    declarations).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    source : str</span>
+<span class="sd">        Kernel text.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        The text without ``contiguous`` on the optional dummies.</span>
+<span class="sd">    """</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">source</span><span class="o">.</span><span class="n">splitlines</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">_DECL</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">line</span><span class="p">)</span> <span class="ow">and</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">"\boptional\b"</span><span class="p">,</span> <span class="n">line</span><span class="p">):</span>
+            <span class="n">line</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s2">",\s*contiguous\b"</span><span class="p">,</span> <span class="s2">""</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+
+
+<span class="nd">@dataclasses</span><span class="o">.</span><span class="n">dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">_ExplicitShape</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Editor that turns assumed-shape dummies into explicit-shape ones.</span>
+
+<span class="sd">    Outputs always have extents ``nc``.  Inputs take theirs from</span>
+<span class="sd">    ``extents``; without an entry they are ``nc`` too, unless the kernel</span>
+<span class="sd">    has extra integer dimensions (then the shape is unknown and the dummy</span>
+<span class="sd">    stays assumed shape, which is correct but slower).  With</span>
+<span class="sd">    ``rename_nc`` the dummy ``nc`` is renamed to that name.</span>
+<span class="sd">    """</span>
+
+    <span class="n">iface</span><span class="p">:</span> <span class="n">KernelInterface</span>
+    <span class="n">extents</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]</span>
+    <span class="n">rename_nc</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dummy</span><span class="p">:</span> <span class="n">Dummy</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dummy</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Return the new declaration of ``dummy``."""</span>
+        <span class="n">dummy</span> <span class="o">=</span> <span class="n">_drop_contiguous</span><span class="p">(</span><span class="n">dummy</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">rename_nc</span> <span class="ow">and</span> <span class="n">dummy</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="n">NC_NAME</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">dummy</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">rename_nc</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dummy</span><span class="o">.</span><span class="n">rank</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">iface</span><span class="o">.</span><span class="n">has_nc</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">dummy</span>
+        <span class="n">dims</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dims</span><span class="p">(</span><span class="n">dummy</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dims</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">dummy</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">dims</span><span class="p">)</span> <span class="o">!=</span> <span class="n">dummy</span><span class="o">.</span><span class="n">rank</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">iface</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: extents of </span><span class="si">{</span><span class="n">dummy</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> have the "</span>
+                <span class="s2">"wrong rank"</span>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">dummy</span><span class="p">,</span> <span class="n">dims</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">dims</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_dims</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dummy</span><span class="p">:</span> <span class="n">Dummy</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">dummy</span><span class="o">.</span><span class="n">is_output</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[</span><span class="n">NC_NAME</span><span class="p">]</span> <span class="o">*</span> <span class="n">dummy</span><span class="o">.</span><span class="n">rank</span>
+        <span class="k">if</span> <span class="n">dummy</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">extents</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">extents</span><span class="p">[</span><span class="n">dummy</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">iface</span><span class="o">.</span><span class="n">has_extra_dimensions</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">NC_NAME</span><span class="p">]</span> <span class="o">*</span> <span class="n">dummy</span><span class="o">.</span><span class="n">rank</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_lower_extents</span><span class="p">(</span>
+    <span class="n">extents</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""Return ``extents`` with lower-case names and tuple values."""</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">key</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">extents</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">shape_guard</span><span class="p">(</span>
+    <span class="n">iface</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span> <span class="n">extents</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Return the conditions under which explicit-shape dummies are safe.</span>
+
+<span class="sd">    An explicit-shape dummy ``a(nc, nc)`` re-strides the actual argument</span>
+<span class="sd">    by sequence association: it reads the right elements only when the</span>
+<span class="sd">    leading extents of the actual array are exactly the declared ones.</span>
+<span class="sd">    (Rank-1 dummies, and the last extent of any array, cannot go wrong:</span>
+<span class="sd">    only the first elements are used.)  The dispatcher routes to the</span>
+<span class="sd">    assumed-shape fallback unless every condition holds.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    iface : KernelInterface</span>
+<span class="sd">        Parsed fixed-output kernel.</span>
+<span class="sd">    extents : mapping</span>
+<span class="sd">        Extents of the input arrays (see :func:`workload_procedures`).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    list of str</span>
+<span class="sd">        Fortran logical expressions, such as ``size(a, 1) == nc``; empty</span>
+<span class="sd">        when no dummy needs a check.</span>
+<span class="sd">    """</span>
+    <span class="n">editor</span> <span class="o">=</span> <span class="n">_ExplicitShape</span><span class="p">(</span><span class="n">iface</span><span class="p">,</span> <span class="n">_lower_extents</span><span class="p">(</span><span class="n">extents</span><span class="p">))</span>
+    <span class="n">conditions</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">iface</span><span class="o">.</span><span class="n">args</span><span class="p">:</span>
+        <span class="n">dummy</span> <span class="o">=</span> <span class="n">iface</span><span class="o">.</span><span class="n">dummies</span><span class="p">[</span><span class="n">arg</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span>
+        <span class="k">if</span> <span class="n">dummy</span><span class="o">.</span><span class="n">rank</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="k">for</span> <span class="n">position</span><span class="p">,</span> <span class="n">extent</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">editor</span><span class="p">(</span><span class="n">dummy</span><span class="p">)</span><span class="o">.</span><span class="n">dims</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">start</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">extent</span> <span class="o">!=</span> <span class="n">ASSUMED_EXTENT</span><span class="p">:</span>
+                <span class="n">conditions</span><span class="p">[</span><span class="sa">f</span><span class="s2">"size(</span><span class="si">{</span><span class="n">arg</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">position</span><span class="si">}</span><span class="s2">) == </span><span class="si">{</span><span class="n">extent</span><span class="si">}</span><span class="s2">"</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">conditions</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">specialise_kernel</span><span class="p">(</span>
+    <span class="n">iface</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">extents</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span>
+    <span class="n">fixed_nc</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">nc_dummy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">NC_DUMMY_NAME</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Make a fixed-output kernel callable from the dispatcher.</span>
+
+<span class="sd">    Array dummies become explicit shape, ``contiguous`` is dropped (it is</span>
+<span class="sd">    illegal on explicit-shape dummies) and the no-inline directive is</span>
+<span class="sd">    added.  With ``fixed_nc`` the dummy ``nc`` becomes the named constant</span>
+<span class="sd">    and the signature keeps a dummy ``nc_dummy`` in its place.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    iface : KernelInterface</span>
+<span class="sd">        Parsed fixed-output kernel.</span>
+<span class="sd">    name : str</span>
+<span class="sd">        Name of the new subroutine.</span>
+<span class="sd">    extents : mapping</span>
+<span class="sd">        Extents of the input arrays (see :func:`workload_procedures`).</span>
+<span class="sd">    fixed_nc : int, optional</span>
+<span class="sd">        Compile-time number of components.</span>
+<span class="sd">    nc_dummy : str, optional</span>
+<span class="sd">        Name of the dummy that takes the place of ``nc`` in a fixed-nc</span>
+<span class="sd">        copy; it must not clash with another name of the kernel.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        The kernel text.</span>
+<span class="sd">    """</span>
+    <span class="n">lowered</span> <span class="o">=</span> <span class="n">_lower_extents</span><span class="p">(</span><span class="n">extents</span><span class="p">)</span>
+    <span class="n">fixed</span> <span class="o">=</span> <span class="n">fixed_nc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">iface</span><span class="o">.</span><span class="n">has_nc</span>
+    <span class="n">extra</span> <span class="o">=</span> <span class="p">[</span><span class="n">NOINLINE_DIRECTIVE</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">)]</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">iface</span><span class="o">.</span><span class="n">args</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">fixed</span><span class="p">:</span>
+        <span class="n">extra</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"integer, parameter :: </span><span class="si">{</span><span class="n">NC_NAME</span><span class="si">}</span><span class="s2"> = </span><span class="si">{</span><span class="n">fixed_nc</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">args</span> <span class="o">=</span> <span class="p">[</span><span class="n">nc_dummy</span> <span class="k">if</span> <span class="n">arg</span> <span class="o">==</span> <span class="n">NC_NAME</span> <span class="k">else</span> <span class="n">arg</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">args</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">render_kernel</span><span class="p">(</span>
+        <span class="n">iface</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
+        <span class="n">args</span><span class="o">=</span><span class="n">args</span><span class="p">,</span>
+        <span class="n">edit</span><span class="o">=</span><span class="n">_ExplicitShape</span><span class="p">(</span>
+            <span class="n">iface</span><span class="p">,</span> <span class="n">lowered</span><span class="p">,</span> <span class="n">rename_nc</span><span class="o">=</span><span class="n">nc_dummy</span> <span class="k">if</span> <span class="n">fixed</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">),</span>
+        <span class="n">after_implicit</span><span class="o">=</span><span class="n">extra</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="nd">@dataclasses</span><span class="o">.</span><span class="n">dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Specialised</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""A fixed-output kernel and the data of its dispatcher branch.</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    name : str</span>
+<span class="sd">        Name of the kernel.</span>
+<span class="sd">    iface : KernelInterface</span>
+<span class="sd">        Interface of the generated kernel.</span>
+<span class="sd">    mask : int</span>
+<span class="sd">        Sum of the mask bits of its outputs.</span>
+<span class="sd">    copies : dict</span>
+<span class="sd">        Fixed component count to the name of its copy.</span>
+<span class="sd">    guard : list of str</span>
+<span class="sd">        Conditions under which the explicit-shape kernel is safe.</span>
+<span class="sd">    nc_dummy : str</span>
+<span class="sd">        Dummy that takes the place of ``nc`` in a fixed-nc copy.</span>
+<span class="sd">    """</span>
+
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">iface</span><span class="p">:</span> <span class="n">KernelInterface</span>
+    <span class="n">mask</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">copies</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>
+    <span class="n">guard</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">nc_dummy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">NC_DUMMY_NAME</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_call_lines</span><span class="p">(</span>
+    <span class="n">callee</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">iface</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span>
+    <span class="n">indent</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">nc_dummy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Keyword call of ``callee`` forwarding the dispatcher's dummies."""</span>
+    <span class="n">actuals</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">iface</span><span class="o">.</span><span class="n">args</span><span class="p">:</span>
+        <span class="n">keyword</span> <span class="o">=</span> <span class="n">nc_dummy</span> <span class="k">if</span> <span class="n">nc_dummy</span> <span class="ow">and</span> <span class="n">arg</span> <span class="o">==</span> <span class="n">NC_NAME</span> <span class="k">else</span> <span class="n">arg</span>
+        <span class="n">actuals</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">keyword</span><span class="si">}</span><span class="s2">=</span><span class="si">{</span><span class="n">arg</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_wrap_items</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">indent</span><span class="si">}</span><span class="s2">call </span><span class="si">{</span><span class="n">callee</span><span class="si">}</span><span class="s2">("</span><span class="p">,</span> <span class="n">actuals</span><span class="p">,</span> <span class="s2">")"</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_guard_lines</span><span class="p">(</span><span class="n">conditions</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">indent</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Return the ``if (...) then`` header that tests ``conditions``."""</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">position</span><span class="p">,</span> <span class="n">condition</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">conditions</span><span class="p">):</span>
+        <span class="n">head</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">indent</span><span class="si">}</span><span class="s2">if ("</span> <span class="k">if</span> <span class="n">position</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">indent</span><span class="si">}</span><span class="s2">    "</span>
+        <span class="n">tail</span> <span class="o">=</span> <span class="s2">" .and. &amp;"</span> <span class="k">if</span> <span class="n">position</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">conditions</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">") then"</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">head</span> <span class="o">+</span> <span class="n">condition</span> <span class="o">+</span> <span class="n">tail</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">lines</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_kernel_calls</span><span class="p">(</span>
+    <span class="n">kernel</span><span class="p">:</span> <span class="n">Specialised</span><span class="p">,</span> <span class="n">fixed_nc</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span> <span class="n">inner</span><span class="p">:</span> <span class="nb">str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Return the calls of ``kernel`` and of its fixed-``nc`` copies."""</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">copies</span> <span class="ow">and</span> <span class="n">kernel</span><span class="o">.</span><span class="n">iface</span><span class="o">.</span><span class="n">has_nc</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">_call_lines</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">kernel</span><span class="o">.</span><span class="n">iface</span><span class="p">,</span> <span class="n">inner</span><span class="p">)</span>
+    <span class="n">lines</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">position</span><span class="p">,</span> <span class="n">size</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">fixed_nc</span><span class="p">):</span>
+        <span class="n">keyword</span> <span class="o">=</span> <span class="s2">"if"</span> <span class="k">if</span> <span class="n">position</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">"else if"</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">inner</span><span class="si">}{</span><span class="n">keyword</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">NC_NAME</span><span class="si">}</span><span class="s2"> == </span><span class="si">{</span><span class="n">size</span><span class="si">}</span><span class="s2">) then"</span><span class="p">)</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
+            <span class="n">_call_lines</span><span class="p">(</span>
+                <span class="n">kernel</span><span class="o">.</span><span class="n">copies</span><span class="p">[</span><span class="n">size</span><span class="p">],</span>
+                <span class="n">kernel</span><span class="o">.</span><span class="n">iface</span><span class="p">,</span>
+                <span class="n">inner</span> <span class="o">+</span> <span class="s2">"   "</span><span class="p">,</span>
+                <span class="n">kernel</span><span class="o">.</span><span class="n">nc_dummy</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">inner</span><span class="si">}</span><span class="s2">else"</span><span class="p">)</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">_call_lines</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">kernel</span><span class="o">.</span><span class="n">iface</span><span class="p">,</span> <span class="n">inner</span> <span class="o">+</span> <span class="s2">"   "</span><span class="p">))</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">inner</span><span class="si">}</span><span class="s2">end if"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">lines</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_dispatch_branch</span><span class="p">(</span>
+    <span class="n">kernel</span><span class="p">:</span> <span class="n">Specialised</span><span class="p">,</span>
+    <span class="n">fixed_nc</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">fallback</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span>
+    <span class="n">fallback_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Return the ``case`` of the dispatcher that handles ``kernel``.</span>
+
+<span class="sd">    When the kernel has explicit-shape dummies of rank two or more the</span>
+<span class="sd">    branch calls it only if the actual arrays have the declared leading</span>
+<span class="sd">    extents (:func:`shape_guard`) and the fallback otherwise.</span>
+<span class="sd">    """</span>
+    <span class="n">outputs</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">iface</span><span class="o">.</span><span class="n">outputs</span><span class="p">)</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"   case (</span><span class="si">{</span><span class="n">kernel</span><span class="o">.</span><span class="n">mask</span><span class="si">}</span><span class="s2">)  ! </span><span class="si">{</span><span class="n">outputs</span><span class="si">}</span><span class="s2">"</span><span class="p">]</span>
+    <span class="n">inner</span> <span class="o">=</span> <span class="s2">"      "</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">kernel</span><span class="o">.</span><span class="n">guard</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">lines</span> <span class="o">+</span> <span class="n">_kernel_calls</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span> <span class="n">fixed_nc</span><span class="p">,</span> <span class="n">inner</span><span class="p">)</span>
+    <span class="n">deeper</span> <span class="o">=</span> <span class="n">inner</span> <span class="o">+</span> <span class="s2">"   "</span>
+    <span class="n">lines</span> <span class="o">+=</span> <span class="n">_guard_lines</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">guard</span><span class="p">,</span> <span class="n">inner</span><span class="p">)</span>
+    <span class="n">lines</span> <span class="o">+=</span> <span class="n">_kernel_calls</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span> <span class="n">fixed_nc</span><span class="p">,</span> <span class="n">deeper</span><span class="p">)</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">inner</span><span class="si">}</span><span class="s2">else"</span><span class="p">)</span>
+    <span class="n">lines</span> <span class="o">+=</span> <span class="n">_call_lines</span><span class="p">(</span><span class="n">fallback_name</span><span class="p">,</span> <span class="n">fallback</span><span class="p">,</span> <span class="n">deeper</span><span class="p">)</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">inner</span><span class="si">}</span><span class="s2">end if"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">lines</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">output_bits</span><span class="p">(</span><span class="n">fallback</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Return the mask bit of every optional output of ``fallback``.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    fallback : KernelInterface</span>
+<span class="sd">        The ``optional_derivatives=True`` kernel.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    dict</span>
+<span class="sd">        Lower-case output name to its power of two, in argument order.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If there are more optional outputs than mask bits.</span>
+<span class="sd">    """</span>
+    <span class="n">optional</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">arg</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">fallback</span><span class="o">.</span><span class="n">args</span>
+        <span class="k">if</span> <span class="n">fallback</span><span class="o">.</span><span class="n">dummies</span><span class="p">[</span><span class="n">arg</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span><span class="o">.</span><span class="n">is_optional</span>
+        <span class="ow">and</span> <span class="n">fallback</span><span class="o">.</span><span class="n">dummies</span><span class="p">[</span><span class="n">arg</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span><span class="o">.</span><span class="n">is_output</span>
+    <span class="p">]</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">optional</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">MAX_MASK_OUTPUTS</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"too many optional outputs (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">optional</span><span class="p">)</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">arg</span><span class="p">:</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="n">position</span> <span class="k">for</span> <span class="n">position</span><span class="p">,</span> <span class="n">arg</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">optional</span><span class="p">)}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_dispatcher_head</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">fallback</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span> <span class="n">mask_name</span><span class="p">:</span> <span class="nb">str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Header, specification part and mask computation of the dispatcher."""</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">_wrap_items</span><span class="p">(</span><span class="sa">f</span><span class="s2">"subroutine </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">("</span><span class="p">,</span> <span class="n">fallback</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="s2">")"</span><span class="p">)</span>
+    <span class="n">lines</span> <span class="o">+=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"   </span><span class="si">{</span><span class="n">use</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">use</span> <span class="ow">in</span> <span class="n">fallback</span><span class="o">.</span><span class="n">uses</span><span class="p">]</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"   implicit none"</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">fallback</span><span class="o">.</span><span class="n">args</span><span class="p">:</span>
+        <span class="n">dummy</span> <span class="o">=</span> <span class="n">_drop_contiguous_if_optional</span><span class="p">(</span><span class="n">fallback</span><span class="o">.</span><span class="n">dummies</span><span class="p">[</span><span class="n">arg</span><span class="o">.</span><span class="n">lower</span><span class="p">()])</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"   </span><span class="si">{</span><span class="n">dummy</span><span class="o">.</span><span class="n">render</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="n">lines</span> <span class="o">+=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"   integer :: </span><span class="si">{</span><span class="n">mask_name</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="s2">""</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"   </span><span class="si">{</span><span class="n">mask_name</span><span class="si">}</span><span class="s2"> = 0"</span><span class="p">]</span>
+    <span class="n">bits</span> <span class="o">=</span> <span class="n">output_bits</span><span class="p">(</span><span class="n">fallback</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">fallback</span><span class="o">.</span><span class="n">args</span><span class="p">:</span>
+        <span class="n">bit</span> <span class="o">=</span> <span class="n">bits</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">arg</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
+        <span class="k">if</span> <span class="n">bit</span><span class="p">:</span>
+            <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"   if (present(</span><span class="si">{</span><span class="n">arg</span><span class="si">}</span><span class="s2">)) </span><span class="si">{</span><span class="n">mask_name</span><span class="si">}</span><span class="s2"> = </span><span class="si">{</span><span class="n">mask_name</span><span class="si">}</span><span class="s2"> + </span><span class="si">{</span><span class="n">bit</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+    <span class="k">return</span> <span class="n">lines</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_dispatcher</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">fallback</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span>
+    <span class="n">fallback_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">kernels</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">Specialised</span><span class="p">],</span>
+    <span class="n">fixed_nc</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">reserved</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Build the dispatcher subroutine.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    name : str</span>
+<span class="sd">        Public name of the dispatcher.</span>
+<span class="sd">    fallback : KernelInterface</span>
+<span class="sd">        The ``optional_derivatives=True`` kernel; its signature is the</span>
+<span class="sd">        public signature.</span>
+<span class="sd">    fallback_name : str</span>
+<span class="sd">        Name under which the fallback is emitted.</span>
+<span class="sd">    kernels : sequence</span>
+<span class="sd">        Fixed-output kernels.</span>
+<span class="sd">    fixed_nc : sequence of int</span>
+<span class="sd">        Fixed component counts of the copies.</span>
+<span class="sd">    reserved : iterable of str, optional</span>
+<span class="sd">        Names of the enclosing module that the mask variable must not</span>
+<span class="sd">        shadow (it also avoids every dummy of the fallback).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        The dispatcher text.</span>
+<span class="sd">    """</span>
+    <span class="n">mask_name</span> <span class="o">=</span> <span class="n">unique_name</span><span class="p">(</span><span class="n">MASK_NAME</span><span class="p">,</span> <span class="p">[</span><span class="o">*</span><span class="n">fallback</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="o">*</span><span class="n">reserved</span><span class="p">])</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">_dispatcher_head</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">fallback</span><span class="p">,</span> <span class="n">mask_name</span><span class="p">)</span>
+    <span class="n">lines</span> <span class="o">+=</span> <span class="p">[</span><span class="s2">""</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"   select case (</span><span class="si">{</span><span class="n">mask_name</span><span class="si">}</span><span class="s2">)"</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">kernel</span> <span class="ow">in</span> <span class="n">kernels</span><span class="p">:</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
+            <span class="n">_dispatch_branch</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span> <span class="n">fixed_nc</span><span class="p">,</span> <span class="n">fallback</span><span class="p">,</span> <span class="n">fallback_name</span><span class="p">)</span>
+        <span class="p">)</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"   case default"</span><span class="p">)</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">_call_lines</span><span class="p">(</span><span class="n">fallback_name</span><span class="p">,</span> <span class="n">fallback</span><span class="p">,</span> <span class="s2">"      "</span><span class="p">))</span>
+    <span class="n">lines</span> <span class="o">+=</span> <span class="p">[</span><span class="s2">"   end select"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"end subroutine </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">]</span>
+    <span class="k">return</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_normalise_fixed_nc</span><span class="p">(</span><span class="n">fixed_nc</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Return the fixed component counts as a list of unique integers."""</span>
+    <span class="n">sizes</span> <span class="o">=</span> <span class="p">[]</span> <span class="k">if</span> <span class="n">fixed_nc</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">size</span><span class="p">)</span> <span class="k">for</span> <span class="n">size</span> <span class="ow">in</span> <span class="n">fixed_nc</span><span class="p">]</span>
+    <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">size</span> <span class="o">&lt;</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">size</span> <span class="ow">in</span> <span class="n">sizes</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">sizes</span><span class="p">))</span> <span class="o">!=</span> <span class="nb">len</span><span class="p">(</span><span class="n">sizes</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"fixed_nc must hold distinct positive integers, got </span><span class="si">{</span><span class="n">sizes</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">sizes</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">resolve_option_pair</span><span class="p">(</span>
+    <span class="n">preset</span><span class="p">:</span> <span class="n">Preset</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">options</span><span class="p">:</span> <span class="n">CodegenOptions</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">overrides</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">CodegenOptions</span><span class="p">,</span> <span class="n">CodegenOptions</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Return the options of the fixed-output kernels and the fallback.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    preset : Preset or str or None</span>
+<span class="sd">        Preset name.</span>
+<span class="sd">    options : CodegenOptions or None</span>
+<span class="sd">        Explicit options.</span>
+<span class="sd">    overrides : mapping</span>
+<span class="sd">        Option overrides; ``optional_derivatives`` must not be among them.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple of CodegenOptions</span>
+<span class="sd">        The options of the fixed-output kernels and of the fallback.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If ``optional_derivatives`` is overridden.</span>
+<span class="sd">    """</span>
+    <span class="k">for</span> <span class="n">forbidden</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"optional_derivatives"</span><span class="p">,):</span>
+        <span class="k">if</span> <span class="n">overrides</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">forbidden</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">forbidden</span><span class="si">}</span><span class="s2"> is decided by the workload mode; do not set it"</span>
+            <span class="p">)</span>
+    <span class="n">given</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">overrides</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">k</span> <span class="o">!=</span> <span class="s2">"optional_derivatives"</span><span class="p">}</span>
+    <span class="n">fixed</span> <span class="o">=</span> <span class="n">resolve_codegen_options</span><span class="p">(</span>
+        <span class="n">preset</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">optional_derivatives</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="o">**</span><span class="n">given</span>
+    <span class="p">)</span>
+    <span class="k">with</span> <span class="n">warnings</span><span class="o">.</span><span class="n">catch_warnings</span><span class="p">():</span>
+        <span class="c1"># Options that are inert under optional outputs are expected here.</span>
+        <span class="n">warnings</span><span class="o">.</span><span class="n">simplefilter</span><span class="p">(</span><span class="s2">"ignore"</span><span class="p">,</span> <span class="ne">UserWarning</span><span class="p">)</span>
+        <span class="n">fallback</span> <span class="o">=</span> <span class="n">resolve_codegen_options</span><span class="p">(</span>
+            <span class="n">preset</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">optional_derivatives</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="o">**</span><span class="n">given</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">fixed</span><span class="p">,</span> <span class="n">fallback</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">check_against_fallback</span><span class="p">(</span>
+    <span class="n">kernel</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span>
+    <span class="n">fallback</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span>
+    <span class="n">bits</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Return the mask of ``kernel`` after checking it fits the fallback.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    kernel : KernelInterface</span>
+<span class="sd">        A fixed-output kernel.</span>
+<span class="sd">    fallback : KernelInterface</span>
+<span class="sd">        The optional kernel; its dummies must cover the kernel's.</span>
+<span class="sd">    bits : mapping</span>
+<span class="sd">        Mask bit of each optional output (:func:`output_bits`).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    int</span>
+<span class="sd">        Sum of the bits of the kernel's outputs.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If the kernel has a dummy the fallback lacks or an output that is</span>
+<span class="sd">        not an optional output of the fallback.</span>
+<span class="sd">    """</span>
+    <span class="n">unknown</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">arg</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">kernel</span><span class="o">.</span><span class="n">args</span> <span class="k">if</span> <span class="n">arg</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">fallback</span><span class="o">.</span><span class="n">dummies</span>
+    <span class="p">]</span>
+    <span class="k">if</span> <span class="n">unknown</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">kernel</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> needs </span><span class="si">{</span><span class="n">unknown</span><span class="si">}</span><span class="s2">, which the fallback kernel "</span>
+            <span class="s2">"does not have; request every derivative of the workloads "</span>
+            <span class="s2">"through 'derivatives'"</span>
+        <span class="p">)</span>
+    <span class="n">missing</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">kernel</span><span class="o">.</span><span class="n">outputs</span> <span class="k">if</span> <span class="n">out</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">bits</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">kernel</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> computes </span><span class="si">{</span><span class="n">missing</span><span class="si">}</span><span class="s2">, which are not optional "</span>
+            <span class="s2">"outputs of the fallback kernel"</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">bits</span><span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">kernel</span><span class="o">.</span><span class="n">outputs</span><span class="p">)</span>
+
+
+<span class="nd">@dataclasses</span><span class="o">.</span><span class="n">dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">_Plan</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Everything the kernel generation of one call shares."""</span>
+
+    <span class="n">diff</span><span class="p">:</span> <span class="n">Any</span>
+    <span class="n">base</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">fixed_options</span><span class="p">:</span> <span class="n">CodegenOptions</span>
+    <span class="n">passed</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+    <span class="n">extents</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span>
+    <span class="n">sizes</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>
+    <span class="n">nc_dummy</span><span class="p">:</span> <span class="nb">str</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_fixed_kernel</span><span class="p">(</span>
+    <span class="n">plan</span><span class="p">:</span> <span class="n">_Plan</span><span class="p">,</span>
+    <span class="n">workload</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">position</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">fallback</span><span class="p">:</span> <span class="n">KernelInterface</span><span class="p">,</span>
+    <span class="n">taken</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Specialised</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""Generate one fixed-output kernel, its copies and dispatcher data."""</span>
+    <span class="n">kernel_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">plan</span><span class="o">.</span><span class="n">base</span><span class="si">}</span><span class="s2">_w</span><span class="si">{</span><span class="n">position</span><span class="si">}</span><span class="s2">"</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="n">to_fortran</span><span class="p">(</span>
+        <span class="n">plan</span><span class="o">.</span><span class="n">diff</span><span class="p">,</span>
+        <span class="n">derivatives</span><span class="o">=</span><span class="n">workload</span><span class="p">,</span>
+        <span class="n">subroutine_name</span><span class="o">=</span><span class="n">kernel_name</span><span class="p">,</span>
+        <span class="n">options</span><span class="o">=</span><span class="n">plan</span><span class="o">.</span><span class="n">fixed_options</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">plan</span><span class="o">.</span><span class="n">passed</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">iface</span> <span class="o">=</span> <span class="n">parse_kernel</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">check_against_fallback</span><span class="p">(</span><span class="n">iface</span><span class="p">,</span> <span class="n">fallback</span><span class="p">,</span> <span class="n">output_bits</span><span class="p">(</span><span class="n">fallback</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">mask</span> <span class="ow">in</span> <span class="n">taken</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"workload </span><span class="si">{</span><span class="n">position</span><span class="si">}</span><span class="s2"> has the same output set as an earlier one"</span>
+        <span class="p">)</span>
+    <span class="n">copies</span> <span class="o">=</span> <span class="p">{</span><span class="n">size</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">kernel_name</span><span class="si">}</span><span class="s2">_nc</span><span class="si">{</span><span class="n">size</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">size</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">sizes</span><span class="p">}</span>
+    <span class="n">texts</span> <span class="o">=</span> <span class="p">[</span><span class="n">specialise_kernel</span><span class="p">(</span><span class="n">iface</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">kernel_name</span><span class="p">,</span> <span class="n">extents</span><span class="o">=</span><span class="n">plan</span><span class="o">.</span><span class="n">extents</span><span class="p">)]</span>
+    <span class="k">if</span> <span class="n">iface</span><span class="o">.</span><span class="n">has_nc</span><span class="p">:</span>
+        <span class="n">texts</span> <span class="o">+=</span> <span class="p">[</span>
+            <span class="n">specialise_kernel</span><span class="p">(</span>
+                <span class="n">iface</span><span class="p">,</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">copies</span><span class="p">[</span><span class="n">size</span><span class="p">],</span>
+                <span class="n">extents</span><span class="o">=</span><span class="n">plan</span><span class="o">.</span><span class="n">extents</span><span class="p">,</span>
+                <span class="n">fixed_nc</span><span class="o">=</span><span class="n">size</span><span class="p">,</span>
+                <span class="n">nc_dummy</span><span class="o">=</span><span class="n">plan</span><span class="o">.</span><span class="n">nc_dummy</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">size</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">sizes</span>
+        <span class="p">]</span>
+    <span class="n">guard</span> <span class="o">=</span> <span class="n">shape_guard</span><span class="p">(</span><span class="n">iface</span><span class="p">,</span> <span class="n">plan</span><span class="o">.</span><span class="n">extents</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">Specialised</span><span class="p">(</span><span class="n">kernel_name</span><span class="p">,</span> <span class="n">iface</span><span class="p">,</span> <span class="n">mask</span><span class="p">,</span> <span class="n">copies</span><span class="p">,</span> <span class="n">guard</span><span class="p">,</span> <span class="n">plan</span><span class="o">.</span><span class="n">nc_dummy</span><span class="p">),</span>
+        <span class="n">texts</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_fallback_kernel</span><span class="p">(</span>
+    <span class="n">diff</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">derivatives</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">options</span><span class="p">:</span> <span class="n">CodegenOptions</span><span class="p">,</span>
+    <span class="n">passed</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">KernelInterface</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Generate the fallback kernel; return its interface and its text."""</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="n">to_fortran</span><span class="p">(</span>
+        <span class="n">diff</span><span class="p">,</span>
+        <span class="n">derivatives</span><span class="o">=</span><span class="n">derivatives</span><span class="p">,</span>
+        <span class="n">subroutine_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
+        <span class="n">options</span><span class="o">=</span><span class="n">options</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">passed</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">parse_kernel</span><span class="p">(</span><span class="n">text</span><span class="p">),</span> <span class="n">relax_optional_contiguity</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="workload_procedures">
+<a class="viewcode-back" href="../../../fortran.html#thermodiff.fortran.workload_procedures">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">workload_procedures</span><span class="p">(</span>
+    <span class="n">diff</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">workloads</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">Any</span><span class="p">],</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">derivatives</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">subroutine_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">fixed_nc</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">extents</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">preset</span><span class="p">:</span> <span class="n">Preset</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">options</span><span class="p">:</span> <span class="n">CodegenOptions</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Generate the dispatcher, the fallback and the fixed-output kernels.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    diff : DiffPlz</span>
+<span class="sd">        The differentiated expression.</span>
+<span class="sd">    workloads : sequence</span>
+<span class="sd">        One derivative selection per fixed-output kernel, in the format of</span>
+<span class="sd">        ``to_fortran(derivatives=...)`` (for example ``"dn,dndn"`` or</span>
+<span class="sd">        ``["dT"]``).  The dispatcher matches the *output set* of each</span>
+<span class="sd">        generated kernel (the function value included when ``to_fortran``</span>
+<span class="sd">        emits it), exactly.</span>
+<span class="sd">    derivatives : str or list of str, optional</span>
+<span class="sd">        Derivatives of the fallback kernel and so of the public</span>
+<span class="sd">        signature; it must contain every workload.  Default: every</span>
+<span class="sd">        derivative of ``diff``.</span>
+<span class="sd">    subroutine_name : str, optional</span>
+<span class="sd">        Public name of the dispatcher.  The kernels are named</span>
+<span class="sd">        ``&lt;name&gt;_fallback``, ``&lt;name&gt;_w&lt;k&gt;`` (``k`` from 1, in the order of</span>
+<span class="sd">        ``workloads``) and ``&lt;name&gt;_w&lt;k&gt;_nc&lt;size&gt;``.  Default: the name</span>
+<span class="sd">        of ``diff``.</span>
+<span class="sd">    fixed_nc : iterable of int, optional</span>
+<span class="sd">        Component counts for which every fixed-output kernel is also</span>
+<span class="sd">        emitted with ``nc`` as a named constant; the dispatcher selects</span>
+<span class="sd">        by ``nc`` and then by output set.</span>
+<span class="sd">    extents : mapping, optional</span>
+<span class="sd">        Extents of the array inputs by name (for example</span>
+<span class="sd">        ``{"a": ("nc", "ng")}``).  Inputs without an entry are ``nc`` in</span>
+<span class="sd">        every dimension, unless the kernel has extra integer dimensions;</span>
+<span class="sd">        then they stay assumed shape.</span>
+<span class="sd">    preset, options, **kwargs</span>
+<span class="sd">        Code-generation options as in ``to_fortran``.  Other keywords</span>
+<span class="sd">        (``integer_args``, ``module_symbols``, ``symmetric_params``,</span>
+<span class="sd">        ``stats``, ``name``) are forwarded to every ``to_fortran`` call and</span>
+<span class="sd">        every option name is accepted as an override.</span>
+<span class="sd">        ``optional_derivatives`` is set by this function.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        The subroutines, without a module.</span>
+
+<span class="sd">    Raises</span>
+<span class="sd">    ------</span>
+<span class="sd">    ValueError</span>
+<span class="sd">        If two workloads have the same outputs, a workload is not</span>
+<span class="sd">        covered by ``derivatives`` or ``fixed_nc`` is invalid.</span>
+<span class="sd">    """</span>
+    <span class="n">to_fortran_keys</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">"name"</span><span class="p">,</span>
+        <span class="s2">"integer_args"</span><span class="p">,</span>
+        <span class="s2">"module_symbols"</span><span class="p">,</span>
+        <span class="s2">"symmetric_params"</span><span class="p">,</span>
+        <span class="s2">"stats"</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">passed</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">to_fortran_keys</span> <span class="k">if</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">kwargs</span><span class="p">}</span>
+    <span class="n">fixed_options</span><span class="p">,</span> <span class="n">fallback_options</span> <span class="o">=</span> <span class="n">resolve_option_pair</span><span class="p">(</span>
+        <span class="n">preset</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">kwargs</span>
+    <span class="p">)</span>
+    <span class="n">sizes</span> <span class="o">=</span> <span class="n">_normalise_fixed_nc</span><span class="p">(</span><span class="n">fixed_nc</span><span class="p">)</span>
+    <span class="n">base</span> <span class="o">=</span> <span class="n">subroutine_name</span> <span class="ow">or</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">diff</span><span class="p">,</span> <span class="s2">"name"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">"f"</span>
+    <span class="n">fallback_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">base</span><span class="si">}</span><span class="s2">_fallback"</span>
+    <span class="n">fallback</span><span class="p">,</span> <span class="n">fallback_text</span> <span class="o">=</span> <span class="n">_fallback_kernel</span><span class="p">(</span>
+        <span class="n">diff</span><span class="p">,</span> <span class="n">derivatives</span><span class="p">,</span> <span class="n">fallback_name</span><span class="p">,</span> <span class="n">fallback_options</span><span class="p">,</span> <span class="n">passed</span>
+    <span class="p">)</span>
+    <span class="n">reserved</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">passed</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"module_symbols"</span><span class="p">)</span> <span class="ow">or</span> <span class="p">())</span>
+    <span class="n">plan</span> <span class="o">=</span> <span class="n">_Plan</span><span class="p">(</span>
+        <span class="n">diff</span><span class="p">,</span>
+        <span class="n">base</span><span class="p">,</span>
+        <span class="n">fixed_options</span><span class="p">,</span>
+        <span class="n">passed</span><span class="p">,</span>
+        <span class="nb">dict</span><span class="p">(</span><span class="n">extents</span> <span class="ow">or</span> <span class="p">{}),</span>
+        <span class="n">sizes</span><span class="p">,</span>
+        <span class="n">unique_name</span><span class="p">(</span><span class="n">NC_DUMMY_NAME</span><span class="p">,</span> <span class="p">[</span><span class="o">*</span><span class="n">fallback</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="o">*</span><span class="n">reserved</span><span class="p">]),</span>
+    <span class="p">)</span>
+    <span class="n">kernels</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Specialised</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">texts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">position</span><span class="p">,</span> <span class="n">workload</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">workloads</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="n">kernel</span><span class="p">,</span> <span class="n">kernel_texts</span> <span class="o">=</span> <span class="n">_fixed_kernel</span><span class="p">(</span>
+            <span class="n">plan</span><span class="p">,</span> <span class="n">workload</span><span class="p">,</span> <span class="n">position</span><span class="p">,</span> <span class="n">fallback</span><span class="p">,</span> <span class="p">[</span><span class="n">k</span><span class="o">.</span><span class="n">mask</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">kernels</span><span class="p">]</span>
+        <span class="p">)</span>
+        <span class="n">kernels</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">kernel</span><span class="p">)</span>
+        <span class="n">texts</span> <span class="o">+=</span> <span class="n">kernel_texts</span>
+    <span class="n">dispatcher</span> <span class="o">=</span> <span class="n">build_dispatcher</span><span class="p">(</span>
+        <span class="n">base</span><span class="p">,</span> <span class="n">fallback</span><span class="p">,</span> <span class="n">fallback_name</span><span class="p">,</span> <span class="n">kernels</span><span class="p">,</span> <span class="n">plan</span><span class="o">.</span><span class="n">sizes</span><span class="p">,</span> <span class="n">reserved</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="s2">"</span><span class="se">\n\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="n">dispatcher</span><span class="p">,</span> <span class="n">fallback_text</span><span class="p">,</span> <span class="o">*</span><span class="n">texts</span><span class="p">])</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">wrap_module</span><span class="p">(</span>
+    <span class="n">module_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">uses</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">code</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">comments</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Put generated procedures in a module.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    module_name : str</span>
+<span class="sd">        Name of the module.</span>
+<span class="sd">    uses : iterable of str</span>
+<span class="sd">        Text after ``use`` for each statement of the module.</span>
+<span class="sd">    code : str</span>
+<span class="sd">        Procedures, indented by the caller's convention (0 here).</span>
+<span class="sd">    comments : iterable of str</span>
+<span class="sd">        Header comment lines (with their ``!``).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        The module source, indented by three spaces.</span>
+<span class="sd">    """</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="o">*</span><span class="n">comments</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"module </span><span class="si">{</span><span class="n">module_name</span><span class="si">}</span><span class="s2">"</span><span class="p">]</span>
+    <span class="n">lines</span> <span class="o">+=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"   use </span><span class="si">{</span><span class="n">use_text</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">use_text</span> <span class="ow">in</span> <span class="n">uses</span><span class="p">]</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="s2">"   implicit none"</span><span class="p">,</span> <span class="s2">"contains"</span><span class="p">,</span> <span class="s2">""</span><span class="p">])</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">code</span><span class="o">.</span><span class="n">splitlines</span><span class="p">():</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"   "</span> <span class="o">+</span> <span class="n">line</span> <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">else</span> <span class="s2">""</span><span class="p">)</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="sa">f</span><span class="s2">"end module </span><span class="si">{</span><span class="n">module_name</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="s2">""</span><span class="p">])</span>
+    <span class="k">return</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="workload_module">
+<a class="viewcode-back" href="../../../fortran.html#thermodiff.fortran.workload_module">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">workload_module</span><span class="p">(</span>
+    <span class="n">diff</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">workloads</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">Any</span><span class="p">],</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">module_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">uses</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Generate a Fortran module with a workload dispatcher.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    diff : DiffPlz</span>
+<span class="sd">        The differentiated expression.</span>
+<span class="sd">    workloads : sequence</span>
+<span class="sd">        Derivative selections, one fixed-output kernel each.</span>
+<span class="sd">    module_name : str, optional</span>
+<span class="sd">        Name of the module; default ``&lt;subroutine name&gt;_mod``.</span>
+<span class="sd">    uses : iterable of str, optional</span>
+<span class="sd">        Text after ``use`` for each module-level statement (for example</span>
+<span class="sd">        ``"mykinds, only: dp"``).</span>
+<span class="sd">    **kwargs</span>
+<span class="sd">        See :func:`workload_procedures`.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        The complete module.  Its public procedure has the signature of</span>
+<span class="sd">        the ``optional_derivatives=True`` kernel, so it is a drop-in</span>
+<span class="sd">        replacement of that kernel.</span>
+<span class="sd">    """</span>
+    <span class="n">code</span> <span class="o">=</span> <span class="n">workload_procedures</span><span class="p">(</span><span class="n">diff</span><span class="p">,</span> <span class="n">workloads</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="n">base</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"subroutine_name"</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">diff</span><span class="p">,</span> <span class="s2">"name"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">"f"</span>
+    <span class="k">return</span> <span class="n">wrap_module</span><span class="p">(</span>
+        <span class="n">module_name</span> <span class="ow">or</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">base</span><span class="si">}</span><span class="s2">_mod"</span><span class="p">,</span>
+        <span class="n">uses</span><span class="p">,</span>
+        <span class="n">code</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="s2">"! Generated by thermodiff (workload mode)."</span><span class="p">,</span>
+            <span class="s2">"! Do not edit by hand."</span><span class="p">,</span>
+        <span class="p">],</span>
+    <span class="p">)</span></div>
+
+</pre></div>
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Salvador Eduardo Brandolín
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer no-toc">
+      
+      
+      
+    </aside>
+  </div>
+</div><script src="../../../_static/documentation_options.js?v=51b770b3"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../../_static/copybutton.js?v=f281be69"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    </body>
+</html>
