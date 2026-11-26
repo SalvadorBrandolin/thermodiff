@@ -5,6 +5,7 @@ documentation (`docs/source/`) and are not shipped in the package.
 
 | File | What it is |
 |---|---|
+| `history/` | Project history: one file per improvement, bug, measurement, decision, dead end or gotcha, with its evidence; `history/README.md` is the index and explains how to add an entry. Read its Open and Dead ends lists before starting work. |
 | `perf_log.md` | Generation-time measurements: protocol, baselines, per-change results and profiles. Add new measurements here. |
 | `refactor-perf-arch-report.md` | Report of the `refactor/perf-arch` work (performance and architecture of the code generator): acceptance criteria, before/after timings, declared output changes, decisions not taken, remaining debt. |
 | `autotune-spec.md` | Specification of an autotuning ("greedy") mode that generates candidate kernels, checks and times them on the user's machine and keeps the fastest (nothing implemented yet). |

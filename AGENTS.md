@@ -127,6 +127,7 @@ tests/codegen/           # Pins of the code generator passes, function-size limi
 tests/data/              # Vendored .model files, scripts and measured kernels
 docs/source/             # Sphinx docs, including architecture.md (code generator design)
 docs/dev/                # Developer notes: perf log, refactor report, plans (not in the docs build)
+docs/dev/history/        # Project history: one file per finding (improvement, bug, decision, dead end) + index
 ```
 
 ## Important Conventions
@@ -345,6 +346,35 @@ preset should enable it (that is a declared output change).
   kernel; max_nc: a few percent when close to the real maximum nc, harmful
   when large), so no preset enables them.
 
+## Project history (knowledge base)
+`docs/dev/history/` records what was improved, measured, decided, found
+broken or tried and rejected, with the evidence: one Markdown file per
+finding, indexed in `docs/dev/history/README.md` (which also holds the
+detailed rules).
+- **Before working in an area**, read the index rows for it, especially
+  the **Open** and **Dead ends** lists: do not retry a rejected idea without
+  new evidence, and link the old entry if you do.
+- **Write an entry, in the same PR as the work,** after any of: a declared
+  change to the generated output; a measurement that informs (or would
+  reverse) a decision; a bug and its root cause, fixed or not; an idea that
+  was rejected; a CI, tooling or environment trap; a maintainer decision
+  between options.
+- **How:** copy `_template.md` to `YYYY-MM-DD-short-slug.md`; fill the front
+  matter (`type`: improvement, bug, measurement, decision, dead-end, gotcha;
+  `status`: open, resolved, wontfix, `superseded-by: <file>`; `area`;
+  `links` to PRs, issues, commits); give numbers with their conditions
+  (model, workload, nc, compiler and flags, pinning, samples, min or median)
+  and label claims [M] measured, [R] read in the source, [S] suggestion; add
+  the row to the index (and to Open or Dead ends if it applies) in the same
+  commit. `tests/test_dev_history.py` checks names, front matter, index rows
+  and links.
+- **Never rewrite old evidence.** When an entry stops being true, add a new
+  one and set the old status to `superseded-by: <new file>`; when an open
+  item is fixed, set `resolved` and add the outcome.
+- **Not here:** generation-time numbers (`docs/dev/perf_log.md`), designs and
+  specs (their own files in `docs/dev/`), user guidance (`docs/source/`).
+  An entry summarises and links them.
+
 ## Future Work
 
 ### Third derivatives
@@ -415,7 +445,7 @@ specifics live today.
 7. **Running code** Always work on a virtual environment, prefer the environment "thermodiff" of virtualenv
 8. **Determinism** — generated code does not depend on `PYTHONHASHSEED`, but use `PYTHONHASHSEED=0` for golden runs and reproducible manifests
 9. **Editable install and worktrees** — if `thermodiff` is installed editable from another checkout, prefix commands with `PYTHONPATH=$PWD` and check `python -c "import thermodiff; print(thermodiff.__file__)"`
-10. **Developer notes** go in `docs/dev/`, not in the repository root
+10. **Developer notes** go in `docs/dev/`, not in the repository root; findings and decisions go in `docs/dev/history/`
 
 ## Quick Verification
 ```bash
