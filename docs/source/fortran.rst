@@ -123,6 +123,50 @@ and ``tau``, make them scalar variables of the placeholder's core and use
 the recipe above: generate the mixture layer with ``variables=[delta,
 tau]`` written as symbols, supply ``alpha`` and its partial derivatives
 with respect to them, and assemble.
+
+Compiler flags and storage of temporaries
+-----------------------------------------
+
+Generated kernels keep their intermediate arrays (``t3(nc, nc)`` ...) as
+automatic arrays.  gfortran puts automatic arrays on the heap unless the
+kernel is compiled with ``-fstack-arrays`` (implied by ``-Ofast``), so
+without the flag every call pays one ``malloc``/``free`` per temporary.
+**Compile generated kernels with** ``-fstack-arrays``: on the PC-SAFT, CMR,
+PR76, NRTL, UNIQUAC and UNIFAC kernels of the ``fastest`` preset
+(``-O3 -funroll-loops``, nc = 2 to 50) it was 10% faster than the heap at
+the median and up to 2x at small ``nc``; the gain vanishes around
+``nc = 50``.  The stack it needs is small (at most about 420 KB at
+``nc = 100`` in those models, against the usual 8 MB limit).  For larger
+systems or OpenMP threads raise the limit (``ulimit -s``,
+``OMP_STACKSIZE``).  Intel ifx and ifort use the stack for automatic arrays
+by default.
+
+Two opt-in options change the storage instead; neither is enabled by a
+preset, because neither is faster everywhere:
+
+``work_array=True``
+    One automatic ``work_`` array holds every temporary, and the kernel
+    calls an internal procedure that sees them as explicit-shape arrays.
+    Useful when the build cannot use ``-fstack-arrays``: without the flag it
+    took 0.4x to 1.0x the time of the default at small ``nc`` (median 0.8x
+    at ``nc = 2``), but up to 1.16x on some PR kernels at ``nc = 50``.  With the flag
+    it adds nothing in most kernels, is slower in some (up to 2.5x on a PR
+    kernel at ``nc = 2``), and is 25 to 35% *faster* on the full UNIFAC
+    output set.  Measure before adopting it.
+``max_nc=N``
+    Every temporary gets the compile-time extent ``N`` along ``nc`` and the
+    kernel stops (``error stop``) when ``nc > N``.  Pick ``N`` close to the
+    largest ``nc`` you use: with ``N`` of 10 to 100 kernels were typically 3
+    to 9% faster than with ``work_array``, and slower on some (up to about
+    1.4x; UNIFAC full 1.6x).  Larger values buy nothing and cost memory: an
+    array above 64 KB (a rank-2 temporary with ``N`` above about 90)
+    becomes static, so the kernel is no longer thread safe (the generator
+    warns); ``N = 1000`` needs 8 to 40 MB per kernel, and ``N = 10000``
+    gigabytes (some kernels no longer link).  Extents along other
+    dimensions (``ng``) stay automatic, so for UNIFAC-like models a large
+    ``N`` makes every call allocate ``N x ng`` arrays: 100x slower at
+    ``N = 10000``.  ``max_nc`` disables ``work_array``.
+
 Sparse parameters
 -----------------
 

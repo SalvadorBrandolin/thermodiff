@@ -263,7 +263,9 @@ derivative selection, names, `integer_args`, `module_symbols`,
   dispatch to another kernel (a bigger `max_nc` or the default).  A
   temporary larger than gfortran's `-fmax-stack-var-size` (65536 bytes,
   `max_nc <= 90` for a rank-2 `real(8)` array) becomes static and warns.
-  `max_nc` disables `work_array`.
+  `max_nc` disables `work_array`. No preset enables either: compile with
+  `-fstack-arrays` instead (measurements in `fortran.rst`, "Compiler flags
+  and storage of temporaries").
 
 * Real kind (issue #9).  `real_kind="8"` (the default) is the historical
   `real(8)` and `d` literals.  Any other integer or kind name (`"pr"`)
