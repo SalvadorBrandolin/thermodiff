@@ -5,10 +5,8 @@ from collections.abc import Collection, Iterable, Mapping
 from typing import cast
 
 import sympy as sp
-from sympy.printing.fortran import fcode
 
 from thermodiff.codegen.common import (
-    _FCODE_SETTINGS,
     _INDENT,
     _Namer,
     _emission_order,
@@ -16,6 +14,7 @@ from thermodiff.codegen.common import (
     _indent_lines,
     _print_expr,
     _temp_name,
+    fortran_code,
 )
 from thermodiff.codegen.extents import index_extent
 from thermodiff.codegen.hoisting import _split_factored
@@ -228,7 +227,7 @@ def _render_output(
     for statement in statements:
         lines.append(_INDENT * depth + statement)
 
-    body = fcode(residual, assign_to="res", **_FCODE_SETTINGS)
+    body = fortran_code(residual, assign_to="res")
     lines.extend(_indent_lines(body, depth))
 
     if free_order:

@@ -7,7 +7,7 @@ from typing import TypeVar
 
 import sympy as sp
 from sympy.core.function import DefinedFunction
-from sympy.printing.fortran import fcode
+from sympy.printing.fortran import FCodePrinter
 
 from thermodiff.codegen.options import DEFAULT_REAL_KIND
 from thermodiff.derivatives import (
@@ -416,9 +416,83 @@ def apply_real_kind(
     return head + use_line + "\n" + found + tail if found else text
 
 
+class _ThermodiffFCodePrinter(FCodePrinter):  # type: ignore[misc]
+    """SymPy Fortran printer with real literals for non-smooth functions.
+
+    The derivatives of ``Max``, ``Min`` and ``Abs`` contain ``Heaviside``
+    and ``DiracDelta``.  The stock printer writes ``Heaviside`` with
+    integer branches (``merge(0, merge(0.5d0, 1, x == 0), x < 0)``), which
+    does not compile when the other operands are real, and cannot print
+    ``DiracDelta``.  This printer keeps every literal real (so that
+    ``apply_real_kind`` can later re-express it in another kind).
+    """
+
+    def _real(self, value: sp.Expr) -> str:
+        """Print the number ``value`` as a real literal."""
+        return str(self._print(sp.Float(value)))
+
+    def _print_Heaviside(self, expr: sp.Heaviside) -> str:  # noqa: N802
+        """Print ``Heaviside(x, H0)`` with real branches.
+
+        The value at ``x == 0`` is ``H0`` (SymPy's default is ``1/2``,
+        the one its derivative of ``Max``/``Min`` uses).
+        """
+        argument = self._print(expr.args[0])
+        at_zero = sp.S.Half if len(expr.args) == 1 else expr.args[1]
+        zero = self._real(sp.S.Zero)
+        inner = f"merge({self._real(at_zero)}, {self._real(sp.S.One)}, "
+        test = f"{argument} == {zero}"
+        return f"(merge({zero}, {inner}{test}), {argument} < {zero}))"
+
+    def _print_DiracDelta(self, expr: sp.DiracDelta) -> str:  # noqa: N802
+        """Print ``DiracDelta`` as zero.
+
+        Its only support is the kink of a non-smooth function, where the
+        generated kernel is not differentiable anyway; away from it the
+        value is exactly zero.
+        """
+        return self._real(sp.S.Zero)
+
+    def _print_min_max(self, expr: sp.Expr, name: str) -> str:
+        """Print ``Max``/``Min`` with real literals among real operands."""
+        args = list(expr.args)
+        if not all(arg.is_integer for arg in args):
+            args = [sp.Float(arg) if arg.is_Integer else arg for arg in args]
+        return f"{name}({', '.join(str(self._print(a)) for a in args)})"
+
+    def _print_Max(self, expr: sp.Max) -> str:  # noqa: N802
+        """Print ``Max``."""
+        return self._print_min_max(expr, "max")
+
+    def _print_Min(self, expr: sp.Min) -> str:  # noqa: N802
+        """Print ``Min``."""
+        return self._print_min_max(expr, "min")
+
+
+def fortran_code(expr: sp.Expr, assign_to: str | None = None) -> str:
+    """Print ``expr`` (or ``assign_to = expr``) as free-form Fortran.
+
+    Parameters
+    ----------
+    expr : sympy.Expr
+        Expression to print.
+    assign_to : str, optional
+        Left-hand side of an assignment statement.
+
+    Returns
+    -------
+    str
+        The Fortran text, as :func:`sympy.printing.fortran.fcode` with
+        :data:`_FCODE_SETTINGS` writes it, but with real literals in
+        ``Heaviside``/``Max``/``Min`` and ``DiracDelta`` printed as zero.
+    """
+    printer = _ThermodiffFCodePrinter(dict(_FCODE_SETTINGS))
+    return str(printer.doprint(expr, assign_to))
+
+
 def _print_expr(expr: sp.Expr) -> str:
     """Print ``expr`` as a single Fortran expression."""
-    return str(fcode(expr, **_FCODE_SETTINGS).strip())
+    return fortran_code(expr).strip()
 
 
 def _indent_lines(text: str, depth: int) -> list[str]:

@@ -8,6 +8,8 @@ the right kernel and outputs, and the default branch).
 
 import re
 
+from fortran_tools import GFORTRAN, compile_and_run
+
 import pytest
 
 from thermodiff.yaeos_model import kernel_interface, yaeos_model_module
@@ -231,3 +233,113 @@ def test_errors():
     wls["W1b"] = dict(wls["W1"])
     with pytest.raises(ValueError, match="same outputs"):
         yaeos_model_module("toy", "k1", "ar", wls, "m", v0_expr="0")
+
+
+def test_foreign_output_is_not_a_parameter():
+    # dfdV2 is an Ar output; in a Ge kernel it must not become a parameter
+    args = [("nc", 0), ("T", 0), ("q", 1), ("n", 1), ("f", 0), ("dfdV2", 0)]
+    wls = {"G0": dict(routine="toy_g", args=args, outputs=["f"])}
+    with pytest.raises(ValueError, match=r"dfdV2.*'ge'"):
+        yaeos_model_module("toy", "k2", "ge", wls, "td_toy_k2")
+
+
+GE_STUB = """module yaeos__constants
+   integer, parameter :: pr = 8
+end module yaeos__constants
+
+module yaeos__models_ge
+   use yaeos__constants, only: pr
+   implicit none
+   type, abstract :: GeModel
+   contains
+      procedure(ge_interface), deferred :: excess_gibbs
+   end type GeModel
+   abstract interface
+      subroutine ge_interface(self, n, t, Ge, GeT, GeT2, Gen, GeTn, Gen2)
+         import GeModel, pr
+         class(GeModel), intent(in) :: self
+         real(pr), intent(in) :: n(:), t
+         real(pr), optional, intent(out) :: Ge, GeT, GeT2
+         real(pr), optional, intent(out) :: Gen(size(n)), GeTn(size(n))
+         real(pr), optional, intent(out) :: Gen2(size(n), size(n))
+      end subroutine ge_interface
+   end interface
+end module yaeos__models_ge
+"""
+
+GE_KERNELS = """module toy_kernels_k3
+   implicit none
+contains
+   subroutine toy_full(nc, T, q, n, f, dfdT, dfdT2, dfdn, dfdndT, dfdndn)
+      integer, intent(in) :: nc
+      real(8), intent(in) :: T, q(:), n(:)
+      real(8), intent(out) :: f, dfdT, dfdT2
+      real(8), intent(out) :: dfdn(:), dfdndT(:), dfdndn(:, :)
+      f = T * sum(n * q)
+      dfdT = sum(n * q)
+      dfdT2 = 0
+      dfdn = T * q
+      dfdndT = q
+      dfdndn = 0
+   end subroutine toy_full
+
+   subroutine toy_lng(nc, T, q, n, f, dfdn)
+      integer, intent(in) :: nc
+      real(8), intent(in) :: T, q(:), n(:)
+      real(8), intent(out) :: f
+      real(8), intent(out) :: dfdn(:)
+      f = T * sum(n * q)
+      dfdn = T * q
+   end subroutine toy_lng
+end module toy_kernels_k3
+"""
+
+GE_DRIVER = """program drive
+   use yaeos__constants, only: pr
+   use td_toy_k3_model, only: TD_TOY_K3
+   implicit none
+   type(TD_TOY_K3) :: model
+   real(pr) :: n(3), g_full, gen_full(3), gen_lng(3)
+   real(pr) :: gt, gt2, gtn(3), gen2(3, 3)
+   model%q = [1._pr, 2._pr, 3._pr]
+   n = [0.2_pr, 0.3_pr, 0.5_pr]
+   call model%excess_gibbs(n, 2._pr, g_full, gt, gt2, gen_full, gtn, gen2)
+   call model%excess_gibbs(n, 2._pr, Gen=gen_lng)
+   print "(a, 3es24.16)", "full", gen_full
+   print "(a, 3es24.16)", "lng", gen_lng
+end program drive
+"""
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(GFORTRAN is None, reason="gfortran not available")
+def test_workload_without_f_compiles_and_matches_full(tmp_path):
+    full = ["f", "dfdT", "dfdT2", "dfdn", "dfdndT", "dfdndn"]
+    full_args = [("nc", 0), ("T", 0), ("q", 1), ("n", 1)] + [
+        (o, {"dfdn": 1, "dfdndT": 1, "dfdndn": 2}.get(o, 0)) for o in full
+    ]
+    lng_args = full_args[:4] + [("f", 0), ("dfdn", 1)]
+    wls = {
+        "G_full": dict(routine="toy_full", args=full_args, outputs=full),
+        "G_lng": dict(routine="toy_lng", args=lng_args, outputs=["dfdn"]),
+    }
+    src = yaeos_model_module("toy", "k3", "ge", wls, "toy_kernels_k3")
+    assert "f_scratch_" in src
+    files = {
+        "stub.f90": GE_STUB,
+        "kernels.f90": GE_KERNELS,
+        "wrapper.f90": src,
+        "driver.f90": GE_DRIVER,
+    }
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+    result = compile_and_run(
+        [tmp_path / name for name in files],
+        tmp_path,
+        ("-O0", "-ffree-line-length-0"),
+    )
+    values = {
+        line.split()[0]: [float(x) for x in line.split()[1:]]
+        for line in result.stdout.splitlines()
+    }
+    assert values["lng"] == values["full"] == [2.0, 4.0, 6.0]

@@ -132,6 +132,12 @@ Expressions support the usual arithmetic operators ``+ - * /``, powers written
 built-in functions (``sqrt``, ``exp``, ``log``, ``sin``, ``min``, ...) and
 indexed names.
 
+``max``, ``min``, ``abs`` and ``sign`` are non-smooth.  Their derivatives are
+generated away from the kink: the step ``Heaviside(x)`` that ``max``/``min``
+produce is ``1/2`` at ``x = 0`` (SymPy's convention), and the derivative of
+``sign`` (a Dirac delta) is taken as zero.  The variables are treated as real,
+so ``abs(x)`` differentiates to ``x/abs(x)``.
+
 An indexed name is written ``base_indices`` where ``base`` is a declared name
 and ``indices`` is a string of single letters::
 

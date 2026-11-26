@@ -59,6 +59,9 @@ class _PlaceholderResolver:
     def resolve(self, expr: sp.Expr) -> sp.Expr:
         """Return ``expr`` with placeholders replaced by plain variables."""
         derivative_set, function_set = _derivative_function_atoms(expr)
+        if _needs_real_rewrite(derivative_set, function_set):
+            expr = _drop_complex_parts(expr)
+            derivative_set, function_set = _derivative_function_atoms(expr)
         derivatives = list(derivative_set)
         functions = [f for f in function_set if _is_placeholder(f)]
 
@@ -303,6 +306,73 @@ def _canonical_suffix(
     suffix = "".join("d" + name for name in scalars)
     suffix += "".join("d" + _sanitize(str(var.base)) for var in indexed)
     return suffix, [str(var.indices[0]) for var in indexed]
+
+
+#: Functions SymPy introduces when it differentiates ``Abs`` of a symbol
+#: that is not declared real.
+_COMPLEX_PARTS = (sp.re, sp.im)
+
+#: Functions whose derivative is zero away from their kink and has no
+#: closed form in SymPy (``Derivative(sign(x), x)`` stays unevaluated).
+_STEP_FUNCTIONS = (sp.sign,)
+
+
+def _needs_real_rewrite(
+    derivatives: set[sp.Basic], functions: set[sp.Basic]
+) -> bool:
+    """Tell whether :func:`_drop_complex_parts` has something to do."""
+    if any(isinstance(func, _COMPLEX_PARTS) for func in functions):
+        return True
+    return any(
+        isinstance(deriv.expr, _STEP_FUNCTIONS)
+        for deriv in derivatives
+        if isinstance(deriv, sp.Derivative)
+    )
+
+
+def _is_part_derivative(node: sp.Basic) -> bool:
+    """Tell whether ``node`` differentiates ``re``, ``im`` or ``sign``."""
+    return isinstance(node, sp.Derivative) and isinstance(
+        node.expr, _COMPLEX_PARTS + _STEP_FUNCTIONS
+    )
+
+
+def _real_derivative(node: sp.Derivative) -> sp.Basic:
+    """Return the derivative that :func:`_is_part_derivative` selected."""
+    if not isinstance(node.expr, sp.re):
+        return sp.S.Zero
+    inner = node.expr.args[0]
+    return sp.Derivative(inner, *node.variable_count).doit()
+
+
+def _drop_complex_parts(expr: sp.Basic) -> sp.Basic:
+    """Rewrite ``re``/``im`` and ``Derivative(sign(u))`` for real variables.
+
+    The variables and parameters of a model are real, but SymPy does not
+    know it: ``diff(Abs(x), x)`` is written with ``re(x)``, ``im(x)`` and
+    ``Derivative(re(x), x)``, and its second derivative leaves
+    ``Derivative(sign(u), x)`` unevaluated.  Here ``re(u) -> u``,
+    ``im(u) -> 0``, the derivatives of both follow, and the derivative of
+    ``sign`` is zero (its value away from the kink, where ``2 DiracDelta``
+    vanishes; the value at the kink itself is not representable).
+    Declaring the symbols real instead would
+    change the simplification of every model, hence the golden output.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression that contains ``re`` or ``im`` nodes.
+
+    Returns
+    -------
+    sympy.Basic
+        The expression without them.
+    """
+    expr = expr.replace(_is_part_derivative, _real_derivative)
+    return expr.replace(
+        lambda node: isinstance(node, _COMPLEX_PARTS),
+        lambda node: node.args[0] if isinstance(node, sp.re) else sp.S.Zero,
+    )
 
 
 def _derivative_function_atoms(
