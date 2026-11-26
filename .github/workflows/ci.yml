@@ -23,10 +23,47 @@ jobs:
       - name: Install pandoc
         run: sudo apt-get install pandoc
       - name: Set up gfortran
+        id: setup-fortran
         uses: fortran-lang/setup-fortran@v1
+        # On Linux the action installs gcc from the ubuntu-toolchain-r PPA,
+        # which sometimes answers 503. Do not fail the job here: the next
+        # step falls back to the gfortran of the runner image or Ubuntu.
+        continue-on-error: true
         with:
           compiler: gcc
           version: 'latest'
+      - name: Fall back to the runner's or Ubuntu's gfortran
+        if: steps.setup-fortran.outcome != 'success'
+        run: |
+          set -euo pipefail
+          # Drop the PPA the action added, so apt does not retry it.
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-toolchain-r*
+          compiler=""
+          for candidate in gfortran-14 gfortran-13 gfortran-12; do
+            if command -v "$candidate" > /dev/null; then
+              compiler="$(command -v "$candidate")"
+              break
+            fi
+          done
+          if [ -z "$compiler" ]; then
+            sudo apt-get -o Acquire::Retries=5 update
+            sudo apt-get -o Acquire::Retries=5 install -y \
+              --no-install-recommends gfortran
+            compiler="$(command -v gfortran)"
+          fi
+          # tox passes PATH but not FC: expose the compiler as `gfortran`.
+          mkdir -p "$RUNNER_TEMP/fc-bin"
+          ln -sf "$compiler" "$RUNNER_TEMP/fc-bin/gfortran"
+          echo "$RUNNER_TEMP/fc-bin" >> "$GITHUB_PATH"
+          echo "FC=$RUNNER_TEMP/fc-bin/gfortran" >> "$GITHUB_ENV"
+          echo "Using $compiler"
+      - name: Check gfortran
+        run: |
+          set -euo pipefail
+          gfortran --version
+          printf 'program t\nprint *, 1\nend program t\n' > "$RUNNER_TEMP/t.f90"
+          gfortran "$RUNNER_TEMP/t.f90" -o "$RUNNER_TEMP/t"
+          "$RUNNER_TEMP/t"
       - name: Install tox
         run: pip install tox tox-gh-actions
       - name: Test with tox
