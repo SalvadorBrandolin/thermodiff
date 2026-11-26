@@ -15,6 +15,16 @@ from thermodiff.model.parser import read_sections
 __all__ = ["main"]
 
 
+def _parse_sizes(text):
+    """Parse a comma separated list of component counts."""
+    try:
+        return tuple(int(item) for item in text.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"expected integers separated by commas, got {text!r}"
+        ) from error
+
+
 def _build_parser():
     parser = argparse.ArgumentParser(
         prog="thermodiff-model",
@@ -40,6 +50,29 @@ def _build_parser():
             "dVdP, dndT, dndV, dndP) and the groups 'all', 'none', "
             "'first' and 'second' are accepted.  By default every "
             "derivative applicable to the declared variables is emitted."
+        ),
+    )
+    parser.add_argument(
+        "--workload",
+        action="append",
+        help=(
+            "workload mode: emit a fixed-output kernel for this derivative "
+            "set, for example --workload dn,dndn --workload dT (repeat the "
+            "flag once per set).  The module gets a dispatcher with the "
+            "signature of the optional-derivatives kernel that picks the "
+            "kernel of the exact set of present outputs and falls back to "
+            "the optional kernel otherwise; --derivatives selects the "
+            "outputs of that signature."
+        ),
+    )
+    parser.add_argument(
+        "--fixed-nc",
+        type=_parse_sizes,
+        default=None,
+        help=(
+            "with --workload: also emit each kernel for these compile-time "
+            "numbers of components, for example 2,3; the dispatcher "
+            "selects by nc."
         ),
     )
     parser.add_argument(
@@ -145,6 +178,42 @@ def _build_parser():
         default=None,
         help="algorithm of the scalar common sub-expression pass.",
     )
+    parser.add_argument(
+        "--work-array",
+        action="store_const",
+        const=True,
+        default=None,
+        help=(
+            "store the array temporaries in one work array (one allocation "
+            "per call instead of one per temporary)."
+        ),
+    )
+    parser.add_argument(
+        "--max-nc",
+        type=int,
+        default=None,
+        help=(
+            "give the array temporaries the compile-time extent MAX_NC "
+            "(stack storage); the kernel stops with 'error stop' when nc "
+            "exceeds it, so callers with larger nc need another kernel."
+        ),
+    )
+    parser.add_argument(
+        "--real-kind",
+        default=None,
+        help=(
+            "kind of every real: an integer (default 8) or the name of a "
+            "kind constant such as 'pr' (literals become 1.0_pr)."
+        ),
+    )
+    parser.add_argument(
+        "--kind-module",
+        default=None,
+        help=(
+            "module that exports the --real-kind constant; adds "
+            "'use <module>, only: <kind>' to the subroutine."
+        ),
+    )
     return parser
 
 
@@ -179,6 +248,8 @@ def main(argv=None):
             ir,
             derivatives=derivatives,
             preset=args.preset,
+            workloads=args.workload,
+            fixed_nc=args.fixed_nc,
             optional_derivatives=args.optional_derivatives,
             array_cse=args.array_cse,
             share=args.share,
@@ -189,6 +260,10 @@ def main(argv=None):
             cse_backend=args.cse_backend,
             sum_alpha=args.sum_alpha,
             hoist_invariants=args.hoist_invariants,
+            work_array=args.work_array,
+            max_nc=args.max_nc,
+            real_kind=args.real_kind,
+            kind_module=args.kind_module,
         )
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)

@@ -137,7 +137,7 @@ class TestPlaceholders:
         code = to_fortran(indexed_sum_diff(), derivatives=["dni"])
         assert "real(8), intent(in) :: phi(:)" in code
         assert "real(8), intent(in) :: tau(:, :)" in code
-        assert "real(8), intent(in) :: dphidi(:, :)" in code
+        assert "real(8), intent(in) :: dphidn(:, :)" in code
 
     def test_latex_names_are_sanitized(self):
         code = to_fortran(indexed_sum_diff(), derivatives=["dt"])

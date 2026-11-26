@@ -13,6 +13,7 @@ module only takes care of the things that are specific to a whole model:
 import sympy as sp
 
 from thermodiff.codegen.options import resolve_codegen_options
+from thermodiff.codegen.workload import workload_procedures, wrap_module
 from thermodiff.derivatives import resolve_derivatives
 from thermodiff.diffplz import DiffPlz
 from thermodiff.fortran import _sanitize, to_fortran
@@ -51,6 +52,7 @@ def _reserved_names(ir, derivatives):
     reserved.update(ir.dimensions)
     for declaration in list(ir.variables) + list(ir.parameters):
         reserved.add(declaration.base)
+    reserved.update(placeholder.base for placeholder in ir.placeholders)
     for symbol in ir.function.atoms(sp.Symbol):
         reserved.add(str(symbol))
     for indexed in ir.function.atoms(sp.Indexed):
@@ -58,8 +60,8 @@ def _reserved_names(ir, derivatives):
     return reserved
 
 
-def _rename_indices(ir, derivatives):
-    """Return ``(function, indexes)`` with friendly index names."""
+def _index_mapping(ir, derivatives):
+    """Return the mapping from the internal indices to friendly ones."""
     reserved = _reserved_names(ir, derivatives)
     mapping = {}
     used = set()
@@ -73,6 +75,16 @@ def _rename_indices(ir, derivatives):
                 break
         else:
             raise ModelError("too many distinct indices in the model")
+    return mapping
+
+
+def _rename_indices(ir, derivatives):
+    """Return ``(function, indexes)`` with friendly index names."""
+    return _apply_mapping(ir, _index_mapping(ir, derivatives))
+
+
+def _apply_mapping(ir, mapping):
+    """Return ``(function, indexes)`` renamed with ``mapping``."""
     function = ir.function.xreplace(mapping)
     indexes = [mapping.get(index, index) for index in ir.indexes]
     return function, indexes
@@ -111,15 +123,56 @@ def build_diff(ir, derivatives=None):
             )
         except ValueError as error:
             raise ModelError(str(error)) from error
-    function, indexes = _rename_indices(ir, derivatives)
+    mapping = _index_mapping(ir, derivatives)
+    function, indexes = _apply_mapping(ir, mapping)
+    calls = [call.xreplace(mapping) for call in ir.placeholder_calls]
     diff = DiffPlz(
         function,
-        internal_functions=[],
+        internal_functions=calls,
         indexes=indexes,
         name="f",
         derivatives=derivatives,
     )
     return diff, derivatives
+
+
+def _array_extents(ir):
+    """Map each array name of the model to its dimension names."""
+    declared = list(ir.variables) + list(ir.parameters)
+    declared += list(ir.placeholders)
+    return {item.base: tuple(item.dims) for item in declared if item.dims}
+
+
+def _workload_code(
+    ir,
+    diff,
+    workloads,
+    fixed_nc,
+    subroutine,
+    preset,
+    options,
+    overrides,
+    common,
+):
+    """Return the dispatcher and kernels of the workload mode."""
+    try:
+        selections = [
+            resolve_derivatives(workload, ir.declared_variables)
+            for workload in workloads
+        ]
+        return workload_procedures(
+            diff,
+            selections,
+            subroutine_name=subroutine,
+            fixed_nc=fixed_nc,
+            extents=_array_extents(ir),
+            preset=preset,
+            options=options,
+            **common,
+            **overrides,
+        )
+    except ValueError as error:
+        raise ModelError(str(error)) from error
 
 
 def emit_module(
@@ -129,6 +182,8 @@ def emit_module(
     *,
     preset=None,
     options=None,
+    workloads=None,
+    fixed_nc=None,
     **overrides,
 ):
     """Generate the Fortran module for a :class:`ModelIR`.
@@ -157,6 +212,16 @@ def emit_module(
     options : CodegenOptions, optional
         Explicit options used instead of a preset.  Passing both
         ``preset`` and ``options`` raises ``ValueError``.
+    workloads : list of (str or list of str), optional
+        Workload mode: one derivative selection per fixed-output kernel,
+        for example ``["dn,dndn", "dT"]``.  The module then holds a
+        dispatcher with the signature of the ``optional_derivatives=True``
+        kernel (which is also emitted, as the fallback), and one kernel
+        per workload; see :mod:`thermodiff.codegen.workload`.  ``derivatives``
+        selects the outputs of the fallback and must cover the workloads.
+    fixed_nc : iterable of int, optional
+        With ``workloads``: also emit every fixed-output kernel for these
+        compile-time numbers of components (for example ``(2, 3)``).
     **overrides
         Individual options replacing those of the preset, with the names of
         :class:`thermodiff.codegen.options.CodegenOptions` (for example
@@ -179,33 +244,42 @@ def emit_module(
             derivatives = select_derivatives(ir.declared_variables)
 
     stats = overrides.pop("stats", None)
-    options = resolve_codegen_options(preset, options, **overrides)
-
     model = _sanitize(ir.model_name)
     subroutine = _sanitize(ir.model_name) + "_derivs"
-
-    code = to_fortran(
-        diff,
+    common = dict(
         derivatives=derivatives,
         name="f",
-        subroutine_name=subroutine,
         integer_args=ir.dimensions,
         module_symbols=ir.imported,
         symmetric_params=getattr(ir, "symmetric", ()),
         stats=stats,
-        options=options,
     )
+    if workloads is None and fixed_nc is not None:
+        raise ModelError("fixed_nc needs workloads")
+    if workloads is not None:
+        code = _workload_code(
+            ir,
+            diff,
+            workloads,
+            fixed_nc,
+            subroutine,
+            preset,
+            options,
+            overrides,
+            common,
+        )
+    else:
+        options = resolve_codegen_options(preset, options, **overrides)
+        code = to_fortran(
+            diff, subroutine_name=subroutine, options=options, **common
+        )
 
-    lines = [
-        f"! Generated by thermodiff from model {ir.model_name!r}.",
-        "! Do not edit by hand.",
-        f"module {model}_mod",
-    ]
-    for use_text in ir.uses:
-        lines.append(f"   use {use_text}")
-    lines.extend(["   implicit none", "contains", ""])
-    for line in code.splitlines():
-        lines.append("   " + line if line.strip() else "")
-    lines.append(f"end module {model}_mod")
-    lines.append("")
-    return "\n".join(lines)
+    return wrap_module(
+        f"{model}_mod",
+        ir.uses,
+        code,
+        [
+            f"! Generated by thermodiff from model {ir.model_name!r}.",
+            "! Do not edit by hand.",
+        ],
+    )

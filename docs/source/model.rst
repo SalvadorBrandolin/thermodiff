@@ -43,6 +43,10 @@ beginning of a line:
 ``parameters``
     Declarations of the parameters.
 
+``functions``
+    Declarations of placeholder functions (see `Placeholder functions`_).
+    It must come before ``function``.
+
 ``expressions``
     Named intermediate expressions.  They are substituted into the final
     function before differentiation, so they never need to be evaluated by
@@ -72,6 +76,53 @@ summations.  Extra dimensions (for example ``ncomp``) become additional
 A trailing ``_letters`` in a declaration is treated as a decorative
 subscript and only refines the base name; for example ``k_ij nc nc`` declares
 the rank two array ``k``.
+
+Placeholder functions
+---------------------
+
+A placeholder is a function whose value (and derivatives) the generated
+kernel does not compute: it receives them as input arguments.  This is how a
+generated part calls another one (an alpha function, a mixing rule or
+``tau(T)``) without inlining it.  The ``functions`` section declares one
+placeholder per line, ``name [dimensions] (arguments)``::
+
+    functions
+        tau  nc nc  (T)
+        B           (n)
+        D           (n, T)
+
+The dimensions, as in ``parameters``, are the index arguments of the
+placeholder; they must be ``nc`` or a dimension used by a variable or
+parameter.  The arguments are the variables it depends on, among the
+declared ``n``, ``T``, ``V`` and ``P``, and there must be at least one.
+Use a placeholder like a parameter, with subscripts for each dimension, in
+``expressions`` and in ``function``::
+
+    function
+        sum_k n_k * (sum_l n_l tau_lk exp(-0.3 tau_lk))
+                  / (sum_l n_l exp(-0.3 tau_lk))
+
+``tau_lk`` is ``tau(l, k, T)`` (the order of the subscripts is the order of
+the index arguments), ``B`` is ``B(n)`` and ``D`` is ``D(n, T)``.  The model
+is differentiated exactly as with ``DiffPlz(..., internal_functions=[...])``
+in the Python API, and the kernel is identical to the one of that call.
+
+Every placeholder and each of its derivatives becomes an input argument of
+the generated subroutine, named after the function and the variables
+(index letters are only the subscripts of the array): for ``tau(l, k, T)``
+the arguments are ``tau(:, :)``, ``dtaudT(:, :)`` and ``dtaudTdT(:, :)``;
+for ``B(n)``, ``B``, ``dBdn(:)`` and ``dBdndn(:, :)``; for ``D(n, T)``,
+``D``, ``dDdT``, ``dDdn(:)``, ``dDdTdT``, ``dDdTdn(:)`` and ``dDdndn(:, :)``.
+Only the ones the selected derivatives need are arguments.  The names of
+the arguments of a compiled model are listed in the subroutine signature.
+
+A placeholder with two index arguments of the same dimension can be
+declared ``symmetric`` (``a nc nc symmetric (T)``, e.g. a combining rule
+``a_kl(T) = a_lk(T)``).  The symmetry then also applies to its derivative
+inputs (``dadT``, ``dadTdT``), so the generator uses one sum where it would
+otherwise compute the transposed one.  As for symmetric parameters, the
+caller must pass symmetric arrays.  This is the ``.model`` spelling of
+``symmetric_params=["a"]`` or ``idx_function("a", symmetric=(0, 1))``.
 
 Expressions
 -----------
@@ -116,7 +167,9 @@ of the following are hard errors with the offending file and line:
 * unbalanced free indices,
 * an unknown dimension or summation bound,
 * reusing an index in nested sums,
-* duplicate declarations,
+* duplicate declarations (placeholders included),
+* a placeholder that depends on something other than a declared ``n``,
+  ``T``, ``V`` or ``P``, or a ``functions`` section after ``function``,
 * unknown sections or malformed declarations.
 
 Selecting derivatives

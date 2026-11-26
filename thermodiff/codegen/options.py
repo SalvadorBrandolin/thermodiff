@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import re
 import sys
 import types
 import warnings
@@ -126,6 +127,50 @@ def _coerce_split_acc(value: Any) -> int | None:
     return int(value)
 
 
+def _coerce_max_nc(value: Any) -> int | None:
+    """Map ``max_nc`` to ``None`` (off) or a positive ``int``.
+
+    ``None`` and ``False`` mean off; anything else must be an integer
+    ``>= 1`` (``ValueError`` otherwise).
+    """
+    if value is None or value is False:
+        return None
+    if isinstance(value, bool) or int(value) != value or int(value) < 1:
+        raise ValueError(f"max_nc must be a positive integer, got {value!r}")
+    return int(value)
+
+
+_KIND_PATTERN = re.compile(r"\d+|[A-Za-z]\w*")
+_MODULE_PATTERN = re.compile(r"[A-Za-z]\w*")
+DEFAULT_REAL_KIND = "8"
+
+
+def _coerce_real_kind(value: Any) -> str:
+    """Map ``real_kind`` to a kind string: digits or a Fortran name.
+
+    Raises
+    ------
+    ValueError
+        If ``value`` is neither an integer kind nor an identifier.
+    """
+    text = str(value).strip()
+    if not _KIND_PATTERN.fullmatch(text):
+        raise ValueError(
+            f"real_kind must be an integer or an identifier, got {value!r}"
+        )
+    return text
+
+
+def _coerce_kind_module(value: Any) -> str | None:
+    """Map ``kind_module`` to ``None`` or a module name (identifier)."""
+    if value is None or value == "":
+        return None
+    text = str(value).strip()
+    if not _MODULE_PATTERN.fullmatch(text):
+        raise ValueError(f"kind_module must be an identifier, got {value!r}")
+    return text
+
+
 def _coerce_optional_bool(value: Any) -> bool | None:
     """Keep ``None`` (inherit ``share``), otherwise ``bool(value)``."""
     return None if value is None else bool(value)
@@ -145,6 +190,9 @@ _COERCERS: Mapping[str, Callable[[Any], Any]] = MappingProxyType(
             ScalarChainMode, ScalarChainMode.ON, "scalar_chain"
         ),
         "split_acc": _coerce_split_acc,
+        "max_nc": _coerce_max_nc,
+        "real_kind": _coerce_real_kind,
+        "kind_module": _coerce_kind_module,
     }
 )
 
@@ -224,6 +272,14 @@ class CodegenOptions:
     scalar_chain: ScalarChainMode = ScalarChainMode.OFF
     split_affine: bool = False
     split_acc: int | None = None
+    canonical_placeholders: bool = True
+    work_array: bool = False
+    max_nc: int | None = None
+    #: Kind of every real.  Literals only change their kind suffix: the
+    #: ~17 digits printed for floats and ``pi`` are not extended, so with a
+    #: quad kind those constants keep double-precision accuracy.
+    real_kind: str = DEFAULT_REAL_KIND
+    kind_module: str | None = None
 
     def __post_init__(self) -> None:
         """Coerce every field to its canonical type."""
@@ -420,6 +476,10 @@ _RULES: tuple[_Rule, ...] = (
         ("sym_matvec", "sym_sum2", "sym_perm"),
     ),
     _Rule(lambda o: not o.fuse_outer, ("fuse_libm_guard",)),
+    # fixed-size temporaries need no allocation, a work array is moot
+    _Rule(lambda o: o.max_nc is not None, ("work_array",)),
+    # a numeric kind needs no module
+    _Rule(lambda o: o.real_kind.isdigit(), ("kind_module",)),
 )
 
 # Of the ``scalar_chain`` values, only these are coerced to off today; ``ON``

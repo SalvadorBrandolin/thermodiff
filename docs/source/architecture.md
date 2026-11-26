@@ -82,6 +82,17 @@ by the tests.
 : The typed definition records (`TempDef` and its four subclasses), see
   Definition records.
 
+`extents.py`
+: Extra dimensions.  A summation over a dimension symbol other than `nc`
+  (`sum_m[1:ng]`, `sum_custom(expr, m, 1, ng)`) binds an index that
+  `annotate_index_ranges` rebuilds as `Idx(label, (1, ng))` at the start of
+  the pipeline, so the range travels with the index.  `index_extent` gives
+  the bound of a loop or declaration; passes that create indices keep the
+  range (`slot_mapping`, `ranged_slots`), and the loop passes that assume
+  `nc` skip the definitions over an extra dimension.  `dimension_symbols`
+  finds the integer arguments of the kernel.  One index label cannot be
+  summed over two different ranges.
+
 `options.py`
 : `CodegenOptions`, the option enums, the presets, validation and
   `resolve_codegen_options`, see Options.
@@ -125,6 +136,29 @@ by the tests.
   of the definitions (`_dependency_order`), the optional-argument guards
   (`_guard`, `_guarded`) and the line wrapping of the signature.
 
+`storage.py`
+: Storage of the array temporaries, used by `assemble_text`: their
+  declarations (`nc`-sized automatic arrays by default, compile-time
+  extents with `max_nc` plus the `nc > max_nc` guard) and, with
+  `work_array`, the wrapper that carves every temporary out of one
+  `work_` array and calls the kernel body as an internal procedure
+  (issue #10: without `-fstack-arrays` each automatic array costs a
+  `malloc`/`free` per call).  Neither option is a pass; the default
+  output is unchanged.
+
+`workload.py`
+: The workload mode (issue #11, #15), built on top of `to_fortran` without
+  touching the pipeline: one `to_fortran` call per output set
+  (`optional_derivatives=False`) plus one with `optional_derivatives=True`
+  (the fallback).  `parse_kernel` reads the dummy list and declarations of
+  each generated kernel, `specialise_kernel` rewrites a fixed-output kernel
+  (explicit-shape dummies, `NOINLINE`, optionally `nc` as a named
+  constant), `shape_guard` lists the extent checks that make explicit shape
+  safe (the dispatcher falls back to the assumed-shape kernel when an actual
+  array is larger than declared) and `build_dispatcher` emits the
+  `present()` mask and the `select case`.  The dummy lists come from the generated text, so extra
+  dimension arguments are forwarded without special cases.
+
 `pipeline.py`
 : The orchestration.  It defines `_EmitContext` (immutable inputs),
   `_EmitState` (mutable state of one emission), `Pass`, the `_PASSES`
@@ -153,6 +187,21 @@ derivative selection, names, `integer_args`, `module_symbols`,
   `SepSumsMode` (`False | True | "cost"`), `LowrankHessMode`
   (`False | True | "sym"`) and `CseBackend` (`"thermodiff"` | `"sympy"`).
   `split_acc` is `None` or `2`.
+* `canonical_placeholders` (default `True`, in every preset) names the
+  derivatives of placeholder functions by their variables: the gradient of
+  `B(n)` is one argument `dBdn(:)` read as `dBdn(i)` and `dBdn(j)`, its
+  Hessian is `dBdndn(:, :)` (registered as a symmetric parameter), and mixed
+  derivatives put the scalar variables first, sorted by name (`dDdTdn` for
+  `T` and `n_i` in either order).  `False` restores the index-label names
+  (`dBdi`, `dBdj`, `dBdidj`).  The generated names take part in the
+  case-clash check of Fortran identifiers (a parameter `DBDN` next to
+  `dBdn` raises `ValueError`).
+* Symmetric placeholders: `idx_function("a", symmetric=(0, 1))` or
+  `symmetric_params=("a",)` declare `a(k, l, T) == a(l, k, T)`.  The
+  placeholder and its canonical derivatives without extra indices (`a`,
+  `dadT`, `dadTdT`) become symmetric parameters; derivatives over `n`
+  (`dadn(k, l, i)`) are not.  As with `symmetric_params`, the caller must
+  pass symmetric arrays.
 * `from_legacy(**kwargs)` and `to_legacy()` convert to and from the keyword
   form; `from_preset(preset, **overrides)` and `replace(**changes)` build
   variants.
@@ -162,6 +211,32 @@ derivative selection, names, `integer_args`, `module_symbols`,
   example, everything that needs `chain_rule` when it is off, or the passes
   that cannot run with `optional_derivatives`).  The only error is a
   `split_acc` other than 2 while `optional_derivatives` is off.
+
+* Storage of the array temporaries (issue #10), opt-in and enabled by no
+  preset.  `work_array=True` carves every temporary out of one `work_`
+  array (one allocation per call instead of one `malloc`/`free` per
+  temporary when gfortran runs without `-fstack-arrays`).  `max_nc=N` gives
+  them the compile-time extent `N` so they live on the stack, behind an
+  `if (nc > N) error stop` guard: a caller with a larger `nc` must
+  dispatch to another kernel (a bigger `max_nc` or the default).  A
+  temporary larger than gfortran's `-fmax-stack-var-size` (65536 bytes,
+  `max_nc <= 90` for a rank-2 `real(8)` array) becomes static and warns.
+  `max_nc` disables `work_array`.
+
+* Real kind (issue #9).  `real_kind="8"` (the default) is the historical
+  `real(8)` and `d` literals.  Any other integer or kind name (`"pr"`)
+  turns every `real(8)` into `real(<kind>)` and every `1.5d-10` into
+  `1.5e-10_<kind>`; `kind_module="yaeos__constants"` also adds
+  `use yaeos__constants, only: pr` to the subroutine (an integer kind needs
+  no module, so `validate()` drops `kind_module` then).  The conversion is
+  one text pass at the end of `_assemble_text`
+  (`common.apply_real_kind`), so the passes and the default output are
+  untouched.  Literals only change their kind suffix: the ~17 digits that
+  SymPy prints for floats and `pi` are not extended, so with a quad kind
+  those constants keep double-precision accuracy (exact integers and
+  rationals are fine).  A kind name equal to a model symbol raises
+  `ValueError`.  CLI: `--real-kind`, `--kind-module`, `--work-array`,
+  `--max-nc`.
 
 Presets are the `Preset` enum, with the settings in `PRESET_SETTINGS`:
 
@@ -311,6 +386,26 @@ base handler covers `TempDef` and tests the annotations in a fixed order
 `limits`) and falls back to the plain loop nest.  `SiblingNest`,
 `OuterFusedNest`, `ComponentFusedMap` and `FusedNest` have registered
 handlers.  A new record type needs a new registered handler.
+
+## Extra scalar variables
+
+`DiffPlz(..., variables=[B, D])` adds derivatives with respect to scalar
+symbols (`dB`, `dB2`, `dBdD`, `dBdT`, `dndB` ...).  The vocabulary and the
+parsing live in `derivatives.py` (`scalar_derivative_specs`,
+`resolve_derivatives(scalar_variables=...)`); their attributes carry the
+prefix `var_` (`var_dBdD`) so that they never clash with the thermodynamic
+ones and are stored in `DiffPlz.scalar_derivatives`.  In the generator
+they are ordinary outputs: `common._deriv_suffix` gives the output name
+and `common._emission_order` puts them after the thermodynamic ones.  The
+chain-rule step (`chain.py`) only sees the thermodynamic attributes; the
+scalar ones always come from the plain `DiffPlz` derivatives, and their
+placeholders resolve as usual.  The recipe for models written as a scalar
+core is in the Fortran page of the documentation.  Without `variables`
+nothing changes (golden byte-identical).
+
+`resolve._PlaceholderResolver` warns (once per placeholder) when a
+placeholder has an expression argument, since the caller then has to
+supply total derivatives.
 
 ## Invariants
 

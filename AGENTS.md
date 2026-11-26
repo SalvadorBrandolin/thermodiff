@@ -108,6 +108,9 @@ thermodiff/
 │   ├── hoisting.py      # Loop-invariant hoisting, low-rank and affine splitting
 │   ├── cse.py           # Scalar and indexed common sub-expression elimination, shared sums
 │   ├── loops.py         # Loop fusion and table passes (gfortran/x86 oriented)
+│   ├── extents.py       # Index ranges of extra dimensions (ng, ...): extents and loop bounds
+│   ├── storage.py       # Temporaries storage: work_array, max_nc declarations
+│   ├── workload.py      # workload_module: fixed-output kernels + present() dispatcher, fixed_nc copies
 │   └── render.py        # Definitions to Fortran statements
 ├── core/
 │   ├── __init__.py
@@ -240,8 +243,40 @@ records, invariants, how to add a pass). Read it before changing
   defaults**. Tests pin standard == e8 and fastest == p33.
 - Kernels are fastest when specialised per output set
   (`optional_derivatives=False`, one subroutine per workload) and dispatched
-  by a `present()` mask in the yaeos wrapper; most loop passes are disabled
-  under `optional_derivatives=True`.
+  by a `present()` mask; most loop passes are disabled under
+  `optional_derivatives=True`. `workload_module` (`codegen/workload.py`,
+  `compile_model(workloads=..., fixed_nc=...)`, CLI `--workload`,
+  `--fixed-nc`) builds that module: one fixed-output kernel per workload,
+  the optional kernel as fallback, a dispatcher, and optional copies with a
+  compile-time `nc`. It works on the text of `to_fortran` (it parses the
+  dummy lists), so a change to the signature or declaration format must
+  keep `tests/test_workload.py` green.
+- Other options, all off or neutral by default (byte-identical output):
+  `work_array` (one automatic array for all temporaries) and `max_nc`
+  (compile-time extents, `error stop` above it) against heap allocation of
+  temporaries; `real_kind`/`kind_module` (`real(pr)` and `_pr` literals, a
+  final text pass in `common.apply_real_kind`). `canonical_placeholders` is
+  on by default: placeholder derivatives are named by their variables
+  (`dBdn`, `dBdndn`, `dDdTdn`); `False` restores `dBdi`/`dBdj`.
+- Placeholders: `idx_function` objects passed as `internal_functions`
+  (`.model`: the `functions` section). `idx_function(name, symmetric=(0, 1))`
+  or `symmetric_params=[name]` makes the placeholder and its derivative
+  inputs symmetric. A placeholder argument must be a variable (`n`, `T`,
+  `V`, `P`); an expression argument triggers a warning (the caller must
+  supply total derivatives). For a scalar core, differentiate with respect
+  to extra symbols: `DiffPlz(..., variables=[B, D])` emits `dfdB`, `dfdBdD`,
+  `dfdndB`, ...
+- Names: Fortran is case-insensitive. Parameters and placeholders whose
+  names differ only in case from another name are renamed (`r` -> `r_1`)
+  consistently in signature and body; module symbols, outputs and the
+  thermodynamic variables keep their names (a clash among them raises).
+  `i` and `j` are reserved for the derivative indices: `DiffPlz` renames
+  summation indices called `i`/`j` and rejects them as free indices.
+- Extra dimensions: a summation bound other than `nc` (`sum_custom(...,
+  m, 1, ng)`, `.model` `sum_m[1:ng]`) becomes an integer argument; its
+  index carries the range (`codegen/extents.py`), so temporaries get `ng`
+  extents and loops `ng` bounds. Passes that only handle `nc` skip such
+  indices. One index label cannot be summed over two different ranges.
 
 ### Rules for changing the generator
 1. **Generated Fortran must not change unless the change says so.** Check
@@ -275,6 +310,9 @@ records, invariants, how to add a pass). Read it before changing
    3.14 defers them): a name imported under `TYPE_CHECKING` must be quoted.
    If you develop on 3.14, run the tests once on an older Python before
    pushing.
+   Lint with the plugins: `tox -e style` (plain `flake8` from a venv without
+   `flake8-import-order`/`pep8-naming` misses import-order and naming
+   findings that CI reports).
 7. **Every transformation that can increase work needs an operation-count
    guard** (e.g. `sep_sums="cost"`, `nest_cost`, `dummy_canon` with its
    sharing criterion); always-on variants measured up to 6.7× slower kernels.

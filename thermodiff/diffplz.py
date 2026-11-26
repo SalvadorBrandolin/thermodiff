@@ -16,6 +16,7 @@ Use the class as.
     sol = td.DiffPlz(expression, internal_functions, indexes, name="f")
 """
 
+from collections.abc import Iterable
 from typing import List
 
 import sympy as sp
@@ -24,13 +25,124 @@ from thermodiff.core.kronecker_handling import (
     handle_free_kronecker,
     handle_sum_kronecker,
 )
-from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES, resolve_derivatives
+from thermodiff.derivatives import (
+    DERIVATIVE_ATTRIBUTES,
+    RESERVED_VARIABLE_NAMES,
+    resolve_derivatives,
+    scalar_derivative_specs,
+)
 from thermodiff.latex_utils import (
     clean_latex_string,
     finalize_latex_dict,
     process_derivative_expression,
 )
 from thermodiff.thermovars import P, T, V, i, j, k, l, m, n
+
+#: Indices reserved for the derivative variables ``n[i]`` and ``n[j]``.
+RESERVED_INDICES = (i, j)
+
+#: Candidate names for the fresh indices that replace a clashing bound one.
+_FRESH_INDEX_NAMES = tuple("klmpqrsuwxyzabcdeghov")
+
+
+def _used_names(expression: sp.Expr, indexes: List[sp.Idx]) -> set[str]:
+    """Return every symbol, index and base name in use."""
+    names = {str(symbol) for symbol in expression.free_symbols}
+    names.update(str(index) for index in indexes)
+    names.update(str(dummy) for dummy in expression.atoms(sp.Idx))
+    names.update(str(item.base) for item in expression.atoms(sp.Indexed))
+    return names
+
+
+def _rename_reserved_indices(
+    expression: sp.Expr, indexes: List[sp.Idx]
+) -> tuple[sp.Expr, List[sp.Idx], dict[sp.Idx, sp.Idx]]:
+    """Rename summation indices that clash with the reserved ``i``/``j``.
+
+    Parameters
+    ----------
+    expression : sympy expression
+        The user expression.
+    indexes : list of sp.Idx
+        The user supplied free indices.
+
+    Returns
+    -------
+    expression : sympy expression
+        The expression with the clashing bound indices renamed to fresh
+        ones.
+    indexes : list of sp.Idx
+        The indices with the same renaming applied.
+    mapping : dict
+        The applied renaming (empty if nothing clashed), to be applied
+        to any other object that mentions the bound indices.
+
+    Raises
+    ------
+    ValueError
+        If ``i`` or ``j`` appears as a free index of the expression.
+    """
+    clashing = [idx for idx in RESERVED_INDICES if expression.has(idx)]
+    free = [idx for idx in clashing if idx in expression.free_symbols]
+    if free:
+        raise ValueError(
+            f"the indices {[str(idx) for idx in RESERVED_INDICES]} are "
+            "reserved for the derivatives with respect to n[i] and n[j]; "
+            f"{[str(idx) for idx in free]} appears as a free index of the "
+            "expression. Use k, l or m for free indices."
+        )
+    used = _used_names(expression, indexes)
+    mapping = {}
+    for idx in clashing:
+        name = next(c for c in _FRESH_INDEX_NAMES if c not in used)
+        used.add(name)
+        mapping[idx] = sp.symbols(name, cls=sp.Idx)
+    if not mapping:
+        return expression, indexes, mapping
+    renamed = [mapping.get(index, index) for index in indexes]
+    return expression.xreplace(mapping), renamed, mapping
+
+
+#: Symbols of the thermodynamic variables that can be differentiated.
+_THERMO_SYMBOLS = {"T": T, "V": V, "P": P}
+
+
+def _check_variables(variables: Iterable[sp.Symbol] | None) -> list[sp.Symbol]:
+    """Validate the extra scalar differentiation variables.
+
+    Parameters
+    ----------
+    variables : iterable of sympy.Symbol or None
+        The variables declared by the user.
+
+    Returns
+    -------
+    list of sympy.Symbol
+        The variables, in declaration order (empty for ``None``).
+
+    Raises
+    ------
+    ValueError
+        If an item is not a plain symbol, is repeated, or has a name
+        reserved for a thermodynamic variable (``T``, ``V``, ``P``,
+        ``n``, in any case).
+    """
+    checked: list[sp.Symbol] = []
+    for variable in variables or ():
+        name = str(variable)
+        if not isinstance(variable, sp.Symbol) or isinstance(variable, sp.Idx):
+            raise ValueError(
+                f"variables must be plain symbols, got {variable!r}"
+            )
+        if name.lower() in RESERVED_VARIABLE_NAMES:
+            raise ValueError(
+                f"{name!r} is a thermodynamic variable (T, V, P, n); "
+                "choose another name for the scalar variable"
+            )
+        if variable in checked:
+            raise ValueError(f"variable {name!r} is declared twice")
+        checked.append(variable)
+    return checked
 
 
 class DiffPlz:
@@ -87,6 +199,17 @@ class DiffPlz:
         the attributes that were not requested are set to ``None``.  The
         names understood by
         :func:`thermodiff.derivatives.resolve_derivatives` are accepted.
+    variables : list of sympy.Symbol, optional
+        Extra scalar variables to differentiate with respect to, besides
+        ``T``, ``V``, ``P`` and ``n[i]``; by default none, and nothing
+        changes.  Typical use is a model written with a few mixture level
+        scalars (``B``, ``D``, ``D1`` of a cubic) so that the derivatives
+        with respect to them can be assembled by the caller with the chain
+        rule.  Their derivatives are named ``dB``, ``dB2``, ``dBdD``,
+        ``dBdT``, ``dndB`` ... (see :mod:`thermodiff.derivatives`), are
+        selected with ``derivatives=`` like the others, and are stored in
+        :attr:`scalar_derivatives`.  With ``derivatives=None`` all of them
+        are computed.
 
     Attributes
     ----------
@@ -134,7 +257,25 @@ class DiffPlz:
         List of symbols (variables) that appear in the expression.
     derivatives : list of str or None
         The derivative attributes that were selected for computation, or
-        ``None`` when every derivative was computed.
+        ``None`` when every derivative was computed (always a list when
+        ``variables`` are declared).
+    variables : list of sympy.Symbol
+        The extra scalar differentiation variables (empty by default).
+    scalar_derivatives : dict
+        Derivatives with respect to the extra variables that were
+        computed, ``attribute -> expression``; the attribute is
+        ``"var_"`` followed by the name (``"var_dBdD"``).  Also readable
+        as an attribute of the instance.
+
+    Notes
+    -----
+    The indices ``i`` and ``j`` are reserved for the derivatives with
+    respect to ``n[i]`` and ``n[j]``. A summation that binds ``i`` or ``j``
+    is accepted: its bound index is renamed to a fresh one (``k``, ``l``,
+    ... not used in the expression), and ``expression`` and ``indexes``
+    hold the renamed versions, and so do ``internal_functions``. Using
+    ``i`` or ``j`` as a free index of the expression raises
+    :class:`ValueError`.
     """
 
     def __init__(
@@ -144,25 +285,41 @@ class DiffPlz:
         indexes: List[sp.Idx] | None = None,  # noqa E741)
         name: str = "f",
         derivatives=None,
+        variables: Iterable[sp.Symbol] | None = None,
     ):
         self.name = name
-        self.expression = expression
-        self.internal_functions = (
-            internal_functions if internal_functions is not None else []
+        self.variables = _check_variables(variables)
+        names = [str(variable) for variable in self.variables]
+        self._scalar_specs = scalar_derivative_specs(names)
+        indexes = indexes if indexes is not None else [k, l, m]
+        expression, indexes, mapping = _rename_reserved_indices(
+            expression, indexes
         )
-        self.indexes = indexes if indexes is not None else [k, l, m]
+        self.expression = expression
+        self.internal_functions = [
+            function.xreplace(mapping) if mapping else function
+            for function in (internal_functions or [])
+        ]
+        self.indexes = indexes
         self._cache = {}
 
         if derivatives is None:
-            self.derivatives = None
-            selected = list(DERIVATIVE_ATTRIBUTES)
+            selected = list(DERIVATIVE_ATTRIBUTES) + list(self._scalar_specs)
+            self.derivatives = list(selected) if self.variables else None
         else:
-            selected = resolve_derivatives(derivatives)
+            selected = resolve_derivatives(derivatives, scalar_variables=names)
             self.derivatives = list(selected)
 
         for attribute in DERIVATIVE_ATTRIBUTES:
             value = self._compute(attribute) if attribute in selected else None
             setattr(self, attribute, value)
+        self.scalar_derivatives = {
+            attribute: self._compute(attribute)
+            for attribute in self._scalar_specs
+            if attribute in selected
+        }
+        for attribute in self._scalar_specs:
+            setattr(self, attribute, self.scalar_derivatives.get(attribute))
 
         # Arguments
         self.arguments = self._detect_arguments()
@@ -184,7 +341,9 @@ class DiffPlz:
             return self._cache[attribute]
 
         expression = self.expression
-        if attribute == "dt":
+        if attribute in self._scalar_specs:
+            value = self._compute_scalar(self._scalar_specs[attribute])
+        elif attribute == "dt":
             value = sp.diff(expression, T)
         elif attribute == "dv":
             value = sp.diff(expression, V)
@@ -216,6 +375,39 @@ class DiffPlz:
             raise ValueError(f"Unknown derivative attribute {attribute!r}")
 
         self._cache[attribute] = value
+        return value
+
+    def _compute_scalar(self, factors: tuple[str, ...]) -> sp.Expr:
+        """Differentiate the expression with respect to ``factors``.
+
+        The composition derivative, if any, is applied last, as for
+        ``dtdni``; the partial results are cached.
+
+        Parameters
+        ----------
+        factors : tuple of str
+            Variables of the derivative in canonical order: ``"n"``, the
+            names of the extra variables, ``"T"``, ``"V"``, ``"P"``.
+
+        Returns
+        -------
+        sympy expression
+            The derivative.
+        """
+        symbols = {str(variable): variable for variable in self.variables}
+        symbols.update(_THERMO_SYMBOLS)
+        ordered = [f for f in factors if f != "n"] + [
+            f for f in factors if f == "n"
+        ]
+        value = self.expression
+        for position, factor in enumerate(ordered):
+            key = ("scalar",) + tuple(ordered[: position + 1])
+            if key not in self._cache:
+                if factor == "n":
+                    self._cache[key] = self.diff_ni(value, i)
+                else:
+                    self._cache[key] = sp.diff(value, symbols[factor])
+            value = self._cache[key]
         return value
 
     def diff_ni(self, expression: sp.Expr, index: sp.Idx) -> sp.Expr:

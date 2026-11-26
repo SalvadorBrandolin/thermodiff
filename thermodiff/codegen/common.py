@@ -6,9 +6,15 @@ from collections.abc import Set as AbstractSet
 from typing import TypeVar
 
 import sympy as sp
+from sympy.core.function import DefinedFunction
 from sympy.printing.fortran import fcode
 
-from thermodiff.derivatives import DERIVATIVE_ATTRIBUTES
+from thermodiff.codegen.options import DEFAULT_REAL_KIND
+from thermodiff.derivatives import (
+    DERIVATIVE_ATTRIBUTES,
+    SCALAR_PREFIX,
+    scalar_suffix,
+)
 from thermodiff.thermovars import i, j, nc
 
 #: Mapping of ``DiffPlz`` derivative attributes to the suffix used in the
@@ -30,8 +36,41 @@ _DERIV_SUFFIX = {
     "dpdni": "dndP",
 }
 
-#: Order in which the derivatives are emitted.
+#: Order in which the derivatives are emitted (those with respect to the
+#: extra scalar variables of the ``DiffPlz`` follow, in their own order).
 _DERIV_ORDER = list(DERIVATIVE_ATTRIBUTES)
+
+
+def _deriv_suffix(attribute: str) -> str:
+    """Return the output name suffix of a derivative attribute.
+
+    Parameters
+    ----------
+    attribute : str
+        A ``DiffPlz`` derivative attribute, including the ones with
+        respect to the extra scalar variables (``"var_dB"``).
+
+    Returns
+    -------
+    str
+        ``"dT"`` for ``"dt"``, ``"dB"`` for ``"var_dB"`` ...
+    """
+    if attribute.startswith(SCALAR_PREFIX):
+        return scalar_suffix(attribute)
+    return _DERIV_SUFFIX[attribute]
+
+
+def _emission_order(attributes: Iterable[str]) -> list[str]:
+    """Sort derivative attributes in emission order.
+
+    The thermodynamic derivatives come first, in ``_DERIV_ORDER``; the
+    others keep the order in which they are given.
+    """
+    given = list(attributes)
+    return [a for a in _DERIV_ORDER if a in given] + [
+        a for a in given if a not in _DERIV_ORDER
+    ]
+
 
 #: Settings passed to :func:`sympy.printing.fortran.fcode`.
 _FCODE_SETTINGS = {
@@ -67,6 +106,121 @@ def _sanitize(name: str) -> str:
     if clean[0].isdigit():
         clean = "v_" + clean
     return clean
+
+
+#: Names the generator itself declares as temporaries: ``t<number>`` and the
+#: accumulator ``res``.  A user name matching it (in any case) is renamed.
+_GENERATED_NAME = re.compile(r"(t\d+|res)", re.IGNORECASE)
+
+
+def _fortran_key(name: str) -> str:
+    """Return the key under which Fortran identifies ``name``.
+
+    Fortran is case-insensitive and the generator sanitises names, so two
+    names are the same variable when their keys are equal.
+    """
+    return _sanitize(name).lower()
+
+
+def _case_clash_renames(
+    fixed: Iterable[str], candidates: Iterable[str]
+) -> dict[str, str]:
+    """Rename the user names that would collide in Fortran.
+
+    ``fixed`` names (module symbols, integer arguments, the outputs and the
+    names the generator declares itself) keep their spelling; if two of
+    them differ only in case the clash cannot be solved and a
+    ``ValueError`` is raised.  A name of ``candidates`` (parameters,
+    placeholders) that collides with a fixed name, with a candidate seen
+    before it in sorted order, or with a generated name (``t1``, ``res``)
+    is renamed to ``<name>_<k>`` with the smallest free ``k``.
+
+    Parameters
+    ----------
+    fixed : iterable of str
+        Names that cannot be renamed.
+    candidates : iterable of str
+        Names that can be renamed.
+
+    Returns
+    -------
+    dict
+        ``old name -> new name`` for every renamed candidate (empty when
+        nothing clashes).
+
+    Raises
+    ------
+    ValueError
+        If two fixed names differ only in case.
+    """
+    taken: dict[str, str] = {}
+    for name in sorted(set(fixed)):
+        other = taken.setdefault(_fortran_key(name), name)
+        if other != name:
+            raise ValueError(
+                f"Names {other!r} and {name!r} are the same identifier in "
+                "Fortran (case-insensitive) and neither can be renamed "
+                "(module symbol, integer argument, output or fixed name)."
+            )
+    renames: dict[str, str] = {}
+    for name in sorted(set(candidates) - set(taken.values())):
+        key = _fortran_key(name)
+        if key not in taken and not _GENERATED_NAME.fullmatch(key):
+            taken[key] = name
+            continue
+        count = 1
+        while _fortran_key(f"{name}_{count}") in taken:
+            count += 1
+        renames[name] = f"{name}_{count}"
+        taken[_fortran_key(renames[name])] = renames[name]
+    return renames
+
+
+def _rename_names(expr: sp.Basic, renames: dict[str, str]) -> sp.Basic:
+    """Return ``expr`` with symbols, arrays and functions renamed.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to rewrite.
+    renames : dict
+        ``old name -> new name``; empty returns ``expr`` itself.
+
+    Returns
+    -------
+    sympy.Basic
+        The renamed expression (assumptions and array shapes kept).
+    """
+    if not renames:
+        return expr
+    expr = expr.replace(
+        lambda node: _is_placeholder(node) and node.func.__name__ in renames,
+        lambda node: sp.Function(renames[node.func.__name__])(*node.args),
+    )
+    mapping: dict[sp.Basic, sp.Basic] = {}
+    for base in expr.atoms(sp.IndexedBase):
+        if str(base) in renames:
+            mapping[base] = sp.IndexedBase(
+                renames[str(base)], shape=base.shape
+            )
+    for sym in expr.atoms(sp.Symbol):
+        if str(sym) in renames:
+            mapping[sym] = sp.Symbol(renames[str(sym)], **sym.assumptions0)
+    return expr.xreplace(mapping)
+
+
+def _is_placeholder(func: sp.Basic) -> bool:
+    """Return whether ``func`` is a user defined placeholder function.
+
+    Placeholder functions are the ones created with
+    :func:`~thermodiff.core.idxfunction.idx_function` or plain undefined
+    :class:`sympy.Function` objects.  SymPy provided functions (``exp``,
+    ``KroneckerDelta``, ``Piecewise`` ...) are defined functions and are
+    handled by the Fortran printer directly.
+    """
+    return isinstance(func, sp.Function) and not isinstance(
+        func, DefinedFunction
+    )
 
 
 _K = TypeVar("_K")
@@ -187,6 +341,79 @@ class _Namer:
         symbol = sp.Symbol(f"{prefix}{self._count}")
         self.created.append(symbol)
         return symbol
+
+
+def unique_name(name: str, taken: Iterable[str]) -> str:
+    """Append ``_`` to ``name`` until it is not in ``taken`` (any case).
+
+    Parameters
+    ----------
+    name : str
+        Wanted identifier.
+    taken : iterable of str
+        Identifiers that are already in use; Fortran ignores case.
+
+    Returns
+    -------
+    str
+        ``name`` or ``name`` followed by underscores.
+    """
+    lowered = {item.lower() for item in taken}
+    while name.lower() in lowered:
+        name += "_"
+    return name
+
+
+_REAL_8 = "real(8)"
+_FLOAT_LITERAL = re.compile(r"(?<![\w.])(\d+\.\d*)d([+-]?\d+)")
+
+
+def _kind_literal(match: re.Match[str]) -> str:
+    """Rewrite a ``<mantissa>d<exp>`` literal with the kind suffix."""
+    mantissa, exponent = match.groups()
+    if int(exponent) == 0:
+        return mantissa
+    return f"{mantissa}e{exponent}"
+
+
+def apply_real_kind(
+    text: str, real_kind: str, kind_module: str | None = None
+) -> str:
+    """Re-express the ``real(8)`` source ``text`` in another real kind.
+
+    Every ``real(8)`` becomes ``real(<real_kind>)`` and every ``d``
+    floating-point literal ``<m>d<e>`` becomes ``<m>e<e>_<real_kind>``
+    (``<m>_<real_kind>`` when ``e`` is 0).  With ``kind_module`` the line
+    ``use <kind_module>, only: <real_kind>`` is added before the first
+    ``implicit none``, which the internal procedures of ``work_array``
+    inherit.
+
+    Parameters
+    ----------
+    text : str
+        Fortran source generated for ``real(8)``.
+    real_kind : str
+        Kind value (``"8"``, ``"16"``) or the name of a kind constant.
+    kind_module : str, optional
+        Module that exports ``real_kind``.
+
+    Returns
+    -------
+    str
+        The converted source; ``text`` itself for the default kind.
+    """
+    if real_kind == DEFAULT_REAL_KIND:
+        return text
+    text = text.replace(_REAL_8, f"real({real_kind})")
+    text = _FLOAT_LITERAL.sub(
+        lambda match: f"{_kind_literal(match)}_{real_kind}", text
+    )
+    if kind_module is None:
+        return text
+    use_line = f"{_INDENT}use {kind_module}, only: {real_kind}"
+    marker = f"{_INDENT}implicit none"
+    head, found, tail = text.partition(marker)
+    return head + use_line + "\n" + found + tail if found else text
 
 
 def _print_expr(expr: sp.Expr) -> str:

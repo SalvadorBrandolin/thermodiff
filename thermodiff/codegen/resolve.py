@@ -1,31 +1,22 @@
 """Placeholder resolution for the Fortran code generator."""
 
+import warnings
 from collections.abc import Iterable
 from typing import NamedTuple, TYPE_CHECKING
 
 import sympy as sp
-from sympy.core.function import DefinedFunction
 
-from thermodiff.codegen.common import _DERIV_ORDER, _sanitize
+from thermodiff.codegen.common import (
+    _DERIV_ORDER,
+    _emission_order,
+    _is_placeholder,
+    _sanitize,
+)
 from thermodiff.derivatives import resolve_derivatives
 from thermodiff.thermovars import nc
 
 if TYPE_CHECKING:
     from thermodiff.diffplz import DiffPlz
-
-
-def _is_placeholder(func: sp.Basic) -> bool:
-    """Return whether ``func`` is a user defined placeholder function.
-
-    Placeholder functions are the ones created with
-    :func:`~thermodiff.core.idxfunction.idx_function` or plain undefined
-    :class:`sympy.Function` objects.  SymPy provided functions (``exp``,
-    ``KroneckerDelta``, ``Piecewise`` ...) are defined functions and are
-    handled by the Fortran printer directly.
-    """
-    return isinstance(func, sp.Function) and not isinstance(
-        func, DefinedFunction
-    )
 
 
 class _PlaceholderResolver:
@@ -36,12 +27,34 @@ class _PlaceholderResolver:
     strict : bool
         When ``True``, raise a ``ValueError`` if any placeholder is found
         instead of exposing it as an argument.
+    canonical : bool
+        Name placeholder derivatives by the differentiation variables, not
+        by the index labels (``dBdn(i)`` and ``dBdn(j)`` instead of
+        ``dBdi(i)`` and ``dBdj(j)``), see :func:`_canonical_suffix`.
+    symmetric_names : iterable of str
+        Placeholders declared symmetric in their first two indices
+        (``symmetric_params``); the placeholder and its derivatives without
+        extra indices are recorded in :attr:`symmetric`.
     """
 
-    def __init__(self, strict: bool = False) -> None:
+    def __init__(
+        self,
+        strict: bool = False,
+        canonical: bool = False,
+        symmetric_names: Iterable[str] = (),
+        reported: set[str] | None = None,
+    ) -> None:
         self.strict = strict
+        self.canonical = canonical
+        self.symmetric_names = frozenset(symmetric_names)
         #: name -> rank (0 for scalars)
         self.ranks: dict[str, int] = {}
+        #: canonical second derivatives over two indexed variables of a
+        #: placeholder without own indices: symmetric in their subscripts
+        self.symmetric: set[str] = set()
+        #: placeholders already reported by :func:`_warn_expression_args`
+        #: shared by the resolvers of one ``to_fortran`` call
+        self._reported: set[str] = set() if reported is None else reported
 
     def resolve(self, expr: sp.Expr) -> sp.Expr:
         """Return ``expr`` with placeholders replaced by plain variables."""
@@ -77,6 +90,13 @@ class _PlaceholderResolver:
         replacements = {func: self._function_var(func) for func in bare}
         return resolved.xreplace(replacements)
 
+    def _check_arguments(self, func: sp.Function) -> None:
+        """Warn once per placeholder whose arguments include expressions."""
+        key = func.func.__name__
+        if key not in self._reported:
+            self._reported.add(key)
+            _warn_expression_args(func)
+
     def _index_dims(self, func: sp.Function) -> list[str]:
         """Return the index labels used as array dimensions by ``func``."""
         dims: list[str] = []
@@ -108,12 +128,17 @@ class _PlaceholderResolver:
     def _derivative_var(self, deriv: sp.Derivative) -> sp.Expr:
         inner = deriv.expr
         if _is_placeholder(inner):
+            self._check_arguments(inner)
             base = _sanitize(inner.func.__name__)
             dims = self._index_dims(inner)
         else:
             base = _sanitize(str(inner))
             dims = []
 
+        if self.canonical:
+            return self._canonical_var(
+                base, dims, deriv.variables, self._inherits(inner, dims)
+            )
         suffix = ""
         for var in deriv.variables:
             if isinstance(var, sp.Indexed):
@@ -125,10 +150,156 @@ class _PlaceholderResolver:
 
         return self._build("d" + base + suffix, dims)
 
+    def _inherits(self, inner: sp.Basic, dims: list[str]) -> bool:
+        """Return whether derivatives of ``inner`` keep its symmetry."""
+        return _is_placeholder(inner) and self._is_symmetric_placeholder(
+            inner, dims
+        )
+
+    def _canonical_var(
+        self,
+        base: str,
+        dims: list[str],
+        variables: tuple[sp.Basic, ...],
+        symmetric_inner: bool = False,
+    ) -> sp.Expr:
+        """Build a derivative variable named by its variables (canonical).
+
+        The scalar variables come first, sorted by name, then one ``d<x>``
+        per indexed variable ``x[i]``; the array subscripts are the
+        placeholder's own indices followed by the derivative indices, in
+        the order of ``variables``.  A derivative without indexed variables
+        of a symmetric placeholder (``symmetric_inner``) stays symmetric.
+        """
+        suffix, labels = _canonical_suffix(variables)
+        name = "d" + base + suffix
+        if (not dims and len(labels) == 2) or (symmetric_inner and not labels):
+            self.symmetric.add(name)
+        return self._build(name, dims + labels)
+
     def _function_var(self, func: sp.Function) -> sp.Expr:
+        self._check_arguments(func)
         base = _sanitize(func.func.__name__)
         dims = self._index_dims(func)
+        if self._is_symmetric_placeholder(func, dims):
+            self.symmetric.add(base)
         return self._build(base, dims)
+
+    def _is_symmetric_placeholder(
+        self, func: sp.Function, dims: list[str]
+    ) -> bool:
+        """Return whether ``func`` is a rank-2 symmetric placeholder.
+
+        Declared with ``symmetric_params`` or ``idx_function(symmetric=)``.
+
+        Raises
+        ------
+        ValueError
+            If ``idx_function(symmetric=(0, 1))`` was used on a function
+            whose first two arguments are not index arguments.
+        """
+        pair = getattr(func.func, "symmetric_args", None)
+        if pair is not None:
+            _check_symmetric_pair(func, pair)
+        declared = (
+            _sanitize(func.func.__name__) in self.symmetric_names
+            or pair is not None
+        )
+        return declared and len(dims) == 2
+
+
+def _check_symmetric_pair(func: sp.Function, pair: tuple[int, ...]) -> None:
+    """Require that the arguments at ``pair`` of ``func`` are indices."""
+    if all(
+        position < len(func.args) and isinstance(func.args[position], sp.Idx)
+        for position in pair
+    ):
+        return
+    raise ValueError(
+        f"Function '{func.func.__name__}' is declared symmetric in its "
+        f"arguments {pair}, but they are not both index arguments: "
+        f"{func.args}"
+    )
+
+
+def _expression_arguments(func: sp.Function) -> list[sp.Basic]:
+    """Return the arguments of ``func`` that are not plain variables."""
+    return [
+        arg
+        for arg in func.args
+        if not isinstance(arg, (sp.Symbol, sp.Idx, sp.Indexed))
+    ]
+
+
+def expression_argument_placeholders(expr: sp.Basic) -> list[str]:
+    """Return the names of the placeholders with expression arguments.
+
+    Parameters
+    ----------
+    expr : sympy.Basic
+        Expression to scan.
+
+    Returns
+    -------
+    list of str
+        Sorted names (empty when every argument is a plain variable).
+    """
+    return sorted(
+        {
+            func.func.__name__
+            for func in expr.atoms(sp.Function)
+            if _is_placeholder(func) and _expression_arguments(func)
+        }
+    )
+
+
+def _warn_expression_args(func: sp.Function) -> None:
+    """Warn when a placeholder takes an expression as an argument.
+
+    The generator treats a placeholder as a function of the variables its
+    arguments contain, and asks the caller for its derivatives with respect
+    to those variables (total derivatives); it does not apply the chain
+    rule through an argument such as ``delta(n, V)``.
+
+    Parameters
+    ----------
+    func : sympy.Function
+        The placeholder call.
+    """
+    expression_args = _expression_arguments(func)
+    if not expression_args:
+        return
+    warnings.warn(
+        f"placeholder '{func.func.__name__}' has the expression argument(s) "
+        + ", ".join(str(arg) for arg in expression_args)
+        + ": it is treated as a function of the variables they contain, "
+        "so the caller must supply its total derivatives with respect to "
+        "those variables (the chain rule through the arguments is not "
+        "applied). To differentiate through them, give the arguments as "
+        "scalar variables (DiffPlz(..., variables=[...])) and assemble "
+        "the result; see the scalar core recipe in the documentation.",
+        UserWarning,
+        stacklevel=2,
+    )
+
+
+def _canonical_suffix(
+    variables: tuple[sp.Basic, ...],
+) -> tuple[str, list[str]]:
+    """Return the canonical name suffix and the subscripts of a derivative.
+
+    ``(T, n[i])`` and ``(n[i], T)`` both give ``("dTdn", ["i"])``;
+    ``(n[i], n[j])`` gives ``("dndn", ["i", "j"])``.
+    """
+    scalars = sorted(
+        _sanitize(str(var))
+        for var in variables
+        if not isinstance(var, sp.Indexed)
+    )
+    indexed = [var for var in variables if isinstance(var, sp.Indexed)]
+    suffix = "".join("d" + name for name in scalars)
+    suffix += "".join("d" + _sanitize(str(var.base)) for var in indexed)
+    return suffix, [str(var.indices[0]) for var in indexed]
 
 
 def _derivative_function_atoms(
@@ -226,16 +397,17 @@ def _select_derivatives(
         if candidates is None:
             candidates = _DERIV_ORDER
         selected = []
-        for attr in _DERIV_ORDER:
-            if attr not in candidates:
-                continue
+        for attr in _emission_order(candidates):
             value = getattr(diff, attr, None)
             if value is None or value == 0:
                 continue
             selected.append(attr)
         return selected
-    resolved = resolve_derivatives(derivatives)
-    selected = [attr for attr in _DERIV_ORDER if attr in resolved]
+    resolved = resolve_derivatives(
+        derivatives,
+        scalar_variables=[str(var) for var in getattr(diff, "variables", ())],
+    )
+    selected = _emission_order(resolved)
     missing = [attr for attr in selected if getattr(diff, attr, None) is None]
     if missing:
         raise ValueError(

@@ -4,6 +4,7 @@ import dataclasses
 import inspect
 import os
 import sys
+import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from types import FrameType
 from typing import Any, NamedTuple, cast
@@ -18,23 +19,35 @@ from thermodiff.codegen import (
     SepSumsMode,
 )
 from thermodiff.codegen.common import (
-    _DERIV_SUFFIX,
+    _DERIV_ORDER,
     _INDENT,
     _LoopStart,
     _Namer,
     _canonical_floats,
+    _case_clash_renames,
+    _deriv_suffix,
     _free_indices,
+    _is_placeholder,
     _kron_to_piecewise,
     _order_free,
     _referenced_temp_names,
+    _rename_names,
     _sanitize,
     _temp_name,
+    apply_real_kind,
 )
 from thermodiff.codegen.cse import (
     _common_scalar_cse,
     _indexed_cse,
     _share_sums,
     _sympy_scalar_cse,
+)
+from thermodiff.codegen.extents import (
+    COMPONENT_EXTENT,
+    annotate_index_ranges,
+    dimension_symbols,
+    index_extent,
+    ranged_slots,
 )
 from thermodiff.codegen.hoisting import (
     _hoist_invariants,
@@ -43,7 +56,13 @@ from thermodiff.codegen.hoisting import (
     _separate_sums,
     _split_affine,
 )
-from thermodiff.codegen.ir import TempDef
+from thermodiff.codegen.ir import (
+    ComponentFusedMap,
+    FusedNest,
+    OuterFusedNest,
+    SiblingNest,
+    TempDef,
+)
 from thermodiff.codegen.loops import (
     Staged,
     _diagonal_from_tables,
@@ -74,6 +93,12 @@ from thermodiff.codegen.resolve import (
     _PlaceholderResolver,
     _scan_atoms,
     _select_derivatives,
+    expression_argument_placeholders,
+)
+from thermodiff.codegen.storage import (
+    array_declarations,
+    max_nc_guard,
+    work_array_kernel,
 )
 from thermodiff.codegen.symmetry import (
     _canonical_symmetric,
@@ -141,6 +166,99 @@ class _EmitContext:
     integer_args: tuple[str, ...]
     module_symbols: frozenset[str]
     symmetric_params: tuple[str, ...]
+    #: placeholders already warned about in this call (mutable on purpose)
+    reported: set[str] = dataclasses.field(default_factory=set)
+
+
+class _RenamedDiff:
+    """View of a ``DiffPlz`` whose symbol names were made case-unique.
+
+    Parameters
+    ----------
+    diff : DiffPlz
+        The instance to wrap.
+    renames : dict
+        ``old name -> new name`` applied to every expression read.
+    """
+
+    def __init__(self, diff: Any, renames: dict[str, str]) -> None:
+        self._diff = diff
+        self._renames = renames
+        self.name = diff.name
+        self.indexes = diff.indexes
+        self.expression = _rename_names(diff.expression, renames)
+
+    def __getattr__(self, attr: str) -> Any:
+        """Return the derivative ``attr`` with the names renamed."""
+        return _rename_names(getattr(self._diff, attr), self._renames)
+
+
+def _expression_names(expr: sp.Basic) -> tuple[set[str], set[str], set[str]]:
+    """Return the symbol, array and placeholder names used in ``expr``.
+
+    Returns
+    -------
+    tuple of set
+        ``(user names, index labels, thermodynamic symbols present)``:
+        the names of the symbols, arrays and placeholder functions that
+        are not ``T``, ``V``, ``P``, ``nc`` or ``n``; the labels of the
+        indices; and the names of those fixed symbols that appear.
+    """
+    names = {str(sym) for sym in expr.atoms(sp.Symbol)}
+    names.update(str(base) for base in expr.atoms(sp.IndexedBase))
+    names.update(
+        func.func.__name__
+        for func in expr.atoms(sp.Function)
+        if _is_placeholder(func)
+    )
+    fixed = {str(sym) for sym in (nc, n, P, T, V)}
+    indices = {str(idx) for idx in expr.atoms(sp.Idx)}
+    return names - fixed - indices, indices, names & fixed
+
+
+def _case_renames(
+    diff: Any,
+    selected: Sequence[str],
+    base: str,
+    external: set[str],
+    symmetric_params: Iterable[str],
+) -> dict[str, str]:
+    """Return the renames that make the names unique in Fortran.
+
+    Fortran is case-insensitive: ``R`` and ``r`` are one variable.  The
+    names of the parameters and placeholders are renamed (``r`` becomes
+    ``r_1``); module symbols, integer arguments, outputs, ``n``, ``nc``,
+    ``T``, ``V``, ``P`` and the indices keep their names.
+
+    Parameters
+    ----------
+    diff : DiffPlz
+        Instance holding the expression.
+    selected : sequence of str
+        Derivative attributes to emit.
+    base : str
+        Name of the value output.
+    external : set of str
+        Module symbols and integer arguments.
+    symmetric_params : iterable of str
+        Names that are parameters even if the expression hides them.
+
+    Returns
+    -------
+    dict
+        ``old name -> new name``, empty when no name clashes.
+
+    Raises
+    ------
+    ValueError
+        If two names that cannot be renamed differ only in case.
+    """
+    candidates, indices, thermo = _expression_names(diff.expression)
+    outputs = {base} | {"d" + base + _deriv_suffix(attr) for attr in selected}
+    fixed = external | outputs | indices | thermo
+    return _case_clash_renames(
+        fixed, (candidates | set(symmetric_params)) - external
+    )
 
 
 def _resolve_context(
@@ -172,15 +290,55 @@ def _resolve_context(
     sub_name = (
         _sanitize(subroutine_name) if subroutine_name else base + "_derivs"
     )
+    selected = tuple(_select_derivatives(diff, derivatives))
+    explicit_names = tuple(integer_args or ())
+    integer_names = explicit_names + tuple(
+        name
+        for name in dimension_symbols(diff.expression)
+        if name not in explicit_names
+    )
+    module_names = frozenset(module_symbols or ())
+    renames = _case_renames(
+        diff,
+        selected,
+        base,
+        set(integer_names) | module_names,
+        symmetric_params or (),
+    )
     return _EmitContext(
-        diff=diff,
-        selected=tuple(_select_derivatives(diff, derivatives)),
+        diff=_RenamedDiff(diff, renames) if renames else diff,
+        selected=selected,
         base=base,
         sub_name=sub_name,
-        integer_args=tuple(integer_args or ()),
-        module_symbols=frozenset(module_symbols or ()),
-        symmetric_params=tuple(symmetric_params or ()),
+        integer_args=integer_names,
+        module_symbols=module_names,
+        symmetric_params=tuple(
+            renames.get(param, param) for param in symmetric_params or ()
+        ),
     )
+
+
+def _nested_nodes_allowed(ctx: _EmitContext, opts: CodegenOptions) -> bool:
+    """Return the effective ``nested_nodes``, warning when it is disabled.
+
+    The nesting of inner nodes differentiates with respect to the
+    arguments of the placeholders, which fails when an argument is an
+    expression; the option is then switched off for the call.
+    """
+    if not opts.nested_nodes:
+        return False
+    names = expression_argument_placeholders(ctx.diff.expression)
+    if names:
+        warnings.warn(
+            "nested_nodes is disabled: the placeholder(s) "
+            + ", ".join(names)
+            + " have expression arguments (give the arguments as scalar "
+            "variables with DiffPlz(..., variables=[...]) to differentiate "
+            "through them)",
+            UserWarning,
+            stacklevel=2,
+        )
+    return not names
 
 
 def _chain_structure(
@@ -208,16 +366,17 @@ def _chain_structure(
         opts.scalar_chain is ScalarChainMode.ON
         and not opts.optional_derivatives
     )
+    nested_nodes = _nested_nodes_allowed(ctx, opts)
     structure: Structure = chain_rule_derivatives(  # type: ignore[no-untyped-call]  # noqa: E501
         ctx.diff.expression,
-        list(ctx.selected),
+        [attr for attr in ctx.selected if attr in _DERIV_ORDER],
         ctx.diff.indexes,
         symmetric_params=ctx.symmetric_params,
         split_sqrt=opts.split_sqrt,
         split_sums=opts.split_sums,
         pair_cse=opts.pair_cse,
         pair_rates=opts.pair_rates,
-        nested_nodes=opts.nested_nodes,
+        nested_nodes=nested_nodes,
         table_layout=opts.table_layout,
         scalar_chain=scalar_chain,
     )
@@ -448,6 +607,8 @@ class _EmitState:
         Symmetric parameters (grows with the pair functions).
     scalar_chain_defs : sequence
         Scalar-chain definitions (empty without ``scalar_chain``).
+    scalar_chain_active : bool
+        Whether the structure carries scalar-chain nodes or definitions.
     sc_temp_names : set of str
         Names of the scalar-chain temporaries.
     outputs : list of tuple
@@ -509,6 +670,10 @@ class _EmitState:
     module_symbols: set[str]
     symmetric_params: tuple[str, ...]
     scalar_chain_defs: Sequence[ScalarDef] = ()
+    scalar_chain_active: bool = False
+    index_ranges: dict[sp.Basic, sp.Basic] = dataclasses.field(
+        default_factory=dict
+    )
     sc_temp_names: set[str] = dataclasses.field(default_factory=set)
     outputs: list[Output] = dataclasses.field(default_factory=list)
     share_sums: bool = False
@@ -629,13 +794,23 @@ def _new_state(
         structured=structured,
         stats=stats,
         count_scalar=count_scalar,
-        resolver=_PlaceholderResolver(strict=opts.strict),
+        resolver=_PlaceholderResolver(
+            strict=opts.strict,
+            canonical=opts.canonical_placeholders,
+            symmetric_names=ctx.symmetric_params,
+            reported=ctx.reported,
+        ),
         namer=_Namer(),
         selected=list(ctx.selected),
         integer_args=list(ctx.integer_args),
         module_symbols=set(ctx.module_symbols),
         symmetric_params=ctx.symmetric_params,
         scalar_chain_defs=(structured or {}).get("_scalar_defs", ()),
+        # an outer function that is a node itself has nodes but no scalars
+        scalar_chain_active=bool(
+            (structured or {}).get("_scalar_defs")
+            or (structured or {}).get("_scalar_nodes")
+        ),
     )
 
 
@@ -643,7 +818,7 @@ def _derivative(
     ctx: _EmitContext, structured: Structure | None, attr: str
 ) -> sp.Expr:
     """Return the derivative ``attr`` from the structure or the instance."""
-    if structured is not None:
+    if structured is not None and attr in structured:
         return structured[attr]
     return getattr(ctx.diff, attr)
 
@@ -716,13 +891,27 @@ def _resolve_outputs(ctx: _EmitContext, state: _EmitState) -> None:
         outputs.append(
             (
                 attr,
-                "d" + ctx.base + _DERIV_SUFFIX[attr],
+                "d" + ctx.base + _deriv_suffix(attr),
                 resolver.resolve(_derivative(ctx, structured, attr)),
             )
         )
     state.outputs = outputs
-    if state.scalar_chain_defs:
+    if state.scalar_chain_active:
         _scalar_chain_outputs(state)
+    state.symmetric_params = state.symmetric_params + tuple(
+        sorted(set(resolver.symmetric) - set(state.symmetric_params))
+    )
+
+
+def _extra_dimension_ranges(state: _EmitState) -> dict[sp.Basic, sp.Basic]:
+    """Return the ranged indices of the extra dimensions (see extents)."""
+    bodies = [expr for _attr, _out, expr in state.outputs]
+    if state.structured is not None:
+        bodies += [
+            comp[1] for comp in state.structured.get("_component_defs", ())
+        ]
+    bodies += [body for _symbol, body in state.scalar_chain_defs]
+    return annotate_index_ranges(bodies)
 
 
 def _stage_outputs(state: _EmitState) -> None:
@@ -730,9 +919,11 @@ def _stage_outputs(state: _EmitState) -> None:
     opts = state.opts
     symmetric_params = state.symmetric_params
     staged: Staged = []
+    state.index_ranges = _extra_dimension_ranges(state)
     for attr, out_name, expr in state.outputs:
         expr = _kron_to_piecewise(expr)
         expr = expr.xreplace({nc: sp.Symbol("nc")})
+        expr = expr.xreplace(state.index_ranges)
         if opts.float_canon:
             expr = _canonical_floats(expr)
         if opts.param_symmetry and symmetric_params:
@@ -834,13 +1025,27 @@ def _component_definitions(state: _EmitState) -> None:
     if state.structured is not None:
         for comp in state.structured.get("_component_defs", ()):
             comp_name, comp_body, comp_rank, comp_sym = comp
-            comp_body = comp_body.xreplace({nc: sp.Symbol("nc")})
+            comp_body = state.resolver.resolve(comp_body).xreplace(
+                {nc: sp.Symbol("nc")}
+            )
+            comp_body = comp_body.xreplace(state.index_ranges)
             if opts.param_symmetry and state.symmetric_params:
                 comp_body = _canonical_symmetric(
                     comp_body, state.symmetric_params, opts.sym_rank3
                 )
             component_defs.append((comp_name, comp_body, comp_rank, comp_sym))
     state.component_defs = component_defs
+
+
+def _array_readers(state: _EmitState) -> list[sp.Basic]:
+    """Return the expressions that may read the component arrays."""
+    readers: list[sp.Basic] = list(state.all_exprs)
+    readers += [body for _name, body, _rank, _sym in state.component_defs]
+    readers += [
+        body.xreplace(state.index_ranges)
+        for _symbol, body in state.scalar_chain_defs
+    ]
+    return readers
 
 
 def _component_arrays(state: _EmitState) -> None:
@@ -851,6 +1056,7 @@ def _component_arrays(state: _EmitState) -> None:
 
     opts = state.opts
     scheme = cast(Structure, state.structured)[NAME_SCHEME_KEY]
+    readers = _array_readers(state)
     for comp_name, comp_body, comp_rank, comp_sym in state.component_defs:
         state.arrays[comp_name] = comp_rank
         free_ = (
@@ -858,6 +1064,9 @@ def _component_arrays(state: _EmitState) -> None:
             if comp_rank == 1
             else list(scheme.pair_slots)
         )
+        slot_ranges = ranged_slots(comp_name, free_, readers)
+        free_ = [slot_ranges.get(slot, slot) for slot in free_]
+        comp_body = comp_body.xreplace(slot_ranges)
         base_ = sp.IndexedBase(comp_name, shape=(nc,) * comp_rank)
         state.component_array_defs.append(
             TempDef(
@@ -998,6 +1207,17 @@ def _scan_signature(ctx: _EmitContext, state: _EmitState) -> None:
         or any(free for _, _, _, free in state.prepared)
         or any(sp.Symbol("nc") in scan.symbols for scan in scans)
     )
+    # Backstop for names built by the generator (placeholder derivatives
+    # such as ``dgdT``) that the user names did not predict.
+    _case_clash_renames(
+        {out_name for _, out_name, _, _ in state.prepared}
+        | set(state.params)
+        | set(state.param_arrays)
+        | set(state.placeholder_args)
+        | set(state.module_symbols)
+        | set(state.integer_args),
+        (),
+    )
 
 
 def _input_declarations(state: _EmitState) -> None:
@@ -1095,7 +1315,7 @@ def _array_cse(ctx: _EmitContext, state: _EmitState) -> None:
         # with scalar_chain, only the plain outputs count (as without it)
         counted=(
             [entry[0] == _SCALAR_PLAIN for entry in state.prepared]
-            if state.scalar_chain_defs
+            if state.scalar_chain_active
             else None
         ),
     )
@@ -1310,6 +1530,7 @@ def _scalar_chain_scalars(state: _EmitState) -> dict[sp.Symbol, sp.Symbol]:
         body = (
             _kron_to_piecewise(body)
             .xreplace({nc: sp.Symbol("nc")})
+            .xreplace(state.index_ranges)
             .xreplace(alias)
         )
         if state.opts.float_canon:
@@ -1368,7 +1589,7 @@ def _alias_scalar_chain(ctx: _EmitContext, state: _EmitState) -> None:
         Writes ``scalar_chain_definitions``; prunes ``prepared``,
         ``residuals``, the pools, ``arrays`` and ``namer.created``.
     """
-    if not state.scalar_chain_defs:
+    if not state.scalar_chain_active:
         return
     keep = [
         k
@@ -1993,25 +2214,97 @@ def _argument_names(ctx: _EmitContext, state: _EmitState) -> list[str]:
     return arg_names
 
 
-def _array_declarations(state: _EmitState) -> list[str]:
-    """Return the declaration lines of the temporary arrays, by rank."""
-    arrays = state.arrays
-    array_pad = state.opts.array_pad
-    lines = []
-    for rank in sorted(set(arrays.values())):
-        dims = ", ".join(["nc"] * rank)
-        if array_pad and rank >= 2:
-            # padded leading dimension: avoids cache-set aliasing between the
-            # many (nc, nc) temporaries for some values of nc
-            dims = ", ".join([f"nc + {int(array_pad)}"] + ["nc"] * (rank - 1))
-        names = [
-            f"{name}({dims})"
-            for name in sorted(arrays)
-            if arrays[name] == rank
-        ]
-        for line in _wrap_name_list("real(8) :: ", names):
-            lines.append(_INDENT + line)
+def _nested_definitions(definition: TempDef) -> list[TempDef]:
+    """Return the definitions wrapped by a fused record (none otherwise)."""
+    if isinstance(definition, FusedNest):
+        return definition.fused
+    if isinstance(definition, OuterFusedNest):
+        return definition.members
+    if isinstance(definition, SiblingNest):
+        return definition.sibling
+    return []
+
+
+def _record_array_extents(
+    definition: TempDef, extents: dict[str, tuple[str, ...]]
+) -> None:
+    """Record the extents of the arrays assigned by ``definition``."""
+    targets = [definition.target]
+    if isinstance(definition, ComponentFusedMap):
+        targets += [target for _kind, target, _value in definition.steps]
+    for target in targets:
+        if isinstance(target, sp.Indexed):
+            extents[str(target.base)] = tuple(
+                index_extent(index) for index in target.indices
+            )
+    for member in _nested_definitions(definition):
+        _record_array_extents(member, extents)
+
+
+def _array_extents(state: _EmitState) -> dict[str, tuple[str, ...]]:
+    """Return the declared extents of every temporary array.
+
+    An array takes the extent of the index range of each subscript of the
+    definition that assigns it, ``nc`` for the arrays no definition assigns.
+    """
+    assigned: dict[str, tuple[str, ...]] = {}
+    for definition in state.definitions:
+        _record_array_extents(definition, assigned)
+    return {
+        name: assigned.get(name, (COMPONENT_EXTENT,) * rank)
+        for name, rank in state.arrays.items()
+    }
+
+
+def _local_declarations(state: _EmitState) -> list[str]:
+    """Return the declarations of the temporaries and loop indices."""
+    lines = [
+        _INDENT + line for line in _wrap_name_list("real(8) :: ", state.temps)
+    ]
+    max_nc = None if state.opts.work_array else state.opts.max_nc
+    lines.extend(
+        array_declarations(_array_extents(state), state.opts.array_pad, max_nc)
+    )
+    for line in _wrap_name_list("integer :: ", state.loop_indices):
+        lines.append(_INDENT + line)
     return lines
+
+
+def _body_lines(sub_name: str, state: _EmitState) -> list[str]:
+    """Return the body lines, indented once, with the ``max_nc`` guard."""
+    body = list(state.body)
+    if state.opts.max_nc is not None and state.arrays:
+        body[:0] = max_nc_guard(sub_name, state.opts.max_nc)
+    return [_INDENT + line if line else "" for line in body]
+
+
+def _visible_names(ctx: _EmitContext, state: _EmitState) -> list[str]:
+    """Return the names that are declared or visible inside the kernel."""
+    return [
+        *ctx.module_symbols,
+        *state.temps,
+        *state.loop_indices,
+        *state.arrays,
+    ]
+
+
+def _check_kind_name(real_kind: str, names: Iterable[str]) -> None:
+    """Raise if the kind constant ``real_kind`` is also a kernel name.
+
+    Raises
+    ------
+    ValueError
+        If ``real_kind`` is an identifier that clashes (any case) with a
+        dummy argument, a module symbol, a temporary or the subroutine.
+    """
+    if not real_kind.isdigit() and real_kind.lower() in {
+        name.lower() for name in names
+    }:
+        raise ValueError(
+            f"real_kind {real_kind!r} is also the name of a symbol of the "
+            "model (module symbol, parameter or temporary); choose another "
+            "kind constant name"
+        )
 
 
 def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
@@ -2029,27 +2322,36 @@ def _assemble_text(ctx: _EmitContext, state: _EmitState) -> None:
     while sub_name in arg_names:
         sub_name += "_s"
 
-    lines = _wrap_signature(sub_name, arg_names)
-    lines.append(f"{_INDENT}implicit none")
-    for decl in state.inputs:
-        lines.append(_INDENT + decl)
-    for decl in state.output_decls:
-        lines.append(_INDENT + decl)
-
-    for line in _wrap_name_list("real(8) :: ", state.temps):
-        lines.append(_INDENT + line)
-    lines.extend(_array_declarations(state))
-    for line in _wrap_name_list("integer :: ", state.loop_indices):
-        lines.append(_INDENT + line)
-
+    header = [_INDENT + decl for decl in state.inputs + state.output_decls]
+    body = _body_lines(sub_name, state)
+    if state.opts.work_array and state.arrays:
+        lines = work_array_kernel(
+            sub_name,
+            arg_names,
+            header,
+            _local_declarations(state),
+            body,
+            _array_extents(state),
+            state.opts.array_pad,
+            _visible_names(ctx, state),
+        )
+    else:
+        lines = _wrap_signature(sub_name, arg_names)
+        lines.append(f"{_INDENT}implicit none")
+        lines.extend(header)
+        lines.extend(_local_declarations(state))
+        lines.append("")
+        lines.extend(body)
+        lines.append(f"end subroutine {sub_name}")
     lines.append("")
-    for line in state.body:
-        lines.append(_INDENT + line if line else "")
 
-    lines.append(f"end subroutine {sub_name}")
-    lines.append("")
-
-    state.text = "\n".join(lines)
+    _check_kind_name(
+        state.opts.real_kind,
+        [sub_name, *arg_names, *_visible_names(ctx, state)],
+    )
+    state.text = apply_real_kind(
+        "\n".join(lines), state.opts.real_kind, state.opts.kind_module
+    )
 
 
 _PASSES: tuple[Pass, ...] = (
@@ -2196,6 +2498,11 @@ def _emit_code(
     scalar_chain: ScalarChainMode | bool | str = False,
     split_affine: bool = False,
     split_acc: int | bool = False,
+    canonical_placeholders: bool = True,
+    work_array: bool = False,
+    max_nc: int | None = None,
+    real_kind: str = "8",
+    kind_module: str | None = None,
 ) -> str:
     """Emit the subroutine from a precomputed chain-rule structure.
 
@@ -2536,6 +2843,54 @@ def to_fortran(
         without ``-ffast-math`` (reportes/brechas/ronda3-cmr-o3.md).  Changes
         the summation order.  Only without ``optional_derivatives``.  Off by
         default.
+    canonical_placeholders : bool, optional
+        Name the derivatives of placeholder functions by their
+        differentiation variables instead of their index labels: the
+        gradient of ``B(n)`` is one argument ``dBdn(:)`` read as
+        ``dBdn(i)`` and ``dBdn(j)`` (instead of two arguments ``dBdi`` and
+        ``dBdj`` with the same data), its Hessian is ``dBdndn(:, :)``
+        (declared symmetric, so ``dBdndn(j, i)`` is read as
+        ``dBdndn(i, j)`` under ``param_symmetry``) and mixed derivatives
+        put the scalar variables first (``dDdTdn`` for both orders of
+        ``T`` and ``n_i``).  The common sub-expression and symmetry passes
+        then see that the copies are equal.  ``False`` restores the index-label
+        names (``dBdi``, ``dBdj``, ``dBdidj``).  On by default (and in every
+        preset); the legacy keyword defaults of ``to_fortran`` keep it on too.
+    work_array : bool, optional
+        Store every array temporary in one automatic array ``work_`` instead
+        of one automatic array each: the subroutine calls an internal
+        procedure ``<name>_body`` (the usual kernel) with one element of
+        ``work_`` per temporary, which it receives as an explicit-shape
+        array.  Without ``-fstack-arrays`` gfortran allocates automatic
+        arrays on the heap, so this turns one ``malloc``/``free`` pair per
+        temporary into one per call.  Same arithmetic.  Ignored with
+        ``max_nc``.  Off by default.
+    max_nc : int, optional
+        Give every array temporary the compile-time extent ``max_nc``
+        (``t(max_nc, max_nc)``, used up to ``nc``), so it lives on the stack
+        without ``-fstack-arrays``.  The kernel starts with
+        ``if (nc > max_nc) error stop``; callers with larger ``nc`` must
+        dispatch to another kernel.  A temporary above gfortran's
+        ``-fmax-stack-var-size`` default (65536 bytes: ``max_nc <= 90`` for
+        rank 2, ``<= 20`` for rank 3) is made static by gfortran (not thread
+        safe), so a ``UserWarning`` is emitted.  Same arithmetic.  ``None``
+        (the default) keeps ``nc``-sized temporaries.
+    real_kind : str, optional
+        Kind of every real: ``"8"`` (the default) emits ``real(8)`` and
+        ``d`` literals, as always.  Any other integer (``"16"``) or the
+        name of a kind constant (``"pr"``) emits ``real(<kind>)`` for the
+        dummies, temporaries, work arrays and results, and literals as
+        ``1.0_<kind>`` (``1.5e-10_<kind>``).  The arithmetic is the same.
+        The digits of a literal are those that SymPy prints (about 17
+        significant ones for floats and ``pi``): with a quad kind these
+        constants keep double-precision accuracy.  Write exact values
+        (integers, rationals) or pass them as inputs when that matters.
+        The kind constant must not be the name of a model symbol.
+    kind_module : str, optional
+        Module that exports the kind constant ``real_kind``: the
+        subroutine gets ``use <kind_module>, only: <real_kind>`` (so
+        ``real_kind="pr", kind_module="yaeos__constants"``).  Ignored for
+        an integer ``real_kind``.
 
     Returns
     -------
