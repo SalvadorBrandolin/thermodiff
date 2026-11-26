@@ -3599,7 +3599,7 @@ MODEL_DIGESTS = {
         "dn",
         "fastest",
         "nest_sums",
-    ): "abb4e811dfe9601e36a1292f3ec14f5c69245ade4aa85d7667f265fb7caf469a",
+    ): "8d9f6a758b746fd3a2ab81caa24ca99207be2ddada90dc8ec811915044436a29",
     (
         "tests/data/models/cmr/cmr.model",
         "dn",

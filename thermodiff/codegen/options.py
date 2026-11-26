@@ -560,6 +560,7 @@ def _validate(
 
 # Options set to True by each preset (the rest keep their defaults).
 _STANDARD_ENABLED: tuple[str, ...] = (
+    "chain_factor_sums",
     "chain_rule",
     "fuse_temps",
     "hessian_symmetry",
@@ -576,6 +577,7 @@ _STANDARD_ENABLED: tuple[str, ...] = (
 )
 
 _FASTEST_ENABLED: tuple[str, ...] = (
+    "chain_factor_sums",
     "chain_rule",
     "col_major",
     "comp_fuse",

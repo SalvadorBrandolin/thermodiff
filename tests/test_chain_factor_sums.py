@@ -129,9 +129,16 @@ class TestStructure:
         assert not normalised.chain_factor_sums
         assert "chain_factor_sums" in ignored
 
-    def test_default_is_off_in_every_preset(self):
-        for preset in ("minimal", "standard", "fastest"):
-            assert not CodegenOptions.from_preset(preset).chain_factor_sums
+    @pytest.mark.parametrize(
+        "preset, enabled",
+        [("minimal", False), ("standard", True), ("fastest", True)],
+    )
+    def test_presets_enable_it_except_minimal(self, preset, enabled):
+        options = CodegenOptions.from_preset(preset)
+        assert options.chain_factor_sums is enabled
+
+    def test_to_fortran_default_stays_off(self):
+        assert not CodegenOptions().chain_factor_sums
 
 
 @pytest.mark.slow
