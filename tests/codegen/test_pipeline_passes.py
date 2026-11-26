@@ -51,11 +51,15 @@ EXPECTED_ORDER = [
     "component_maps",
     "outer_loops",
     "split_accumulators",
+    "sparse_guards",
     "collect_stats",
     "render_bodies",
     "temp_declarations",
     "assemble_text",
 ]
+
+# Passes that a preset never enables: they need an explicit option value.
+OPT_IN = {"sparse_guards"}
 
 ALWAYS = {
     "resolve_outputs",
@@ -136,14 +140,19 @@ def test_defaults_without_share_disable_the_scalar_cse():
 
 
 def test_fastest_enables_every_pass():
-    assert enabled_names(preset("fastest")) == set(EXPECTED_ORDER)
+    assert enabled_names(preset("fastest")) == set(EXPECTED_ORDER) - OPT_IN
+
+
+def test_sparse_parameters_enable_their_pass():
+    options = preset("fastest", sparse_parameters=("v",))
+    assert enabled_names(options) == set(EXPECTED_ORDER)
 
 
 def test_optional_derivatives_disable_the_guarded_passes():
     options = CodegenOptions.from_preset("fastest").replace(
         optional_derivatives=True
     )
-    disabled = set(EXPECTED_ORDER) - enabled_names(options)
+    disabled = set(EXPECTED_ORDER) - enabled_names(options) - OPT_IN
     assert disabled == {
         "lowrank_outputs",
         "drop_pair_tables",

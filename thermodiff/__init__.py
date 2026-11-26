@@ -30,6 +30,7 @@ from thermodiff.fortran import (
     scalar_chain_core_derivatives,
     scalar_chain_inputs,
     scalar_chain_routine,
+    scalar_chain_workload_module,
     to_fortran,
     workload_module,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "to_fortran",
     "workload_module",
     "scalar_chain_routine",
+    "scalar_chain_workload_module",
     "scalar_chain_core_derivatives",
     "scalar_chain_inputs",
     # yaeos ArModel/GeModel wrappers of generated kernels:

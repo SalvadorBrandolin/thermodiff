@@ -108,8 +108,10 @@ thermodiff/
 │   ├── hoisting.py      # Loop-invariant hoisting, low-rank and affine splitting
 │   ├── cse.py           # Scalar and indexed common sub-expression elimination, shared sums
 │   ├── loops.py         # Loop fusion and table passes (gfortran/x86 oriented)
+│   ├── sparse.py        # Zero guards for sparse parameters (opt-in sparse_parameters)
 │   ├── extents.py       # Index ranges of extra dimensions (ng, ...): extents and loop bounds
 │   ├── storage.py       # Temporaries storage: work_array, max_nc declarations
+│   ├── core_chain_workload.py  # scalar_chain_workload_module: fused core + chain kernels per workload
 │   ├── workload.py      # workload_module: fixed-output kernels + present() dispatcher, fixed_nc copies
 │   └── render.py        # Definitions to Fortran statements
 ├── core/
@@ -223,7 +225,7 @@ records, invariants, how to add a pass). Read it before changing
 
 ```
 .model text -> model/parser.py -> model/ir.py -> model/emit.py (DiffPlz)
-  -> fortran.to_fortran -> codegen/pipeline.py: 35 passes over one _EmitState
+  -> fortran.to_fortran -> codegen/pipeline.py: 36 passes over one _EmitState
   (resolve, CSE, sharing, hoisting, symmetry, loop fusion, render) -> Fortran text
   (chain_rule on: chain.chain_rule_derivatives builds the structured derivatives first)
 ```

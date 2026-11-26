@@ -23,6 +23,8 @@ from thermodiff.codegen.ir import (
     FusedNest,
     OuterFusedNest,
     SiblingNest,
+    SparseGuard,
+    SparseNest,
     TempDef,
 )
 from thermodiff.codegen.symmetry import _render_symv
@@ -629,6 +631,68 @@ def _render_loop_nest(definition: TempDef) -> list[str]:
     return lines
 
 
+def _sparse_test(guard: SparseGuard) -> str:
+    """Return the Fortran condition that the sparse element is non-zero."""
+    return f"{_print_expr(guard.factor)} /= 0.0d0"
+
+
+def _summand(expr: sp.Basic) -> str:
+    """Print ``expr`` so that it can follow ``+`` (no ``+ -x``)."""
+    text = _print_expr(expr)
+    return f"({text})" if text.startswith("-") else text
+
+
+def _render_guarded_reduction(
+    definition: SparseNest, free_depth: int
+) -> list[str]:
+    """Reduce with the terms that carry the sparse element under its test."""
+    guard = definition.guard
+    target_s = _print_expr(definition.target)
+    depth = free_depth
+    lines = [_INDENT * depth + f"{target_s} = 0.0d0"]
+    for idx, low, high in definition.limits:
+        low_s = _print_expr(low)
+        high_s = _print_expr(high)
+        lines.append(_INDENT * depth + f"do {idx} = {low_s}, {high_s}")
+        depth += 1
+    accumulate = _INDENT * depth + f"{target_s} = {target_s} + "
+    if guard.rest != 0:
+        lines.append(accumulate + _summand(guard.rest))
+    lines.append(_INDENT * depth + f"if ({_sparse_test(guard)}) then")
+    lines.append(_INDENT + accumulate + _summand(guard.guarded))
+    lines.append(_INDENT * depth + "end if")
+    for _ in definition.limits:
+        depth -= 1
+        lines.append(_INDENT * depth + "end do")
+    return lines
+
+
+def _render_sparse_nest(definition: SparseNest) -> list[str]:
+    """Free loops around a guarded table entry or a guarded reduction."""
+    guard = definition.guard
+    lines = []
+    depth = 0
+    for idx in definition.free:
+        lines.append(_INDENT * depth + f"do {idx} = 1, {index_extent(idx)}")
+        depth += 1
+    if guard.table:
+        entry = definition.copy(free=[])
+        lines.append(_INDENT * depth + f"if ({_sparse_test(guard)}) then")
+        inner = "\n".join(_render_loop_nest(entry))
+        lines.extend(_indent_lines(inner, depth + 1))
+        if guard.zero_fill:
+            target_s = _print_expr(definition.target)
+            lines.append(_INDENT * depth + "else")
+            lines.append(_INDENT * (depth + 1) + f"{target_s} = 0.0d0")
+        lines.append(_INDENT * depth + "end if")
+    else:
+        lines.extend(_render_guarded_reduction(definition, depth))
+    for _ in definition.free:
+        depth -= 1
+        lines.append(_INDENT * depth + "end do")
+    return lines
+
+
 @functools.singledispatch
 def _render_definition(definition: TempDef) -> list[str]:
     """Render the statements that fill one shared temporary.
@@ -652,6 +716,12 @@ def _render_definition(definition: TempDef) -> list[str]:
     if definition.factored and not free:
         return _render_factored_reduction(definition)
     return _render_loop_nest(definition)
+
+
+@_render_definition.register
+def _(definition: SparseNest) -> list[str]:
+    """Render a nest guarded by a sparse parameter."""
+    return _render_sparse_nest(definition)
 
 
 @_render_definition.register

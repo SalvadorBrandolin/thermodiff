@@ -124,6 +124,17 @@ otherwise compute the transposed one.  As for symmetric parameters, the
 caller must pass symmetric arrays.  This is the ``.model`` spelling of
 ``symmetric_params=["a"]`` or ``idx_function("a", symmetric=(0, 1))``.
 
+A parameter array can be declared ``sparse`` (``v nc ng sparse``, e.g. the
+group-count matrix of UNIFAC).  The generated kernel then skips the work that
+is multiplied by an element of it where the element is zero: ``if (v(l, k)
+/= 0.0d0)`` guards the terms of a reduction and the evaluation of a table
+(the ``log`` of a sum over groups) that is only read through such terms.  It
+is the ``.model`` spelling of ``sparse_parameters=["v"]``; it pays off when
+most elements are zero and only changes the rounding of the accumulations.
+A table that is a multiple of the element (``log(...)*v(l, k)``) is set to
+zero where ``v = 0``, even if the unguarded expression would be NaN or Inf
+there.  Only array parameters can be sparse.
+
 Expressions
 -----------
 

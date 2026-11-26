@@ -596,15 +596,91 @@ def _requested_factors(
     return [_ATTRIBUTE_FACTORS[attribute] for attribute in attributes]
 
 
-def _assemble(
-    model: _Model,
+def resolve_chain(
+    scalars: Sequence[str],
+    depends_on: Mapping[str, Iterable[str]] | None,
+    linear: Iterable[str],
+    total_moles: Iterable[str],
+    core: "DiffPlz | None",
+    zero: Iterable[str] | None,
+    thermo: Sequence[str],
+    derivatives: object,
+    core_name: str,
+    name: str,
+) -> tuple[_Model, list[tuple[str, ...]]]:
+    """Validate the declarations and resolve the requested outputs.
+
+    Parameters
+    ----------
+    scalars, depends_on, linear, total_moles, core, zero, thermo
+    derivatives, core_name, name
+        As in :func:`scalar_chain_routine`.
+
+    Returns
+    -------
+    tuple
+        The model and the factors of the outputs.
+    """
+    model = _build_model(
+        scalars,
+        depends_on or {},
+        linear,
+        core_name,
+        name,
+        _zero_factors(scalars, core, zero),
+        total_moles,
+    )
+    return model, _requested_factors(derivatives, model, thermo)
+
+
+@dataclass(frozen=True)
+class ChainFragments:
+    """Pieces of a chain routine, before they are put in a subroutine.
+
+    Attributes
+    ----------
+    dummies : tuple of str
+        Dummy argument names, in order.
+    declarations : tuple of str
+        Declarations of the dummies (``real(8)`` kind, no indentation).
+    local_lines : tuple of str
+        Declarations of the local variables.
+    body : tuple of str
+        Executable statements (no indentation).
+    inputs : _Inputs
+        Inputs the statements read, in first-use order.
+    """
+
+    dummies: tuple[str, ...]
+    declarations: tuple[str, ...]
+    local_lines: tuple[str, ...]
+    body: tuple[str, ...]
+    inputs: "_Inputs"
+
+
+def chain_fragments(
+    model: "_Model",
     requested: Sequence[tuple[str, ...]],
-    options: CodegenOptions,
-    subroutine_name: str,
-) -> tuple[str, _Inputs]:
-    """Return the routine text and the inputs it uses."""
+    optional: bool,
+) -> ChainFragments:
+    """Return the declarations and statements of a chain routine.
+
+    Parameters
+    ----------
+    model : _Model
+        Declared structure of the scalar core.
+    requested : sequence of tuple of str
+        Factors of the outputs.
+    optional : bool
+        Whether every input and output is ``optional`` and guarded by
+        ``present()``.
+
+    Returns
+    -------
+    ChainFragments
+        The pieces, checked for names that clash ignoring case.
+    """
     inputs = _Inputs(model)
-    optional = options.optional_derivatives
     body = _body(inputs, requested, optional)
     declarations = _declarations(inputs, requested, optional)
     local_lines = _locals(inputs, requested)
@@ -612,19 +688,38 @@ def _assemble(
         line.split("::")[1].split("(")[0].strip() for line in declarations
     ]
     _check_unique([*dummies, *(n for n in _local_names(local_lines))])
-    arguments = ", ".join(dummies)
+    return ChainFragments(
+        tuple(dummies),
+        tuple(declarations),
+        tuple(local_lines),
+        tuple(body),
+        inputs,
+    )
+
+
+def _assemble(
+    model: _Model,
+    requested: Sequence[tuple[str, ...]],
+    options: CodegenOptions,
+    subroutine_name: str,
+) -> tuple[str, _Inputs]:
+    """Return the routine text and the inputs it uses."""
+    pieces = chain_fragments(model, requested, options.optional_derivatives)
+    arguments = ", ".join(pieces.dummies)
     head = f"subroutine {subroutine_name}({arguments})"
     lines = [
         head,
-        *_indented(["implicit none", *declarations, *local_lines]),
+        *_indented(
+            ["implicit none", *pieces.declarations, *pieces.local_lines]
+        ),
         "",
-        *_indented(body),
+        *_indented(pieces.body),
         f"end subroutine {subroutine_name}",
     ]
     text = "\n".join(lines) + "\n"
     return (
         apply_real_kind(text, options.real_kind, options.kind_module),
-        inputs,
+        pieces.inputs,
     )
 
 
@@ -755,16 +850,18 @@ def scalar_chain_routine(
         If the declarations are inconsistent or two names clash ignoring
         case.
     """
-    model = _build_model(
+    model, requested = resolve_chain(
         scalars,
-        depends_on or {},
+        depends_on,
         linear,
+        total_moles,
+        core,
+        zero,
+        thermo,
+        derivatives,
         core_name,
         name,
-        _zero_factors(scalars, core, zero),
-        total_moles,
     )
-    requested = _requested_factors(derivatives, model, thermo)
     text, _ = _assemble(
         model,
         requested,
@@ -804,16 +901,18 @@ def scalar_chain_core_derivatives(
         Names for ``to_fortran(core, derivatives=...)`` (``"dB"``,
         ``"dBdD"``, ``"dT"`` ...), in the order of the routine's inputs.
     """
-    model = _build_model(
+    model, requested = resolve_chain(
         scalars,
-        depends_on or {},
+        depends_on,
         linear,
+        total_moles,
+        core,
+        zero,
+        thermo,
+        derivatives,
         core_name,
         name,
-        _zero_factors(scalars, core, zero),
-        total_moles,
     )
-    requested = _requested_factors(derivatives, model, thermo)
     _, inputs = _assemble(model, requested, CodegenOptions(), "unused")
     prefix = f"d{core_name}"
     ordered = sorted(inputs.core, key=lambda item: inputs.core[item])
@@ -854,16 +953,18 @@ def scalar_chain_inputs(
     list of str
         The input names.
     """
-    model = _build_model(
+    model, requested = resolve_chain(
         scalars,
-        depends_on or {},
+        depends_on,
         linear,
+        total_moles,
+        core,
+        zero,
+        thermo,
+        derivatives,
         core_name,
         name,
-        _zero_factors(scalars, core, zero),
-        total_moles,
     )
-    requested = _requested_factors(derivatives, model, thermo)
     _, inputs = _assemble(model, requested, CodegenOptions(), "unused")
     ordered = sorted(inputs.core, key=lambda item: inputs.core[item])
     return [*ordered, *inputs.scalar]

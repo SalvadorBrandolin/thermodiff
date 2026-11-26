@@ -95,6 +95,7 @@ from thermodiff.codegen.resolve import (
     _select_derivatives,
     expression_argument_placeholders,
 )
+from thermodiff.codegen.sparse import apply_sparse_guards
 from thermodiff.codegen.storage import (
     array_declarations,
     max_nc_guard,
@@ -2081,6 +2082,32 @@ def _scalar_operation_count(state: _EmitState) -> int:
     )
 
 
+def _sparse_guards_pass(ctx: _EmitContext, state: _EmitState) -> None:
+    """Guard work behind ``if (v(...) /= 0)`` for sparse parameters (S36a).
+
+    Parameters
+    ----------
+    ctx : _EmitContext
+        Resolved inputs.
+    state : _EmitState
+        Reads ``definitions``, ``rendered`` and ``param_arrays``; sets the
+        ``sparse`` guard of the definitions it guards.
+    """
+    ranks = {}
+    for name in state.opts.sparse_parameters:
+        if state.param_arrays.get(name, 0) >= 1:
+            ranks[name] = state.param_arrays[name]
+        else:
+            warnings.warn(
+                f"sparse_parameters: {name!r} is not an array parameter of "
+                "the model; ignored",
+                UserWarning,
+                stacklevel=_external_stacklevel(),
+            )
+    outputs = [residual for _a, _o, residual, _f in state.rendered]
+    apply_sparse_guards(state.definitions, outputs, ranks)
+
+
 def _collect_stats(ctx: _EmitContext, state: _EmitState) -> None:
     """Fill ``stats`` with the operation counts (S37).
 
@@ -2462,6 +2489,11 @@ _PASSES: tuple[Pass, ...] = (
         _gate("split_acc", unless_optional=True),
         _split_accumulators_pass,
     ),
+    Pass(
+        "sparse_guards",
+        lambda opts: bool(opts.sparse_parameters),
+        _sparse_guards_pass,
+    ),
     Pass("collect_stats", _always, _collect_stats),
     Pass("render_bodies", _always, _render_bodies),
     Pass("temp_declarations", _always, _temp_declarations),
@@ -2527,6 +2559,7 @@ def _emit_code(
     scalar_chain: ScalarChainMode | bool | str = False,
     split_affine: bool = False,
     split_acc: int | bool = False,
+    sparse_parameters: Iterable[str] | str = (),
     canonical_placeholders: bool = True,
     work_array: bool = False,
     max_nc: int | None = None,
@@ -2880,6 +2913,23 @@ def to_fortran(
         without ``-ffast-math`` (reportes/brechas/ronda3-cmr-o3.md).  Changes
         the summation order.  Only without ``optional_derivatives``.  Off by
         default.
+    sparse_parameters : iterable of str, optional
+        Names of array parameters that are mostly zero (the group-count
+        matrix of UNIFAC).  Work that is multiplied by an element of one of
+        them is skipped where the element is zero: a reduction term
+        ``v(l, k)*f`` is accumulated under ``if (v(l, k) /= 0)``, and a
+        table whose every read is multiplied by the same element (the
+        ``log(sum_m th psi)`` table and its temperature derivatives) is not
+        evaluated there, so its entry is never read.  Applied only to
+        plain loop nests, and only when the skipped work calls a libm
+        routine or is a nested loop, so that dense parameters do not get
+        slower.  Names that are not array parameters of the model are
+        dropped with a ``UserWarning``.  The results agree with the
+        unguarded kernel up to the reassociation of the accumulations.  A
+        table whose body is a multiple of the element is set to zero where
+        the element is zero, even if the unguarded expression would give
+        NaN or Inf there (``log(0)*0``).
+        Empty (no guards) by default.
     canonical_placeholders : bool, optional
         Name the derivatives of placeholder functions by their
         differentiation variables instead of their index labels: the

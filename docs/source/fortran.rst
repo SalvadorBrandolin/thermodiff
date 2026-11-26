@@ -123,6 +123,23 @@ and ``tau``, make them scalar variables of the placeholder's core and use
 the recipe above: generate the mixture layer with ``variables=[delta,
 tau]`` written as symbols, supply ``alpha`` and its partial derivatives
 with respect to them, and assemble.
+Sparse parameters
+-----------------
+
+``CodegenOptions(sparse_parameters=("v",))`` (or ``v nc ng sparse`` in a
+``.model``) names array parameters that are mostly zero, such as the
+group-count matrix of UNIFAC.  Work that is multiplied by an element of one
+of them is skipped where the element is zero: the terms of a reduction run
+under ``if (v(l, k) /= 0.0d0)``, and a table that is only read through such
+terms (the ``log`` of a sum over groups and its temperature derivatives) is
+not evaluated there.  A table that is itself a multiple of the element is
+set to zero where the element is zero, even if the unguarded expression
+would be NaN or Inf (``log(0)*0``).  Guards are emitted only where the
+skipped work is a transcendental call or a nested loop.  The option is off
+by default and the generated code without it does not change.  Because it
+tests values at run time, a dense parameter makes the kernel slower
+(about 10% on UNIFAC), so enable it only for sparse data.
+
 Workload mode: fixed-output kernels and a dispatcher
 ----------------------------------------------------
 
@@ -174,6 +191,63 @@ leading extents differ from the declared ones (a ``(3, 3)`` array passed with
 array of rank two or more, input or output, has exactly the declared extents
 in all dimensions but the last; otherwise it calls the fallback, which is
 always correct.
+
+Fused workloads of a scalar core
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A scalar core (``DiffPlz(..., variables=[...])``) normally takes two calls:
+the core kernel and the chain-rule routine
+(:func:`thermodiff.scalar_chain_routine`).
+:func:`thermodiff.scalar_chain_workload_module` emits instead one subroutine
+per workload, given as a selection of *chain* outputs::
+
+    td.scalar_chain_workload_module(
+        core, ["B", "D", "E", "S"], [["dv", "dni"], ["dt", "dv", "dni"]],
+        {"D": ["T"]}, total_moles=("S",), preset="fastest",
+        module_symbols=["R"], uses=["consts, only: R"],
+        subroutine_name="ar_fused",
+    )
+
+Each kernel computes exactly the core derivatives its outputs need (as
+local scalars, with the code ``to_fortran`` generates for that set) and then
+the chain assembly, with no optional arguments and no ``present()`` tests.
+The dispatcher ``ar_fused(nc, <core inputs>, f, <scalar derivatives>,
+<outputs>)`` has optional ``f``, scalar derivatives and outputs, and selects
+the kernel by the ``present()`` mask of the outputs and ``f``; ``f`` (the
+function value) belongs to every kernel's output set.  Any other
+combination goes to ``ar_fused_fallback``: all the core derivatives of the
+union, then the chain with optional outputs.  That fallback needs the
+inputs of the chain routine (see its documentation: the total partials are
+computed when any second-order ``T``/``V`` output is present), and a
+workload kernel needs only its own.  ``preset``/``options``, ``real_kind``,
+``kind_module`` and ``module_symbols`` behave as in
+:func:`thermodiff.workload_module`; ``fixed_nc`` is not supported.
+
+Caller contracts:
+
+* ``f`` must be present to reach a fast kernel.  Every workload kernel
+  computes the function value, so ``f`` is a bit of its output set; a call
+  without ``f`` does not match any workload and goes to the (slower)
+  fallback.  Lifting this would need a kernel variant without ``f`` or a
+  scratch output, which costs more than it saves, so it is a documented
+  rule instead.
+* Every input of the selected workload (the scalar derivatives it reads)
+  must be present.  The mask counts outputs only, so a missing input is not
+  detected: the dispatcher would pass an absent optional actual argument to
+  a non-optional dummy, which is undefined behaviour.  A mask that also
+  counted the inputs would not help: the fallback reads the same inputs, so
+  a call that lacks one is wrong on every path.
+
+The dispatcher costs a few nanoseconds (the mask and forwarding); a caller
+that knows the output set can call ``ar_fused_w<k>`` directly.  Measured
+(cubic core, nc 2 to 50): the fused kernel is within 4 percent of the direct
+core and chain calls for the ``[dv, dni]`` set and about 10 percent faster
+for a Jacobian set, and 0.8 to 1.0 times a dispatched core followed by an
+optional chain.
+
+.. automodule:: thermodiff.codegen.core_chain_workload
+   :members: scalar_chain_workload_module, scalar_chain_workload_procedures
+   :show-inheritance:
 
 .. automodule:: thermodiff.codegen.workload
    :members: workload_module, workload_procedures

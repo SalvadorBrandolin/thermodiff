@@ -111,7 +111,7 @@ class RawDecl:
 
 
 #: Attribute keywords accepted after the dimensions of a declaration.
-DECL_ATTRIBUTES = ("symmetric", "positive")
+DECL_ATTRIBUTES = ("symmetric", "positive", "sparse")
 
 
 @dataclass

@@ -176,8 +176,16 @@ def _coerce_optional_bool(value: Any) -> bool | None:
     return None if value is None else bool(value)
 
 
+def _coerce_names(value: Any) -> tuple[str, ...]:
+    """Return ``value`` as a tuple of distinct names, in the given order."""
+    if isinstance(value, str):
+        value = (value,)
+    return tuple(dict.fromkeys(str(name) for name in value or ()))
+
+
 _COERCERS: Mapping[str, Callable[[Any], Any]] = MappingProxyType(
     {
+        "sparse_parameters": _coerce_names,
         "share_sums": _coerce_optional_bool,
         "scalar_cse": _coerce_optional_bool,
         "cse_backend": _coerce_cse_backend,
@@ -273,6 +281,7 @@ class CodegenOptions:
     scalar_chain: ScalarChainMode = ScalarChainMode.OFF
     split_affine: bool = False
     split_acc: int | None = None
+    sparse_parameters: tuple[str, ...] = ()
     canonical_placeholders: bool = True
     work_array: bool = False
     max_nc: int | None = None
