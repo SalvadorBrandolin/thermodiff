@@ -353,6 +353,7 @@ specifics live today.
 ## CI/CD
 - GitHub Actions runs on Linux, macOS and Windows: `py310` (with style, docstyle, check-manifest, coverage, docs, typecheck), `py311`, `py312`, `py313`
 - The Linux job is pinned to `ubuntu-24.04` because `fortran-lang/setup-fortran` has no gcc `latest` for ubuntu-26.04 yet; revisit when it does
+- On Linux, `setup-fortran` installs gcc from the ubuntu-toolchain-r PPA, which sometimes answers 503; the step has `continue-on-error`, and a fallback step removes the PPA and uses the runner image's gfortran-14/13/12 (or Ubuntu's `gfortran` from apt), linked as `gfortran` on `PATH` (tox passes `PATH`, not `FC`). A "Check gfortran" step compiles and runs a test program so the Fortran tests cannot be skipped silently
 - Tests must be path-portable (Windows runners use different drives for the checkout and the temp directory): use `pathlib`, not string concatenation of paths
 - Coverage must pass 90% threshold
 - Workflows are in `.github/workflows/` (`ci.yml`, `docs.yml`, `release.yml`); `tox.ini` defines the matrix via `[gh-actions]`
