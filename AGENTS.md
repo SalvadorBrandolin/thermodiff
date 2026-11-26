@@ -337,7 +337,13 @@ preset should enable it (that is a declared output change).
   work (`docs/dev/refactor-perf-arch-report.md`). Measure kernel run time on a
   quiet, dedicated core: heavy load on other cores distorts the numbers.
 - gfortran puts automatic arrays on the heap unless `-fstack-arrays`; large
-  temporaries then cost malloc/free and page faults on every call.
+  temporaries then cost malloc/free and page faults on every call. The
+  documented recommendation is to compile kernels with `-fstack-arrays`
+  (`docs/source/fortran.rst`, "Compiler flags and storage of temporaries").
+  `work_array` and `max_nc` stay opt-in: measured against the flag, neither
+  wins everywhere (work_array: -35% on UNIFAC full, up to +2.5x on a PR
+  kernel; max_nc: a few percent when close to the real maximum nc, harmful
+  when large), so no preset enables them.
 
 ## Future Work
 
