@@ -34,6 +34,11 @@ from thermodiff.codegen.common import (  # noqa: F401
     _index_set,
     _sanitize,
 )
+from thermodiff.codegen.core_chain import (  # noqa: F401
+    scalar_chain_core_derivatives,
+    scalar_chain_inputs,
+    scalar_chain_routine,
+)
 from thermodiff.codegen.cse import (  # noqa: F401
     _best_indexed_candidate,
     _best_scalar_candidate,

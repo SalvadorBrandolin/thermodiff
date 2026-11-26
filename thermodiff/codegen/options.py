@@ -245,6 +245,7 @@ class CodegenOptions:
     col_major: bool = False
     pair_cse: bool = False
     pair_rates: bool = False
+    chain_factor_sums: bool = False
     sum_transpose: bool = False
     sep_sums: SepSumsMode = SepSumsMode.OFF
     sym_rank3: bool = False
@@ -465,7 +466,11 @@ _RULES: tuple[_Rule, ...] = (
         ("sum_alpha", "sum_free_alpha", "sum_transpose"),
     ),
     _Rule(lambda o: not o.array_cse, ("cse_expensive",)),
-    _Rule(lambda o: not o.fuse_temps, ("fuse_guard", "keep_libm_tables")),
+    _Rule(
+        lambda o: not o.fuse_temps,
+        ("fuse_guard", "keep_libm_tables", "chain_factor_sums"),
+    ),
+    _Rule(lambda o: not o.chain_rule, ("chain_factor_sums",)),
     _Rule(lambda o: not o.nest_sums, ("nest_general", "nest_cost")),
     _Rule(
         lambda o: not (o.fuse_temps or o.nest_sums or o.param_symmetry),

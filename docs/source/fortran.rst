@@ -24,8 +24,8 @@ supports models written as a small *scalar core* ``F(B, D, D1, nT, V, T)``
 (a cubic equation of state in the mixture level covolume ``B``,
 attraction ``D`` ...) whose arguments depend on the composition through
 mixing rules.  The generator differentiates the core with respect to its
-scalars and the caller assembles the derivatives with the chain rule over
-the composition, which gives the hand-factored cost structure.
+scalars and the chain rule over the composition is assembled by a generated
+routine, which gives the hand-factored cost structure.
 
 .. code-block:: python
 
@@ -54,8 +54,8 @@ are emitted; without ``variables`` nothing changes.  The derivatives are also st
 ``DiffPlz.scalar_derivatives`` (keys such as ``"var_dBdD"``).
 
 With mixing rules ``x_r(n)`` for the scalars ``x_r`` (``B = b.n``,
-``D = n.a.n``, ``nT = sum(n)`` ...), the composition derivatives are
-assembled by the caller:
+``D = n.a.n``, ``nT = sum(n)`` ...), the composition derivatives follow
+from the chain rule:
 
 .. math::
 
@@ -65,8 +65,49 @@ assembled by the caller:
     \sum_{r,s} F_{x_r x_s}\,x_{r,i}\,x_{s,j} + \sum_r F_{x_r}\,x_{r,ij}
 
 and likewise ``F_{T n_i} = sum_r F_{T x_r} x_{r,i}`` (``dBdT`` ... with
-``T`` and ``V``).  ``tests/test_scalar_variables.py`` checks this assembly
-against the kernel written directly in the mole numbers.
+``T`` and ``V``).  Scalars may also depend on ``T`` and ``V`` (``D(n, T)``):
+the routine below includes those terms.
+
+The assembly routine
+~~~~~~~~~~~~~~~~~~~~
+
+:func:`thermodiff.scalar_chain_routine` emits that step as a Fortran
+routine, so no hand-written assembly is left.  Declare the scalars in the
+order of ``variables``, which of ``T`` and ``V`` each one depends on (all
+depend on ``n``) and which are linear in ``n`` (no Hessian input):
+
+.. code-block:: python
+
+    names = ["B", "D", "D1", "nT"]
+    kwargs = dict(
+        linear=["B", "D1", "nT"],       # d2x/dn dn = 0 for these
+        derivatives=["dT", "dV", "dn", "dndT", "dndV", "dndn"],
+    )
+    # D = n.a.n * alpha(T) would be depends_on={"D": ["T"]}
+    wanted = td.scalar_chain_core_derivatives(names, {}, **kwargs)
+    core_code = td.to_fortran(diff, derivatives=wanted)
+    chain_code = td.scalar_chain_routine(names, {}, **kwargs)
+
+``scalar_chain_core_derivatives`` lists the derivatives to request from the
+core (``dB``, ``dBdD``, ``dBdT``, ``dT`` ...), and the routine reads exactly
+those as inputs named as the core kernel emits them (``dfdB``, ``dfdBdD``,
+``dfdT2`` ...; ``core_name`` changes the prefix).  Per scalar ``X`` the
+inputs are its gradient ``dXdn(nc)`` and Hessian ``dXdndn(nc, nc)``, and if
+it depends on ``T``: ``dXdT``, ``dXdT2``, ``dXdndT(nc)`` (``dXdTdV`` when it
+depends on both).  The outputs are the total derivatives with the usual
+names and prefix ``dar`` (``name``): ``dardT``, ``dardV``, ``dardT2``,
+``dardTdV``, ``dardV2``, ``dardn``, ``dardndT``, ``dardndV``, ``dardndn``,
+selected by ``derivatives`` like in ``to_fortran``.  With
+``CodegenOptions(optional_derivatives=True)`` every output and input is
+``optional`` and an output is computed when present (give its inputs);
+``real_kind`` and ``kind_module`` are honoured.  The Hessian loop works on the
+lower triangle and mirrors it, with ``O(m)`` work per element for ``m``
+scalars.  ``tests/test_scalar_variables.py`` compares the core kernel plus
+this routine with the kernel written directly in the mole numbers.
+
+.. autofunction:: thermodiff.codegen.core_chain.scalar_chain_routine
+
+.. autofunction:: thermodiff.codegen.core_chain.scalar_chain_core_derivatives
 
 Placeholders with expression arguments
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
